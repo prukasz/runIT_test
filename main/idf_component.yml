@@ -5,19 +5,19 @@ dependencies:
     version: ">=5.1.0"
 
   mpu6050:
-    git: https://github.com/ukaszV1/mpu6050-ESP_IDF
+    git: https://github.com/prukasz/mpu6050
     version: main
 
   pcf8575:
-    git: https://github.com/ukaszV1/pcf8575
+    git: https://github.com/prukasz/pcf8575
     version: main
 
   pca9685:
-    git: https://github.com/ukaszV1/PCA9685
+    git: https://github.com/prukasz/pca9685
     version: main
 
   ads1115:
-    git: https://github.com/ukaszV1/ads1115
+    git: https://github.com/prukasz/ads1115
     version: main
 
 
