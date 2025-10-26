@@ -21,15 +21,8 @@ void task_pca9685(void *parameters){
     pca9685_set_pwm_frequency(handle, 50);
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        handle->channel_pwm_value[0] = 200;
-        handle->channel_pwm_value[1] = 400;
         pca9685_update_pwm_values(handle, 0);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        handle->channel_pwm_value[0] = 400;
-        handle->channel_pwm_value[1] = 200;
-        pca9685_update_pwm_values(handle, 0);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(1500));
         ESP_LOGI("pca", "pca set");
     }
 };
@@ -76,9 +69,9 @@ void task_mpu6050(void *parameters){
             ESP_ERROR_CHECK(mpu6050_get_gyro(handle));
             ESP_ERROR_CHECK(mpu6050_get_acce(handle));
             ESP_LOGI("MPU6505", "gyro -> %f, %f ,%f",
-                    handle->gyro_value.gyro_x,  handle->gyro_value.gyro_y,  handle->gyro_value.gyro_z);
+                    handle->gyro_value.x,  handle->gyro_value.y,  handle->gyro_value.z);
             ESP_LOGI("MPU6505", "accel -> %f, %f ,%f",
-                    handle->acce_value.acce_x,  handle->acce_value.acce_y,  handle->acce_value.acce_z);
+                    handle->acce_value.x,  handle->acce_value.y,  handle->acce_value.z);
             vTaskDelay(pdMS_TO_TICKS(1000));
             uint8_t status;
             ESP_ERROR_CHECK(mpu6050_intr_get_status(handle, &status));

@@ -1,5 +1,6 @@
 #pragma once
 #include "stdint.h"
+#include "stdlib.h"
 
 typedef enum{
     GPIO_MNG_EMPTY = 0,
@@ -14,13 +15,15 @@ typedef enum{
     GPIO_MNG_OTHER
 }gpio_manager_mode_t;
 
-static gpio_manager_mode_t gpio_manager[30];
-
-
 typedef enum{
+    PWM_MNG_EMPTY = 0,
     PWM_MNG_SERVO,
-    PWM
+    PWM_MNG_ESC_SIMPLE,
+    PWM_MNG_ESC_BLDC,
+    PWM_MNG_ESC_BLDC_HELI,
+    PWM_MNG_HBRIDGE_A,
+    PWM_MNG_HBRIDGE_B
+}gpio_manager_pca_mode_t;
 
-}gpio_manager_mode_t;
-
-static uint16_t gpio_pca9685_manager[16];
+gpio_manager_pca_mode_t* gpio_manager_pca9685_init(void);
+gpio_manager_mode_t* gpio_maganger_init(void);

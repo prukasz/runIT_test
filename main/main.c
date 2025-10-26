@@ -5,15 +5,16 @@
 #include "nvs_flash.h"
 #include "i2c_tasks.h"
 #include "driver/i2c_master.h"
+#include "servo_manager.h"
 
 #define TAG "MAIN"
 #define I2C_SCL_NUM GPIO_NUM_21
 #define I2C_SDA_NUM GPIO_NUM_22
 
-static pca9685_handle_t pca9685;
-static pcf8575_handle_t pcf8575;
-static ads1115_handle_t ads1115;
-static mpu6050_handle_t mpu6050;
+pca9685_handle_t pca9685;
+pcf8575_handle_t pcf8575;
+ads1115_handle_t ads1115;
+mpu6050_handle_t mpu6050;
 
 static void i2c_dev_cfg(void);
 void ble_store_config_init(void);
@@ -67,12 +68,18 @@ void app_main(void) {
     xTaskCreate(task_mpu6050, "mpu", 2048, (void*)&mpu6050, 1, NULL);
     xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 5, NULL);
     xTaskCreate(notify_task, "notify", 4*1024, NULL, 1, NULL);
+    servo_manager_init();
+    ESP_ERROR_CHECK(servo_manager_add(1, 1));
+    ESP_ERROR_CHECK(servo_manager_configure(1,1000,45, 22, 45, 0, 0));
+    servo_manager_set_angle (1, 10);
     while(1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        servo_manager_set_angle (1, 10);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        servo_manager_neutral(1);
     }
 }
-
 
 static void i2c_dev_cfg(void){
     static i2c_master_bus_handle_t i2c_master_bus;
