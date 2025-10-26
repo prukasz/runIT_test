@@ -5,11 +5,9 @@ const char *TAG = "SERVO MANAGER";
 
 gpio_manager_pca_mode_t *gpio_pca9685_manager;
 
-static inline uint16_t deg_to_duty(int16_t angle_deg, int16_t range_deg, int16_t range_us) {
-    if (angle_deg < 0) angle_deg = 0;
-    if (angle_deg > range_deg) angle_deg = range_deg;
-    int32_t min_us = 1500 - (range_us / 2);
-    int32_t pulse_us = min_us + ((int32_t)angle_deg * range_us) / range_deg;
+static inline uint16_t deg_to_duty(uint16_t angle_deg, uint16_t range_deg, uint16_t range_us) {
+    uint16_t min_us = 1500 - (range_us / 2);
+    uint16_t pulse_us = min_us + ((uint32_t)angle_deg * range_us) / range_deg;
     return (uint16_t)((pulse_us * 4095) / 20000);
 }
 
@@ -66,18 +64,18 @@ esp_err_t servo_manager_configure(uint8_t gpio, uint16_t range_us, uint16_t rang
     if (is360){
         ESP_LOGI(TAG, "selected 360 servo neutral at 1500us /n ");
         servo_list[gpio]->range_us = range_us;
-        servo_list[gpio]->neutral_pos = 307;
-        servo_list[gpio]->limit_min = deg_to_duty(min_angle, range_deg, range_us);
-        servo_list[gpio]->limit_max = deg_to_duty(max_angle, range_deg, range_us);
+        servo_list[gpio]->neutral_pos = neutral_pos;
+        servo_list[gpio]->limit_min = min_angle;//deg_to_duty(min_angle, range_deg, range_us);
+        servo_list[gpio]->limit_max = max_angle;//deg_to_duty(max_angle, range_deg, range_us);
         servo_list[gpio]->range_us = range_us;
         servo_list[gpio]->range_dergrees = range_deg;
         servo_list[gpio]->is_360 = 1;
     }else{
         ESP_LOGI(TAG, "selected normal servo");
         servo_list[gpio]->range_us = range_us;
-        servo_list[gpio]->neutral_pos = deg_to_duty(max_angle, range_deg, neutral_pos);
-        servo_list[gpio]->limit_min = deg_to_duty(min_angle, range_deg, range_us);
-        servo_list[gpio]->limit_max = deg_to_duty(max_angle, range_deg, range_us);
+        servo_list[gpio]->neutral_pos = neutral_pos;
+        servo_list[gpio]->limit_min = min_angle;//deg_to_duty(min_angle, range_deg, range_us);
+        servo_list[gpio]->limit_max = max_angle;//deg_to_duty(max_angle, range_deg, range_us);
         servo_list[gpio]->range_us = range_us;
         servo_list[gpio]->range_dergrees = range_deg;
         servo_list[gpio]->is_360 = 0;
@@ -104,7 +102,7 @@ esp_err_t servo_manager_set_angle(uint8_t gpio, uint8_t angle){
     {
         return ESP_ERR_INVALID_ARG;
     }
-    int8_t angle_prepared;
+    uint8_t angle_prepared;
 
     if (angle > servo_list[gpio]->limit_max)
         angle_prepared = servo_list[gpio]->limit_max;
@@ -116,7 +114,9 @@ esp_err_t servo_manager_set_angle(uint8_t gpio, uint8_t angle){
         angle_prepared = angle;
     }
     pca9685.channel_pwm_value[gpio] = deg_to_duty (angle_prepared, servo_list[gpio]->range_dergrees, servo_list[gpio]->range_us);
+    ESP_LOGI(TAG, "servo duty %d", pca9685.channel_pwm_value[gpio]);
     return ESP_OK;
+
 }
 
 esp_err_t servo_manager_neutral(uint8_t gpio){
@@ -127,7 +127,19 @@ esp_err_t servo_manager_neutral(uint8_t gpio){
     {
         return ESP_ERR_INVALID_ARG;
     }
-    pca9685.channel_pwm_value[gpio] = deg_to_duty (servo_list[gpio]->neutral_pos, servo_list[gpio]->range_dergrees, servo_list[gpio]->range_us);
+    uint8_t angle_prepared;
+    if (servo_list[gpio]->neutral_pos > servo_list[gpio]->limit_max)
+        angle_prepared = servo_list[gpio]->limit_max;
+    else if (servo_list[gpio]->neutral_pos < servo_list[gpio]->limit_min)
+    {
+        angle_prepared = servo_list[gpio]->limit_min;
+    }
+    else{
+        angle_prepared = servo_list[gpio]->neutral_pos;
+    }
+    pca9685.channel_pwm_value[gpio] = deg_to_duty (angle_prepared, servo_list[gpio]->range_dergrees, servo_list[gpio]->range_us);
+    ESP_LOGI(TAG, "servo duty %d", pca9685.channel_pwm_value[gpio]);
     return ESP_OK;
+
 }
 

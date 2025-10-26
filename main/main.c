@@ -70,14 +70,15 @@ void app_main(void) {
     xTaskCreate(notify_task, "notify", 4*1024, NULL, 1, NULL);
     servo_manager_init();
     ESP_ERROR_CHECK(servo_manager_add(1, 1));
-    ESP_ERROR_CHECK(servo_manager_configure(1,1000,45, 22, 45, 0, 0));
-    servo_manager_set_angle (1, 10);
+    ESP_ERROR_CHECK(servo_manager_configure(1,1250,90,45, 90, 0, 0));
     while(1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        servo_manager_set_angle (1, 10);
+        servo_manager_set_angle (1,0);
         vTaskDelay(pdMS_TO_TICKS(1000));
         servo_manager_neutral(1);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        servo_manager_set_angle (1,90);
     }
 }
 

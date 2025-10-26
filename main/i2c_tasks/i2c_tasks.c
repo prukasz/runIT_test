@@ -22,7 +22,7 @@ void task_pca9685(void *parameters){
     while (1)
     {
         pca9685_update_pwm_values(handle, 0);
-        vTaskDelay(pdMS_TO_TICKS(1500));
+        vTaskDelay(pdMS_TO_TICKS(100));
         ESP_LOGI("pca", "pca set");
     }
 };
