@@ -1,6 +1,9 @@
 #pragma once
 #include "stdint.h"
 #include "stdlib.h"
+#include "stdbool.h"
+#include "esp_log.h"
+
 
 typedef enum{
     GPIO_MNG_EMPTY = 0,
@@ -25,5 +28,6 @@ typedef enum{
     PWM_MNG_HBRIDGE_B
 }gpio_manager_pca_mode_t;
 
-gpio_manager_pca_mode_t* gpio_manager_pca9685_init(void);
-gpio_manager_mode_t* gpio_maganger_init(void);
+gpio_manager_pca_mode_t gpio_manager_check_pca9685(uint8_t channel);
+void gpio_manager_set_pca9685(uint8_t channel, gpio_manager_pca_mode_t mode);
+gpio_manager_mode_t gpio_manager_check(uint8_t gpio);

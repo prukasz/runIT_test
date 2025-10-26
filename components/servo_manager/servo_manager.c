@@ -1,9 +1,7 @@
 #include "servo_manager.h"
-
-const char *TAG = "SERVO MANAGER";
+static const char *TAG = "SERVO MANAGER";
 #define MAXGPIO 16
 
-gpio_manager_pca_mode_t *gpio_pca9685_manager;
 
 static inline uint16_t deg_to_duty(uint16_t angle_deg, uint16_t range_deg, uint16_t range_us) {
     uint16_t min_us = 1500 - (range_us / 2);
@@ -28,21 +26,16 @@ esp_err_t servo_manager_init(){
     if (pca9685.freq!=50){
        pca9685_set_pwm_frequency(&pca9685, 50);
     }
-    gpio_pca9685_manager = gpio_manager_pca9685_init();
     return ESP_OK;
 }
 
 esp_err_t servo_manager_add(uint8_t gpio, uint8_t id)
 {
-    if(gpio>=MAXGPIO){
-        return ESP_ERR_NOT_SUPPORTED;
-    }
-    else if (PWM_MNG_EMPTY != gpio_pca9685_manager[gpio])
+    if (PWM_MNG_EMPTY != gpio_manager_check_pca9685(gpio))
     {
-
         return ESP_ERR_NOT_SUPPORTED;
     }
-    gpio_pca9685_manager[gpio] = PWM_MNG_SERVO;
+    gpio_manager_set_pca9685(gpio, PWM_MNG_SERVO);
     servo_list[gpio] = (servo_instance_t*)calloc(1, sizeof(servo_instance_t));
     servo_list[gpio]->id = id;
     servo_list[gpio]->neutral_pos = 307;
@@ -56,7 +49,7 @@ esp_err_t servo_manager_add(uint8_t gpio, uint8_t id)
 
 esp_err_t servo_manager_configure(uint8_t gpio, uint16_t range_us, uint16_t range_deg, uint8_t neutral_pos, uint8_t max_angle,
     uint8_t min_angle, bool is360){
-    if (gpio>=MAXGPIO||gpio_pca9685_manager[gpio] != PWM_MNG_SERVO){
+    if (gpio_manager_check_pca9685(gpio) != PWM_MNG_SERVO){
         ESP_LOGW(TAG, "Invalid servo selected");
         return ESP_ERR_NOT_SUPPORTED;
     }
@@ -83,25 +76,23 @@ esp_err_t servo_manager_configure(uint8_t gpio, uint16_t range_us, uint16_t rang
     return ESP_OK;
 }
 esp_err_t servo_manager_delete(uint8_t gpio){
-    if(gpio>=MAXGPIO){
-        return ESP_ERR_NOT_SUPPORTED;
+    if(PWM_MNG_SERVO == gpio_manager_check_pca9685(gpio)){
+    free(servo_list[gpio]);
+    gpio_manager_set_pca9685(gpio, PWM_MNG_EMPTY);
+    return ESP_OK;
+
     }
-    else if (PWM_MNG_EMPTY == gpio_pca9685_manager[gpio])
+    else if(PWM_MNG_EMPTY == gpio_manager_check_pca9685(gpio))
     {
         return ESP_OK;
     }
-    free(servo_list[gpio]);
-    gpio_pca9685_manager[gpio] = PWM_MNG_EMPTY;
     return ESP_OK;
 }
 esp_err_t servo_manager_set_angle(uint8_t gpio, uint8_t angle){
-    if(gpio>=MAXGPIO){
+    if(PWM_MNG_SERVO!=gpio_manager_check_pca9685(gpio)){
         return ESP_ERR_NOT_SUPPORTED;
     }
-    else if (PWM_MNG_EMPTY == gpio_pca9685_manager[gpio])
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+
     uint8_t angle_prepared;
 
     if (angle > servo_list[gpio]->limit_max)
@@ -116,16 +107,11 @@ esp_err_t servo_manager_set_angle(uint8_t gpio, uint8_t angle){
     pca9685.channel_pwm_value[gpio] = deg_to_duty (angle_prepared, servo_list[gpio]->range_dergrees, servo_list[gpio]->range_us);
     ESP_LOGI(TAG, "servo duty %d", pca9685.channel_pwm_value[gpio]);
     return ESP_OK;
-
 }
 
 esp_err_t servo_manager_neutral(uint8_t gpio){
-    if(gpio>=MAXGPIO){
+    if(PWM_MNG_SERVO!=gpio_manager_check_pca9685(gpio)){
         return ESP_ERR_NOT_SUPPORTED;
-    }
-    else if (PWM_MNG_EMPTY == gpio_pca9685_manager[gpio])
-    {
-        return ESP_ERR_INVALID_ARG;
     }
     uint8_t angle_prepared;
     if (servo_list[gpio]->neutral_pos > servo_list[gpio]->limit_max)
@@ -140,6 +126,4 @@ esp_err_t servo_manager_neutral(uint8_t gpio){
     pca9685.channel_pwm_value[gpio] = deg_to_duty (angle_prepared, servo_list[gpio]->range_dergrees, servo_list[gpio]->range_us);
     ESP_LOGI(TAG, "servo duty %d", pca9685.channel_pwm_value[gpio]);
     return ESP_OK;
-
 }
-
