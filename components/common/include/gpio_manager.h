@@ -3,6 +3,7 @@
 #include "stdlib.h"
 #include "stdbool.h"
 #include "esp_log.h"
+#include "esp_err.h"
 
 
 typedef enum{
@@ -29,5 +30,5 @@ typedef enum{
 }gpio_manager_pca_mode_t;
 
 gpio_manager_pca_mode_t gpio_manager_check_pca9685(uint8_t channel);
-void gpio_manager_set_pca9685(uint8_t channel, gpio_manager_pca_mode_t mode);
+esp_err_t gpio_manager_set_pca9685(uint8_t channel, gpio_manager_pca_mode_t mode);
 gpio_manager_mode_t gpio_manager_check(uint8_t gpio);

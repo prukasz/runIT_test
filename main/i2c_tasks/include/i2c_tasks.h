@@ -4,7 +4,6 @@
 #include "ads1115.h"
 #include "mpu6050.h"
 #include "freertos/task.h"
-#include "freertos/task.h"
 #include "esp_log.h"
 
 void task_pca9685(void *parameters);

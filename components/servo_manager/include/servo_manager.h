@@ -11,6 +11,7 @@
 /* this module does not provide direct i2c servo steering
  only prepares data and manager servos for pca9685*/
 
+uint16_t deg_to_duty(uint16_t angle_deg, uint16_t range_deg, uint16_t range_us);
 
 esp_err_t servo_manager_init();
 esp_err_t servo_manager_add(uint8_t gpio, uint8_t id);

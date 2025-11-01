@@ -19,5 +19,5 @@ dependencies:
   ads1115:
     git: https://github.com/prukasz/ads1115
     version: main
-
+  
 

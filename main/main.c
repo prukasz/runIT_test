@@ -1,4 +1,3 @@
-/* Includes */
 #include "gap.h"
 #include "gatt_svc.h"
 #include "nimble/nimble_port.h"
@@ -6,10 +5,17 @@
 #include "i2c_tasks.h"
 #include "driver/i2c_master.h"
 #include "servo_manager.h"
+#include "esc_manager.h"
+
 
 #define TAG "MAIN"
 #define I2C_SCL_NUM GPIO_NUM_21
 #define I2C_SDA_NUM GPIO_NUM_22
+
+
+
+
+extern uint8_t chr_val_1[23];
 
 pca9685_handle_t pca9685;
 pcf8575_handle_t pcf8575;
@@ -69,16 +75,16 @@ void app_main(void) {
     xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 5, NULL);
     xTaskCreate(notify_task, "notify", 4*1024, NULL, 1, NULL);
     servo_manager_init();
+    esc_manager_init();
     ESP_ERROR_CHECK(servo_manager_add(1, 1));
+    ESP_ERROR_CHECK(esc_manager_add(15, 16));
+        esc_manager_arm(15);
+    vTaskDelay(pdMS_TO_TICKS(5000));
     ESP_ERROR_CHECK(servo_manager_configure(1,1250,90,45, 90, 0, 0));
     while(1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
         servo_manager_set_angle (1,0);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        servo_manager_neutral(1);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        servo_manager_set_angle (1,90);
     }
 }
 

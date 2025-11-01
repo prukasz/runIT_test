@@ -3,7 +3,7 @@ static const char *TAG = "SERVO MANAGER";
 #define MAXGPIO 16
 
 
-static inline uint16_t deg_to_duty(uint16_t angle_deg, uint16_t range_deg, uint16_t range_us) {
+uint16_t deg_to_duty(uint16_t angle_deg, uint16_t range_deg, uint16_t range_us) {
     uint16_t min_us = 1500 - (range_us / 2);
     uint16_t pulse_us = min_us + ((uint32_t)angle_deg * range_us) / range_deg;
     return (uint16_t)((pulse_us * 4095) / 20000);
