@@ -44,7 +44,7 @@ static void nimble_host_task(void *param) {
 
 void chr_msg_buffer_print(const chr_msg_buffer_t *buf) {
     const ble_msg_node_t *node = buf->head;
-    size_t index = 0;
+    int8_t index = 0;
 
     if (!node) {
         ESP_LOGI(TAG, "Buffer empty.");
@@ -83,12 +83,13 @@ void app_main(void) {
     xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 5, NULL);
     main_task = xTaskGetCurrentTaskHandle();
     emulator_init();
-    emulator_start_execution();
     while(1){
-
+        emulator_start_execution();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        emulator_stop_execution();
         vTaskDelay(pdMS_TO_TICKS(1000));
         chr_msg_buffer_print(&ble_rx_buffer_1);
-
+        taskYIELD();
     }
 }
 

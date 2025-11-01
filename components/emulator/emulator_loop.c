@@ -48,4 +48,4 @@ emulator_err_t loop_stop(void) {
     esp_timer_stop(loop_timer_handle);
     loop_status = EMU_STOPPED;
     return EMU_OK;
-}
+    }

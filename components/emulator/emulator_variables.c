@@ -26,12 +26,7 @@ emulator_err_t emulator_dataholder_create(emu_mem_t *mem, const emu_size_t *size
     mem->b   = calloc(sizes->b, sizeof(bool));
     mem->custom = calloc(sizes->custom, sizeof(int16_t));
 
-    // check for failure
-    if (!mem->i8 || !mem->u8 || !mem->f) {
-        ESP_LOGE(TAG, "Allocation failed");
-        emulator_dataholder_free(mem);
-        return EMU_ERR_NO_MEMORY;
-    }
+    //todo check if really allocated 
 
     ESP_LOGI(TAG, "Dataholder created successfully");
     return EMU_OK;

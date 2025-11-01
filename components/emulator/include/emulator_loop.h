@@ -27,5 +27,6 @@ emulator_err_t loop_stop(void);
 
 emulator_err_t emulator_init();
 emulator_err_t emulator_start_execution();
+emulator_err_t emulator_stop_execution();
 
 void emulator_body_task(void* params);

@@ -13,18 +13,14 @@ static UBaseType_t task_priority = 4;
 static TaskHandle_t emulator_body_handle;
 
 SemaphoreHandle_t emulator_start;
+emu_mem_t mem;
+emu_size_t mem_size;
 
-void emulator_body_task(void* params){
-
-    while(1){
-        if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
-            ESP_LOGI("emu", "semaphore taken");
-        }
-        taskYIELD();
-    }
-}
 
 emulator_err_t emulator_init(){
+    mem_size.d = 100;
+    mem_size.i8 = 100;
+    emulator_dataholder_create(&mem, &mem_size);
     emulator_start = xSemaphoreCreateBinary();
     xTaskCreate(emulator_body_task, MAIN_BODY, stack_depth, NULL, task_priority, &emulator_body_handle);
     return EMU_OK;
@@ -49,7 +45,10 @@ emulator_err_t emulator_start_execution(){
     return EMU_OK;
 }  //start execution
 
-//emulator_err_t emulator_stop_execution(){}   //stop and preserve state
+emulator_err_t emulator_stop_execution(){
+    loop_stop();
+    return EMU_OK;
+}   //stop and preserve state
 
 //emulator_err_t emulator_halt_execution(){}   //emergency stop
 
@@ -61,7 +60,15 @@ emulator_err_t emulator_start_execution(){
 
 //emulator_err_t emulator_run_with_remote(){}   //allows remote interaction
 
-
+void emulator_body_task(void* params){
+    //form here will be executed all logic 
+    while(1){
+        if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
+            ESP_LOGI("emu", "semaphore taken");
+        }
+        taskYIELD();
+    }
+}
 
 
 
