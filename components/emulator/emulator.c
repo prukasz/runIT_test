@@ -1,45 +1,72 @@
-#include "emulator.h"
-#include "esp_log.h"
+#include "emulator_loop.h"
+#include "emulator_variables.h"
+#include "gatt_buff.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "esp_log.h"
 
-static const char *TAG = "LOOP_TIMER";
-static uint64_t loop_period_us;
-static esp_timer_create_args_t loop_timer_params;
-static esp_timer_handle_t loop_timer_handle;
-static loop_status_t loop_status = LOOP_NOT_SET;
+static chr_msg_buffer_t source;
+static const char * MAIN_BODY = "EMULATOR TASK";
+static uint32_t stack_depth = 10*1024;
+static UBaseType_t task_priority = 4;
+static TaskHandle_t emulator_body_handle;
 
-static void IRAM_ATTR loop_intr_handler(void *parameters) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // xQueueSendFromISR(...);
-    if (xHigherPriorityTaskWoken) portYIELD_FROM_ISR();
+SemaphoreHandle_t emulator_start;
+
+void emulator_body_task(void* params){
+
+    while(1){
+        if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
+            ESP_LOGI("emu", "semaphore taken");
+        }
+        taskYIELD();
+    }
 }
 
-loop_err_t loop_create_set_period(uint64_t period) {
-    ESP_LOGI(TAG, "Creating loop timer...");
-    loop_timer_params.name = TAG;
-    loop_timer_params.callback = &loop_intr_handler;
-    loop_timer_params.dispatch_method = ESP_TIMER_ISR;
-    ESP_ERROR_CHECK(esp_timer_create(&loop_timer_params, &loop_timer_handle));
-
-    if (period > LOOP_PERIOD_MAX) period = LOOP_PERIOD_MAX;
-    if (period < LOOP_PERIOD_MIN) period = LOOP_PERIOD_MIN;
-
-    loop_period_us = period;
-    loop_status = LOOP_SET;
-    return LOOP_ERR_OK;
+emulator_err_t emulator_init(){
+    emulator_start = xSemaphoreCreateBinary();
+    xTaskCreate(emulator_body_task, MAIN_BODY, stack_depth, NULL, task_priority, &emulator_body_handle);
+    return EMU_OK;
+}
+emulator_err_t emulator_source_assign(chr_msg_buffer_t * msg){
+    if (msg == NULL){
+        return EMU_ERR_INVALID_ARG;
+    }
+    source = *msg;
+    return EMU_OK;
 }
 
-loop_err_t loop_start(void) {
-    ESP_LOGI(TAG, "Starting loop");
-    ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
-    loop_status = LOOP_RUNNING;
-    return LOOP_ERR_OK;
-}
+//emulator_err_t emulator_source_analyze(){}   //check packets completeness
 
-loop_err_t loop_stop(void) {
-    ESP_LOGI(TAG, "Stopping loop");
-    esp_timer_stop(loop_timer_handle);
-    loop_status = LOOP_STOPPED;
-    return LOOP_ERR_OK;
-}
+//emulator_err_t emulator_source_get_varialbes(){}  //parse variable list
+
+//emulator_err_t emulator_source_get_config(){}  //get config data from source
+
+emulator_err_t emulator_start_execution(){
+    loop_create_set_period(100000); ///temporary
+    loop_start();
+    return EMU_OK;
+}  //start execution
+
+//emulator_err_t emulator_stop_execution(){}   //stop and preserve state
+
+//emulator_err_t emulator_halt_execution(){}   //emergency stop
+
+//emulator_err_t emulator_end_execution(){}    //end execution (finish loop)
+
+//emulator_err_t emulator_debug_varialbles(){}  //dump values
+
+//emulator_err_t emulator_debug_code(){}   //dump code execution state
+
+//emulator_err_t emulator_run_with_remote(){}   //allows remote interaction
+
+
+
+
+
+
+
+
+
+

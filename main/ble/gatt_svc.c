@@ -1,12 +1,13 @@
 #include "common.h"
 #include "gatt_svc.h"
 #include "gatt_uuids.h"
+#include "gatt_buff.h"
+
+static chr_msg_buffer_t *code_rx_buffer = NULL;  // internal, not global outside this file
 
 /*-----callback when characteristics is accesed----*/
 static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                            struct ble_gatt_access_ctxt *ctxt, void *arg);
-
-
 
 /*-----callback when characteristics descriptor is accesed----*/
 static int chr_user_desc_access_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -28,10 +29,8 @@ static uint16_t chr_conn_handle_2 = 0;
 
 
 /*For value storage*/
-uint8_t chr_val_1[23] = {0};
-static uint8_t chr_val_2[23] = {0};
+uint8_t data_to_send[256] = {0};
 
-static size_t chr_val_len_2 = 0;
 
 /*User (readable) descriptor value as text do be displayed*/
 static const char chr_user_desc_1[] = "description_a";
@@ -94,7 +93,7 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     if (attr_handle == chr_val_handle_1) {
         //read only option
         if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-            os_mbuf_append(ctxt->om, chr_val_1, sizeof(chr_val_1)); //load message to buffer
+            os_mbuf_append(ctxt->om, data_to_send, sizeof(data_to_send)); //load message to buffer
             ESP_LOGI("GATT", "Device %d read Characteristics_1", conn_handle);
             ESP_LOGI("GATT", "Access op: %d, attr handle: 0x%04x", ctxt->op, attr_handle);
             return 0;
@@ -105,12 +104,11 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     else if (attr_handle == chr_val_handle_2) {
         //write only
         if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-            uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
-            os_mbuf_copydata(ctxt->om, 0, len, chr_val_2); //copy form buffer 
-            chr_val_len_2 = len;
-            ESP_LOGI("GATT", "Device %d wrote to Char B: %.*s",
-                     conn_handle, len, chr_val_2);
-            return 0;
+        uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+        uint8_t *temp = malloc(len);
+        os_mbuf_copydata(ctxt->om, 0, len, temp);
+        chr_msg_buffer_add(code_rx_buffer, temp, len);
+        free(temp);
         }
         return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
     }
@@ -168,14 +166,18 @@ void gatt_svr_subscribe_cb(struct ble_gap_event *event) {
     }
 }
 
-int gatt_svc_init(void) {
+int gatt_svc_init(chr_msg_buffer_t *rx_buffer) {
     ESP_LOGI(TAG, "gap_svc_init");
+    code_rx_buffer = rx_buffer;
     ble_svc_gatt_init();
     RETURN_ON_ERROR(ble_gatts_count_cfg(gatt_svr_svcs));
     RETURN_ON_ERROR(ble_gatts_add_svcs(gatt_svr_svcs));
+
     return 0;
 }
 
 void send_indication(void){
     chr_send_indication(&indicate_status_a, chr_conn_handle_1, chr_val_handle_1);
 }
+
+
