@@ -2,6 +2,8 @@ freertos config -> timer dispatch form ISR
 freertos config -> tickrate 1000Hz
 
 
+todo rework variables alocation in emulator
+
 #include <stdint.h>
 
 
@@ -22,8 +24,6 @@ typedef struct
 
 //FF00 -> Start zmiennych
 // xx * 11 -> ile zmiennych danych typów / header
-
-
 // *11
 // xx -> ile zmodyfikowanych danego typu 
 // xx -> ID_ zmiennej czyli indeks w tableli
@@ -40,3 +40,27 @@ typedef struct
 // FF/FE -> jest kolejne dane bloczku
 
 // 0000 -> Koniec kodu
+
+
+//wersja 2.0 
+FFFF start transmisji kodu
+(const L=10)
+FF00 || xx -> 8b || xx-> 16b || xx -> 32b || xx -> 64b ||  xx -> 1b || xx -> table1d || xx -> tablele 2d || xx -> table3d
+
+**wartości początkowe**
+L = 3 + ile*2
+FF0x -> kolejne typy|| xx -> ile || xx + xx (id/wartosc) || ........
+
+00FF || xxxx  statrt transmisji bloczkow || ile bloczków 
+
+FF/FE -> początek bloczku lub kontynuacja || xxxx -> id bloczku || dane 
+opcjonalnie FE || kolejne dane 
+
+FF -> kolejny bloczek;
+
+
+0000 -> koniec
+
+
+
+

@@ -1,8 +1,4 @@
 #include "emulator_loop.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "freertos/task.h"
 
 extern SemaphoreHandle_t emulator_start;
 
@@ -21,7 +17,7 @@ static void IRAM_ATTR loop_intr_handler(void *parameters) {
     if (xHigherPriorityTaskWoken) portYIELD_FROM_ISR();
 }
 
-emulator_err_t loop_create_set_period(uint64_t period) {
+emu_err_t loop_create_set_period(uint64_t period) {
     ESP_LOGI(TAG, "Creating loop timer");
     loop_timer_params.name = TAG;
     loop_timer_params.callback = &loop_intr_handler;
@@ -36,14 +32,15 @@ emulator_err_t loop_create_set_period(uint64_t period) {
     return EMU_OK;
 }
 
-emulator_err_t loop_start(void) {
+emu_err_t loop_start(void) {
     ESP_LOGI(TAG, "Starting loop");
     ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
     loop_status = EMU_RUNNING;
     return EMU_OK;
 }
 
-emulator_err_t loop_stop(void) {
+
+emu_err_t loop_stop(void) {
     ESP_LOGI(TAG, "Stopping loop");
     esp_timer_stop(loop_timer_handle);
     loop_status = EMU_STOPPED;

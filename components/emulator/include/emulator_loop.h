@@ -1,16 +1,10 @@
 #pragma once
 #include "esp_timer.h"
-#include "stdint.h"
+#include "emulator.h"
 
 #define LOOP_PERIOD_MIN 10000
 #define LOOP_PERIOD_MAX 100000
 
-typedef enum {
-    EMU_OK = 0,
-    EMU_ERR_INVALID_STATE,
-    EMU_ERR_INVALID_ARG,
-    EMU_ERR_NO_MEMORY,
-} emulator_err_t;
 
 typedef enum {
     EMU_NOT_SET,
@@ -21,12 +15,11 @@ typedef enum {
     EMU_FINISHED,
 } loop_status_t;
 
-emulator_err_t loop_create_set_period(uint64_t period);
-emulator_err_t loop_start(void);
-emulator_err_t loop_stop(void);
-
-emulator_err_t emulator_init();
-emulator_err_t emulator_start_execution();
-emulator_err_t emulator_stop_execution();
+emu_err_t loop_create_set_period(uint64_t period);
+emu_err_t loop_start(void);
+emu_err_t loop_stop(void);
+emu_err_t loop_init();
+emu_err_t loop_start_execution();
+emu_err_t loop_stop_execution();
 
 void emulator_body_task(void* params);

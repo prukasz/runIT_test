@@ -2,6 +2,9 @@
 #include "gatt_svc.h"
 #include "gatt_uuids.h"
 #include "gatt_buff.h"
+#include "emulator.h"
+
+extern QueueHandle_t emu_task_q;
 
 static chr_msg_buffer_t *code_rx_buffer = NULL;  // internal, not global outside this file
 
@@ -104,12 +107,22 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     else if (attr_handle == chr_val_handle_2) {
         //write only
         if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+            
         uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
         uint8_t *temp = malloc(len);
         os_mbuf_copydata(ctxt->om, 0, len, temp);
-        chr_msg_buffer_add(code_rx_buffer, temp, len);
+
+        emu_order_code_t order_code = (emu_order_code_t)(temp[0] << 8) | temp[1];
+        if (len == 2){
+            xQueueSend(emu_task_q,&order_code, pdMS_TO_TICKS(1000));
+            if(order_code == ORD_STOP_BYTES || order_code == ORD_START_BYTES || order_code == ORD_START_BLOCKS ){
+               chr_msg_buffer_add(code_rx_buffer, temp, len); 
+            }
+        }
+        else{chr_msg_buffer_add(code_rx_buffer, temp, len);}// do not fill buff with commands(add to queue)
         free(temp);
         }
+
         return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
     }
     return BLE_ATT_ERR_UNLIKELY;

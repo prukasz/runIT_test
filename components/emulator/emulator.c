@@ -8,73 +8,86 @@
 #include "emulator.h"
 
 
-static chr_msg_buffer_t source;
-static const char * MAIN_BODY = "EMULATOR TASK";
+static chr_msg_buffer_t *source;
+static const char * TAG = "EMULATOR TASK";
 static uint32_t stack_depth = 10*1024;
 static UBaseType_t task_priority = 4;
 static TaskHandle_t emulator_body_handle;
+QueueHandle_t emu_task_q;
 
+static bool is_code_start;
+static bool is_code_end;
+static bool is_blocks_start;
+
+emu_err_t code_set_start();
+emu_err_t code_set_blocks();
+emu_err_t code_set_end();
+void code_set_reset();
 
 SemaphoreHandle_t emulator_start;
 emu_mem_t mem;
 emu_size_t mem_size;
 
 
-emulator_err_t emulator_init(){
-    mem_size.d = 100;
-    mem_size.i8 = 100;
+emu_err_t loop_init(){
+    mem_size. cnt_size_8 = 100;
+    mem_size. cnt_size_64 = 100;
     emulator_dataholder_create(&mem, &mem_size);
     emulator_start = xSemaphoreCreateBinary();
-    xTaskCreate(emulator_body_task, MAIN_BODY, stack_depth, NULL, task_priority, &emulator_body_handle);
+    xTaskCreate(emulator_body_task, TAG, stack_depth, NULL, task_priority, &emulator_body_handle);
     return EMU_OK;
 }
-emulator_err_t emulator_source_assign(chr_msg_buffer_t * msg){
+emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
     if (msg == NULL){
         return EMU_ERR_INVALID_ARG;
     }
-    source = *msg;
+    source = msg;
     return EMU_OK;
 }
 
-//emulator_err_t emulator_source_analyze(){}   //check packets completeness
+//emu_err_t emulator_source_analyze(){} 
 
-//emulator_err_t emulator_source_get_varialbes(){}  //parse variable list
 
-//emulator_err_t emulator_source_get_config(){}  //get config data from source
+emu_err_t emulator_source_get_varialbes(){
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    return EMU_OK;
+}
 
-emulator_err_t emulator_start_execution(){
+//emu_err_t emulator_source_get_config(){}  //get config data from source
+
+emu_err_t loop_start_execution(){
     loop_create_set_period(100000); ///temporary
     loop_start();
     return EMU_OK;
 }  //start execution
 
-emulator_err_t emulator_stop_execution(){
+emu_err_t loop_stop_execution(){
     loop_stop();
     return EMU_OK;
 }   //stop and preserve state
 
-//emulator_err_t emulator_halt_execution(){}   //emergency stop
+//emu_err_t emulator_halt_execution(){}   //emergency stop
 
-//emulator_err_t emulator_end_execution(){}    //end execution (finish loop)
+//emu_err_t emulator_end_execution(){}    //end execution (finish loop)
 
-//emulator_err_t emulator_debug_varialbles(){}  //dump values
+//emu_err_t emulator_debug_varialbles(){}  //dump values
 
-//emulator_err_t emulator_debug_code(){}   //dump code execution state
+//emu_err_t emulator_debug_code(){}   //dump code execution state
 
-//emulator_err_t emulator_run_with_remote(){}   //allows remote interaction
+//emu_err_t emulator_run_with_remote(){}   //allows remote interaction
 
 void emulator_body_task(void* params){
     //form here will be executed all logic 
     while(1){
         if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
-            ESP_LOGI("emu", "semaphore taken");
+            ESP_LOGI(TAG, "semaphore taken");
         }
         taskYIELD();
     }
 }
 
 
-inq_handle_t *code_init(inq_define_t *inq_params){
+inq_handle_t *code_block_init(inq_define_t *inq_params){
 
     inq_handle_t *handle = (inq_handle_t*)calloc(1, sizeof(inq_handle_t));
 
@@ -129,6 +142,97 @@ void check_size(uint8_t x, uint16_t *total, uint8_t*bool_cnt){
 
 
 
+void emu(void* params){
+    ESP_LOGI(TAG, "emu task active");
+    emu_task_q  = xQueueCreate(3, sizeof(emu_order_code_t));
+    static emu_order_code_t orders;
+    while(1){
+        if (pdTRUE == xQueueReceive(emu_task_q, &orders, portMAX_DELAY)){
+            ESP_LOGI(TAG, "order 0x%04X" , orders);
+            switch (orders){
+            case ORD_PROCESS_VARIABLES:
+                // Handle processing variables
+                break;
+
+            case ORD_PROCESS_CODE:
+                // Handle processing code
+                break;
+
+            case ORD_CHECK_CODE:
+                // Handle checking completeness
+                break;
+
+            case ORD_START_BLOCKS:
+                // Handle starting blocks
+                code_set_blocks();
+                break;
+
+            case ORD_EMU_RUN:
+                // Handle emulation run
+                break;
+
+            case ORD_EMU_STOP:
+                // Handle emulation stop
+                code_set_end();
+                break;
+
+            case ORD_RESET_TRANSMISSION:
+                // Handle reset
+                code_set_reset();
+                chr_msg_buffer_clear(source);
+                break;
+
+            case ORD_START_BYTES:
+                // Handle start bytes
+                code_set_start();
+                break;
+
+            case ORD_STOP_BYTES:
+                // Handle stop bytes
+                break;
+
+            default:
+                // Unknown order
+                break;
+            }// end case
+        }//end if
+    } //end while
+};
 
 
 
+//flags for transmission keypoints
+emu_err_t code_set_start(){
+    if (is_code_start == true){
+        ESP_LOGE(TAG, "code transmission already started");
+        return EMU_ERR_CMD_START;
+    }
+    is_code_start = true;
+    ESP_LOGI(TAG, "code transmission started");
+    return EMU_OK;
+}
+emu_err_t code_set_blocks(){
+    if (is_blocks_start == true){
+        ESP_LOGE(TAG, "blocks transmission already started");
+        return EMU_ERR_CMD_START;
+    }
+    is_blocks_start = true;
+    ESP_LOGI(TAG, "blocks transmission started");
+    return EMU_OK;
+}
+emu_err_t code_set_end(){
+    if (is_code_end == true){
+        ESP_LOGE(TAG, "code already stopped");
+        return EMU_ERR_CMD_START;
+    }
+    is_code_end = true;
+    ESP_LOGI(TAG, "code end reached");
+    return EMU_OK;
+}
+
+void code_set_reset(){
+    is_code_start   = false;
+    is_blocks_start = false;
+    is_code_end     = false;
+    return;
+}

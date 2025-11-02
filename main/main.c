@@ -8,6 +8,8 @@
 #include "servo_manager.h"
 #include "esc_manager.h"
 #include "emulator_loop.h"
+#include "emulator.h"
+
 
 TaskHandle_t main_task;
 
@@ -81,12 +83,14 @@ void app_main(void) {
     // Configure NimBLE host callbacks
     nimble_host_config_init();  
     xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 5, NULL);
+    xTaskCreate(emu, "emu", 4*1024, NULL, 5, NULL);
     main_task = xTaskGetCurrentTaskHandle();
-    emulator_init();
+    loop_init();
+    emulator_source_assign(&ble_rx_buffer_1);
     while(1){
-        emulator_start_execution();
+        //loop_start_execution();
         vTaskDelay(pdMS_TO_TICKS(1000));
-        emulator_stop_execution();
+        //loop_stop_execution();
         vTaskDelay(pdMS_TO_TICKS(1000));
         chr_msg_buffer_print(&ble_rx_buffer_1);
         taskYIELD();
