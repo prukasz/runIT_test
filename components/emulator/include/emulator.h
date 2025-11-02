@@ -7,9 +7,9 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
-#define GET_4BIT_FIELD(val, idx) (((val) >> ((idx) * 4)) & 0xF)
-#define GET_DATA_TYPE(val, idx)  ((data_types_t)GET_4BIT_FIELD(val, idx))
-
+/**
+* @brief emulator scope errors
+*/
 typedef enum {
     EMU_OK = 0,
     EMU_ERR_INVALID_STATE,
@@ -20,16 +20,20 @@ typedef enum {
     EMU_ERR_CMD_START_BLOCKS,
 }emu_err_t;
 
+/**
+* @brief commands from BLE
+*/
 typedef enum {
     ORD_STOP_BYTES        = 0x0000,
     ORD_START_BYTES       = 0xFFFF,
     ORD_START_BLOCKS      = 0x00FF,
     ORD_PROCESS_VARIABLES = 0x0010,
-    ORD_RESET_TRANSMISSION= 0x0001,
+    ORD_RESET_TRANSMISSION= 0x0001, 
     ORD_PROCESS_CODE      = 0x0020,
     ORD_CHECK_CODE        = 0x0030,
-    ORD_EMU_RUN           = 0x1000,
-    ORD_EMU_STOP          = 0x2000,
+    ORD_EMU_LOOP_RUN      = 0x1000,
+    ORD_EMU_LOOP_STOP     = 0x2000,
+    ORD_EMU_LOOP_INIT     = 0x2137,
 } emu_order_code_t;
 
 
@@ -59,7 +63,6 @@ typedef struct{
 }inq_handle_t;
 
 emu_err_t emulator_source_assign(chr_msg_buffer_t * msg);
-void check_size(uint8_t x, uint16_t *total, uint8_t*bool_cnt);
 inq_handle_t *code_block_init(inq_define_t *inq_params);
 
 void emu(void* params);

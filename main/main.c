@@ -16,7 +16,6 @@ TaskHandle_t main_task;
 #define TAG "MAIN"
 #define I2C_SCL_NUM GPIO_NUM_21
 #define I2C_SDA_NUM GPIO_NUM_22
-extern uint8_t data_to_send[256];
 void ble_store_config_init(void);
 static void on_stack_reset(int reason); // Called on BLE stack reset
 static void on_stack_sync(void);        // Called when stack syncs with controller
@@ -65,8 +64,8 @@ void chr_msg_buffer_print(const chr_msg_buffer_t *buf) {
 
 void app_main(void) {
 
-    static chr_msg_buffer_t ble_rx_buffer_1;
-    chr_msg_buffer_init(&ble_rx_buffer_1);
+    static chr_msg_buffer_t emu_in_buffer;
+    chr_msg_buffer_init(&emu_in_buffer);
     esp_err_t ret;
     ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -78,21 +77,19 @@ void app_main(void) {
 
     // Initialize GAP and GATT services
     ble_gap_configure();
-    gatt_svc_init(&ble_rx_buffer_1);
+    gatt_svc_init(&emu_in_buffer);
     
     // Configure NimBLE host callbacks
     nimble_host_config_init();  
-    xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 5, NULL);
-    xTaskCreate(emu, "emu", 4*1024, NULL, 5, NULL);
+    xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 3, NULL);
+    xTaskCreate(emu, "emu", 4*1024, NULL, 2, NULL);
     main_task = xTaskGetCurrentTaskHandle();
-    loop_init();
-    emulator_source_assign(&ble_rx_buffer_1);
+    
+    emulator_source_assign(&emu_in_buffer);
+
     while(1){
-        //loop_start_execution();
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        //loop_stop_execution();
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        chr_msg_buffer_print(&ble_rx_buffer_1);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        chr_msg_buffer_print(&emu_in_buffer);
         taskYIELD();
     }
 }

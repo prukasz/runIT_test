@@ -7,19 +7,18 @@
 
 
 typedef enum {
-    EMU_NOT_SET,
-    EMU_SET,
-    EMU_RUNNING,
-    EMU_STOPPED,
-    EMU_HALTED,
-    EMU_FINISHED,
+    LOOP_NOT_SET,
+    LOOP_SET,
+    LOOP_RUNNING,
+    LOOP_STOPPED,
+    LOOP_HALTED,
+    LOOP_FINISHED,
 } loop_status_t;
 
-emu_err_t loop_create_set_period(uint64_t period);
 emu_err_t loop_start(void);
 emu_err_t loop_stop(void);
-emu_err_t loop_init();
-emu_err_t loop_start_execution();
-emu_err_t loop_stop_execution();
+emu_err_t loop_init(void);
+emu_err_t loop_start_execution(void);
+emu_err_t loop_stop_execution(void);
 
-void emulator_body_task(void* params);
+void loop_task(void* params);

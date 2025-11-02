@@ -10,9 +10,6 @@
 
 static chr_msg_buffer_t *source;
 static const char * TAG = "EMULATOR TASK";
-static uint32_t stack_depth = 10*1024;
-static UBaseType_t task_priority = 4;
-static TaskHandle_t emulator_body_handle;
 QueueHandle_t emu_task_q;
 
 static bool is_code_start;
@@ -29,14 +26,6 @@ emu_mem_t mem;
 emu_size_t mem_size;
 
 
-emu_err_t loop_init(){
-    mem_size. cnt_size_8 = 100;
-    mem_size. cnt_size_64 = 100;
-    emulator_dataholder_create(&mem, &mem_size);
-    emulator_start = xSemaphoreCreateBinary();
-    xTaskCreate(emulator_body_task, TAG, stack_depth, NULL, task_priority, &emulator_body_handle);
-    return EMU_OK;
-}
 emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
     if (msg == NULL){
         return EMU_ERR_INVALID_ARG;
@@ -56,7 +45,6 @@ emu_err_t emulator_source_get_varialbes(){
 //emu_err_t emulator_source_get_config(){}  //get config data from source
 
 emu_err_t loop_start_execution(){
-    loop_create_set_period(100000); ///temporary
     loop_start();
     return EMU_OK;
 }  //start execution
@@ -76,7 +64,7 @@ emu_err_t loop_stop_execution(){
 
 //emu_err_t emulator_run_with_remote(){}   //allows remote interaction
 
-void emulator_body_task(void* params){
+void loop_task(void* params){
     //form here will be executed all logic 
     while(1){
         if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
@@ -111,44 +99,14 @@ inq_handle_t *code_block_init(inq_define_t *inq_params){
     return handle;
 }
 
-void check_size(uint8_t x, uint16_t *total, uint8_t*bool_cnt){
-      
-      switch ((data_types_t)x) {
-            case DATA_UI8:
-            case DATA_I8:   
-                (*total) += sizeof(uint8_t);
-                break;
-            case DATA_UI16:
-            case DATA_I16:
-                (*total) += sizeof(uint16_t);
-                break;
-            case DATA_UI32:
-            case DATA_I32:
-            case DATA_F:
-                (*total) += sizeof(uint32_t);
-                break;
-            case DATA_UI64:
-            case DATA_I64:
-            case DATA_D:
-                (*total) += sizeof(uint64_t);
-                break;
-            case DATA_B:
-                (*bool_cnt) ++;
-            default:
-                break;
-            (*total) += (*bool_cnt+ 7) / 8;
-        }
-}
-
-
-
 void emu(void* params){
+    emulator_dataholder_create(&mem, &mem_size);
     ESP_LOGI(TAG, "emu task active");
     emu_task_q  = xQueueCreate(3, sizeof(emu_order_code_t));
     static emu_order_code_t orders;
     while(1){
         if (pdTRUE == xQueueReceive(emu_task_q, &orders, portMAX_DELAY)){
-            ESP_LOGI(TAG, "order 0x%04X" , orders);
+            ESP_LOGI(TAG, "execute order 0x%04X" , orders);
             switch (orders){
             case ORD_PROCESS_VARIABLES:
                 // Handle processing variables
@@ -167,13 +125,15 @@ void emu(void* params){
                 code_set_blocks();
                 break;
 
-            case ORD_EMU_RUN:
-                // Handle emulation run
+            case ORD_EMU_LOOP_RUN:
+                loop_start();
                 break;
+            case ORD_EMU_LOOP_INIT:
+                loop_init();
+            break;
 
-            case ORD_EMU_STOP:
-                // Handle emulation stop
-                code_set_end();
+            case ORD_EMU_LOOP_STOP:
+                loop_stop();
                 break;
 
             case ORD_RESET_TRANSMISSION:
@@ -188,7 +148,7 @@ void emu(void* params){
                 break;
 
             case ORD_STOP_BYTES:
-                // Handle stop bytes
+                code_set_end();
                 break;
 
             default:
@@ -236,3 +196,4 @@ void code_set_reset(){
     is_code_end     = false;
     return;
 }
+

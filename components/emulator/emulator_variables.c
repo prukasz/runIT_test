@@ -5,6 +5,8 @@
 
 static const char *TAG = "DATAHOLDER";
 
+
+
 emu_err_t emulator_dataholder_create(emu_mem_t *mem, emu_size_t *sizes)
 {
     if (!mem || !sizes) return EMU_ERR_INVALID_ARG;
@@ -32,4 +34,33 @@ void emulator_dataholder_free(emu_mem_t *mem)
 
     (*mem)= (emu_mem_t){0};//clear pointers
     ESP_LOGI(TAG, "Dataholder memory freed");
+}
+
+void check_size(uint8_t x, uint16_t *total, uint8_t*bool_cnt){
+      
+      switch ((data_types_t)x) {
+            case DATA_UI8:
+            case DATA_I8:   
+                (*total) += sizeof(uint8_t);
+                break;
+            case DATA_UI16:
+            case DATA_I16:
+                (*total) += sizeof(uint16_t);
+                break;
+            case DATA_UI32:
+            case DATA_I32:
+            case DATA_F:
+                (*total) += sizeof(uint32_t);
+                break;
+            case DATA_UI64:
+            case DATA_I64:
+            case DATA_D:
+                (*total) += sizeof(uint64_t);
+                break;
+            case DATA_B:
+                (*bool_cnt) ++;
+            default:
+                break;
+            (*total) += (*bool_cnt+ 7) / 8;
+        }
 }
