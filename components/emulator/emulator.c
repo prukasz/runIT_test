@@ -6,6 +6,7 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "emulator.h"
+#include "string.h"
 
 
 static chr_msg_buffer_t *source;
@@ -52,7 +53,6 @@ emu_err_t emulator_source_get_varialbes(){
                 return EMU_OK;
             }
         }
-
     }
     ESP_LOGE(TAG, "No data to process foud");
     return EMU_ERR_INVALID_DATA;
@@ -83,39 +83,55 @@ emu_err_t loop_stop_execution(){
 void loop_task(void* params){
     //form here will be executed all logic 
     while(1){
-        uint8_t data =  MEM_GET(DATA_UI8, 1);
         if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
+            uint8_t data =  MEM_GET(DATA_UI8, 1);
             ESP_LOGI(TAG, "semaphore taken, %d", data);
             data ++;
-            MEM_SET(DATA_UI8, 1, data);
+            MEM_SET(DATA_UI8, 1, &data);
             }
         taskYIELD();
     }
 }
 
 
-inq_handle_t *code_block_init(inq_define_t *inq_params){
+block_handle_t *block_init(block_define_t *block_define){
+    //init block
+    block_handle_t *block = (block_handle_t*)calloc(1,sizeof(block_handle_t));
+    block->id = block_define->id; 
+    block->type = block_define->type;
+    block->in_cnt = block_define->in_cnt;
+    block->in_data_type_table = (data_types_t*)calloc((block->in_cnt),sizeof(data_types_t));
+    memcpy(block->in_data_type_table, block_define->in_data_type_table, block->in_cnt*sizeof(data_types_t));
+    block->q_cnt = block_define->q_cnt;
+    block->q_nodes_cnt = block_define->q_nodes_cnt;
+    block->q_node_ids = (uint16_t*)calloc(block->q_nodes_cnt, sizeof(uint16_t));
+    memcpy(block->q_node_ids, block_define->q_node_ids, block->q_nodes_cnt*sizeof(uint16_t));
+    block->q_data_type_table = (data_types_t*)calloc((block->q_cnt),sizeof(data_types_t));
+    free(block_define);
+    
+    
+    block->in_data_offsets=(size_t*)calloc(block->in_cnt,sizeof(size_t));
+    size_t size_to_allocate = 0;
+    //allocating space for left pointers
+    for(int i = 0; i<block->in_cnt; i++)
+    {
+        block->in_data_offsets[i] = size_to_allocate;
+        size_to_allocate = size_to_allocate + data_size(block->in_data_type_table[i]);
+    }
 
-    inq_handle_t *handle = (inq_handle_t*)calloc(1, sizeof(inq_handle_t));
+    block->in_data = (void*)calloc(1,size_to_allocate);
 
-    uint16_t size = 0;
-    uint8_t bool_cnt = 0;
-    for (uint8_t i = 0; i < inq_params->in_count; i++){
-    check_size(GET_DATA_TYPE(inq_params->in_type, i),&size, &bool_cnt);
-    }//end for
-    handle->in_data = calloc(1, size); //allocate memory for copies
-    handle->id  = inq_params -> id;
+    block->q_data_offsets=(size_t*)calloc(block->q_cnt,sizeof(size_t));
+    size_to_allocate = 0;
+    for(int i = 0; i<block->q_cnt; i++)
+    {
+        block->q_data_offsets[i] = size_to_allocate;
+        size_to_allocate = size_to_allocate + data_size(block->q_data_type_table[i]);
+    }
 
-    bool_cnt =0; 
-    size = 0;
-    for (uint8_t i = 0; i < inq_params->q_cnt; i++){
-    check_size(GET_DATA_TYPE(inq_params->q_type, i),&size, &bool_cnt);
-    }//end for
-        
-    handle ->q_data = calloc(1, size); // check data size to allock
-    handle ->q_ids = (uint16_t*)calloc(inq_params->q_nodes_count, sizeof(uint16_t));
-    free(inq_params);
-    return handle;
+    block->q_data = (void*)calloc(1,size_to_allocate);
+
+    return block;
 }
 
 void emu(void* params){
@@ -215,4 +231,3 @@ void code_set_reset(){
     is_code_end     = false;
     return;
 }
-
