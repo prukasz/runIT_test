@@ -24,7 +24,7 @@ void code_set_reset();
 
 SemaphoreHandle_t emulator_start;
 emu_mem_t mem;
-uint8_t emu_mem_size[12];
+uint8_t emu_mem_size[11];
 
 
 emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
@@ -58,7 +58,7 @@ emu_err_t emulator_process_variables_from_source() {
             // Found FFFF, check if the next packet is FF00
             if ((i + 1) < chr_msg_buffer_size(source)) {
                 chr_msg_buffer_get(source, i + 1, &data, &len);
-                if (len >= 13 && ((data[0] << 8) | data[1]) == ORD_VARIABLES_BYTES) {
+                if (len == 12 && ((data[0] << 8) | data[1]) == ORD_VARIABLES_BYTES) {
                     ESP_LOGI(TAG, "Found variable definition start at buffer index %d", i);
                     start_index = i + 1;
                     break;
@@ -74,7 +74,7 @@ emu_err_t emulator_process_variables_from_source() {
 
     // --- 1. Parse and create simple 1D arrays ---
     chr_msg_buffer_get(source, start_index, &data, &len);
-    memcpy(emu_mem_size, &data[2], 11); // Copy the 11 size bytes
+    memcpy(emu_mem_size, &data[2], 10); // Copy the 10 size bytes
     ESP_LOGI(TAG, "Creating simple 1D data holder.");
     for(int i=0; i<11; ++i) ESP_LOGD(TAG, "  type %d: count %d", i, emu_mem_size[i]);
     emulator_dataholder_create(&mem, emu_mem_size);
@@ -165,11 +165,15 @@ emu_err_t loop_stop_execution(){
 void loop_task(void* params){
     //form here will be executed all logic 
     while(1){
-        if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
-            uint8_t data =  MEM_GET(DATA_UI8, 1);
-            ESP_LOGI(TAG, "semaphore taken, %d", data);
-            data ++;
-            MEM_SET(DATA_UI8, 1, &data);
+        if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)) {
+            ESP_LOGI(TAG, "--- Loop Task Tick ---");
+
+            // Simple test: read a value, increment it, and write it back.
+            uint8_t data =  MEM_GET(DATA_UI8, 0);
+            ESP_LOGI(TAG, "Read simple var DATA_UI8[0]: %d", data);
+            data++;
+            MEM_SET(DATA_UI8, 0, &data);
+            ESP_LOGI(TAG, "----------------------");
             }
         taskYIELD();
     }

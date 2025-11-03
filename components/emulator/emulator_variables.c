@@ -142,6 +142,17 @@ void* mem_get_md_element_ptr(const struct emu_md_variable* var, ...) {
     va_end(args);
 
     // Calculate 1D index from MD indices (x, y, z)
-    size_t index_1d = (indices[2] * var->dims[1] + indices[1]) * var->dims[0] + indices[0];
+    size_t index_1d = 0;
+    switch (var->num_dims) {
+        case 1:
+            index_1d = indices[0];
+            break;
+        case 2:
+            index_1d = indices[1] * var->dims[0] + indices[0]; // y * width + x
+            break;
+        case 3:
+            index_1d = (indices[2] * var->dims[1] + indices[1]) * var->dims[0] + indices[0]; // (z * height + y) * width + x
+            break;
+    }
     return (void*)((uint8_t*)var->data + (index_1d * data_size(var->type)));
 }

@@ -73,5 +73,16 @@ FF -> kolejny bloczek;
 0000 -> koniec
 
 
+//wersja 3.0
+FFFF - start transmisji kodu
+FF00 || xx -> * 11 ilosci kolejnych podstawowych zmiennych
+FF01 || xx xx array 1d (typ+rozmiar) * ile jest
+FF02 || xx xx xx array 2d (typ+ d1 + d2) * ile jest
+FF03 || xx xx xx xx array 3d (typ+ d1 + d2 + d3) * ile jest
+
+
+
+
+
 
 
