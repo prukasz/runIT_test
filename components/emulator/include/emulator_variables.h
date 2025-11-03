@@ -21,20 +21,6 @@ typedef enum{
 
 
 typedef struct {
-    uint8_t  u8;
-    uint8_t  u16;
-    uint8_t  u32;
-    uint8_t  u64;
-    uint8_t  i8;
-    uint8_t  i16;
-    uint8_t  i32;
-    uint8_t  i64;
-    uint8_t  f;
-    uint8_t  d;
-    uint8_t  b;
-}emu_data_cnt_t;
-
-typedef struct {
     int8_t   *i8;
     int16_t  *i16;
     int32_t  *i32;
@@ -82,5 +68,5 @@ extern emu_mem_t mem;
     } while(0)
 
 void check_size(uint8_t x, uint16_t *total, uint8_t*bool_cnt);
-emu_err_t emulator_dataholder_create(emu_mem_t *mem, emu_data_cnt_t *sizes);
+emu_err_t emulator_dataholder_create(emu_mem_t *mem, uint8_t *sizes);
 void emulator_dataholder_free(emu_mem_t *mem);

@@ -18,6 +18,7 @@ typedef enum {
     EMU_ERR_CMD_START,
     EMU_ERR_CMD_STOP,
     EMU_ERR_CMD_START_BLOCKS,
+    EMU_ERR_INVALID_DATA,
 }emu_err_t;
 
 /**
@@ -27,6 +28,7 @@ typedef enum {
     ORD_STOP_BYTES        = 0x0000,
     ORD_START_BYTES       = 0xFFFF,
     ORD_START_BLOCKS      = 0x00FF,
+    ORD_VARIABLES_BYTES   = 0xFF00,
     ORD_PROCESS_VARIABLES = 0x0010,
     ORD_RESET_TRANSMISSION= 0x0001, 
     ORD_PROCESS_CODE      = 0x0020,

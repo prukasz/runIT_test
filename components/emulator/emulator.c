@@ -23,7 +23,7 @@ void code_set_reset();
 
 SemaphoreHandle_t emulator_start;
 emu_mem_t mem;
-emu_data_cnt_t mem_size;
+uint8_t emu_mem_size[12];
 
 
 emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
@@ -36,10 +36,26 @@ emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
 
 //emu_err_t emulator_source_analyze(){} 
 
-
 emu_err_t emulator_source_get_varialbes(){
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    return EMU_OK;
+    static uint8_t * data;
+    static uint16_t len;
+    for(uint8_t i = 0; ; i++){
+        chr_msg_buffer_get(source, i, &data,  &len);
+        if (len == 2 && ((data[0] << 8) | data[1]) == ORD_START_BYTES){
+            chr_msg_buffer_get(source, (i+1), &data,  &len);
+            if(len > 2 && ((data[0] << 8) | data[1]) == ORD_VARIABLES_BYTES){
+                ESP_LOGI(TAG, "On index %d foud first varaibles packet", i+1);
+                for(uint8_t j = 0 ; j < 8; j++){
+                    emu_mem_size[j]=data[j+2];
+                    ESP_LOGI(TAG, "data %u %u cnt", j , data[j+2]);
+                }
+                return EMU_OK;
+            }
+        }
+
+    }
+    ESP_LOGE(TAG, "No data to process foud");
+    return EMU_ERR_INVALID_DATA;
 }
 
 //emu_err_t emulator_source_get_config(){}  //get config data from source
@@ -103,9 +119,6 @@ inq_handle_t *code_block_init(inq_define_t *inq_params){
 }
 
 void emu(void* params){
-    mem_size.u8 = 10;
-    emulator_dataholder_create(&mem, &mem_size);
-    mem.u8[1]= 10;
     ESP_LOGI(TAG, "emu task active");
     emu_task_q  = xQueueCreate(3, sizeof(emu_order_code_t));
     static emu_order_code_t orders;
@@ -114,7 +127,8 @@ void emu(void* params){
             ESP_LOGI(TAG, "execute order 0x%04X" , orders);
             switch (orders){
             case ORD_PROCESS_VARIABLES:
-                // Handle processing variables
+                emulator_source_get_varialbes();
+                emulator_dataholder_create(&mem, emu_mem_size);
                 break;
 
             case ORD_PROCESS_CODE:
