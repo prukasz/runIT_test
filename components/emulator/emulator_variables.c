@@ -6,12 +6,11 @@
 static const char *TAG = "DATAHOLDER";
 
 
-
 emu_err_t emulator_dataholder_create(emu_mem_t *mem, emu_data_cnt_t *sizes)
 {
     if (!mem || !sizes) return EMU_ERR_INVALID_ARG;
     (*mem) = (emu_mem_t){0};
-     mem->i8  = calloc(sizes->i8, sizeof(int8_t));
+    mem->i8  = calloc(sizes->i8, sizeof(int8_t));
     mem->i16 = calloc(sizes->i16, sizeof(int16_t));
     mem->i32 = calloc(sizes->i32, sizeof(int32_t));
     mem->i64 = calloc(sizes->i64, sizeof(int64_t));

@@ -67,9 +67,12 @@ emu_err_t loop_stop_execution(){
 void loop_task(void* params){
     //form here will be executed all logic 
     while(1){
+        uint8_t data =  MEM_GET(DATA_UI8, 1);
         if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)){
-            ESP_LOGI(TAG, "semaphore taken");
-        }
+            ESP_LOGI(TAG, "semaphore taken, %d", data);
+            data ++;
+            MEM_SET(DATA_UI8, 1, data);
+            }
         taskYIELD();
     }
 }
@@ -100,7 +103,9 @@ inq_handle_t *code_block_init(inq_define_t *inq_params){
 }
 
 void emu(void* params){
+    mem_size.u8 = 10;
     emulator_dataholder_create(&mem, &mem_size);
+    mem.u8[1]= 10;
     ESP_LOGI(TAG, "emu task active");
     emu_task_q  = xQueueCreate(3, sizeof(emu_order_code_t));
     static emu_order_code_t orders;
