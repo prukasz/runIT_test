@@ -115,9 +115,6 @@ static inline void* mem_get_ptr(data_types_t type, size_t index) {
         } \
     } while(0)
 
-
-// --- Accessors for the parallel Multi-Dimensional (MD) variable system ---
-
 /**
  * @brief Gets a multi-dimensional variable by its index.
  * @param var_index The index of the variable in the descriptor array.
@@ -162,5 +159,4 @@ void* mem_get_md_element_ptr(const struct emu_md_variable* var, ...);
 
 emu_err_t emulator_dataholder_create(emu_mem_t *mem, uint8_t *sizes);
 void emulator_dataholder_free(emu_mem_t *mem);
-
 emu_err_t emulator_md_dataholder_create(emu_mem_t *mem, const emu_md_variable_desc_t* descriptors, size_t num_descriptors);
