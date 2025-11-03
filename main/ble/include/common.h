@@ -21,7 +21,7 @@
 
 /* Defines */
 #define TAG "NimBLE_GATT_Server"
-#define DEVICE_NAME "BLE_TEST"
+#define DEVICE_NAME "SKIBIDI"
 
 #define RETURN_ON_ERROR(x) do { \
     int __err = (x);          \

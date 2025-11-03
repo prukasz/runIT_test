@@ -42,16 +42,27 @@ typedef struct
 // 0000 -> Koniec kodu
 
 
+
+
+
+
+
 //wersja 2.0 
+
+paket L=2 XXXX - komenda (emu_order_code_t)
+
 FFFF start transmisji kodu
 (const L=10)
-FF00 || xx -> 8b || xx-> 16b || xx -> 32b || xx -> 64b ||  xx -> 1b || xx -> table1d || xx -> tablele 2d || xx -> table3d
+FF00 || xx ->  * 4int || xx-> * 4uint || xx -> float || xx -> double ||  xx -> bool || xx -> table1d || xx -> tablele 2d || xx -> table3d
+
+
 
 **wartości początkowe**
 L = 3 + ile*2
 FF0x -> kolejne typy|| xx -> ile || xx + xx (id/wartosc) || ........
 
-00FF || xxxx  statrt transmisji bloczkow || ile bloczków 
+00FF  statrt transmisji bloczkow
+xxxx||xxxx  ile pakietów powinno być || ile bloczków 
 
 FF/FE -> początek bloczku lub kontynuacja || xxxx -> id bloczku || dane 
 opcjonalnie FE || kolejne dane 

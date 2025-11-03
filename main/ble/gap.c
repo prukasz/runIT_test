@@ -15,7 +15,6 @@ static uint8_t esp_uri[] = {
     't','e','x','t'
 };
 
-
 static int ble_gap_configure_advertising(void){  
     
     const char *name;
@@ -42,7 +41,7 @@ static int ble_gap_configure_advertising(void){
     rsp_fields.device_addr_is_present = 1;
     rsp_fields.uri = esp_uri;
     rsp_fields.uri_len = sizeof(esp_uri);
-    rsp_fields.adv_itvl = BLE_GAP_ADV_ITVL_MS(500);
+        rsp_fields.adv_itvl = BLE_GAP_ADV_ITVL_MS(500);
     rsp_fields.adv_itvl_is_present = 1;
     adv_configured = true;
     return ble_gap_adv_rsp_set_fields(&rsp_fields);

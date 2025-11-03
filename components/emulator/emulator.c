@@ -23,7 +23,7 @@ void code_set_reset();
 
 SemaphoreHandle_t emulator_start;
 emu_mem_t mem;
-emu_size_t mem_size;
+emu_data_cnt_t mem_size;
 
 
 emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){

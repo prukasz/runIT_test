@@ -7,16 +7,25 @@ static const char *TAG = "DATAHOLDER";
 
 
 
-emu_err_t emulator_dataholder_create(emu_mem_t *mem, emu_size_t *sizes)
+emu_err_t emulator_dataholder_create(emu_mem_t *mem, emu_data_cnt_t *sizes)
 {
     if (!mem || !sizes) return EMU_ERR_INVALID_ARG;
     (*mem) = (emu_mem_t){0};
-    mem->mem_size_8  = calloc(sizes->cnt_size_8,  sizeof(uint8_t ));
-    mem->mem_size_16 = calloc(sizes->cnt_size_16, sizeof(uint16_t));
-    mem->mem_size_32 = calloc(sizes->cnt_size_32, sizeof(uint32_t));
-    mem->mem_size_64 = calloc(sizes->cnt_size_64, sizeof(uint64_t));
-    uint8_t bool_space =  (sizes->cnt_size_1 + 7) / 8;
-    mem->mem_size_1  = calloc(bool_space, sizeof(uint8_t));
+     mem->i8  = calloc(sizes->i8, sizeof(int8_t));
+    mem->i16 = calloc(sizes->i16, sizeof(int16_t));
+    mem->i32 = calloc(sizes->i32, sizeof(int32_t));
+    mem->i64 = calloc(sizes->i64, sizeof(int64_t));
+
+    mem->u8  = calloc(sizes->u8, sizeof(uint8_t));
+    mem->u16 = calloc(sizes->u16, sizeof(uint16_t));
+    mem->u32 = calloc(sizes->u32, sizeof(uint32_t));
+    mem->u64 = calloc(sizes->u64, sizeof(uint64_t));
+
+    mem->f   = calloc(sizes->f, sizeof(float));
+    mem->d   = calloc(sizes->d, sizeof(double));
+    uint8_t bool_space =  (sizes->b + 7) / 8;
+
+    mem->b  = calloc(bool_space, sizeof(uint8_t));
     //todo check if allocated successfully
     ESP_LOGI(TAG, "Dataholder created successfully");
     return EMU_OK;
@@ -26,11 +35,9 @@ void emulator_dataholder_free(emu_mem_t *mem)
 {
     if (!mem) return;
 
-    free(mem->mem_size_8 );
-    free(mem->mem_size_16);
-    free(mem->mem_size_32);
-    free(mem->mem_size_64);
-    free(mem->mem_size_1 );
+    free(mem->i8);   free(mem->i16);   free(mem->i32);   free(mem->i64);
+    free(mem->u8);   free(mem->u16);   free(mem->u32);   free(mem->u64);
+    free(mem->f);    free(mem->d);     free(mem->b);
 
     (*mem)= (emu_mem_t){0};//clear pointers
     ESP_LOGI(TAG, "Dataholder memory freed");
