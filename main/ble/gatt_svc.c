@@ -104,7 +104,7 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         uint8_t *temp = malloc(len);
         os_mbuf_copydata(ctxt->om, 0, len, temp);
 
-        emu_order_code_t order_code = (emu_order_code_t)(temp[0] << 8) | temp[1];
+        emu_order_t order_code = (emu_order_t)(temp[0] << 8) | temp[1];
         if (len == 2){
             xQueueSend(emu_task_q,&order_code, pdMS_TO_TICKS(1000));
             if(order_code == ORD_STOP_BYTES || order_code == ORD_START_BYTES || order_code == ORD_START_BLOCKS ){

@@ -1,5 +1,6 @@
 #pragma once
-
+#include "stdint.h"
+#include "stddef.h"
 /**
 * @brief emulator scope errors
 */
@@ -34,17 +35,6 @@ typedef enum{
 /**
 * @brief Block type identifiers.
 */
-typedef enum {
-    BLOCK_ID_AND = 0xFF,
+typedef struct{
+uint8_t id;
 }block_id_t;
-
-/**
- * @brief Describes a single multi-dimensional variable (1D, 2D, or 3D array).
- *
- * This struct is used to define the memory layout for complex variables before creation.
- */
-typedef struct {
-    data_types_t type;      // The data type of the elements in the array.
-    uint8_t      num_dims;  // Number of dimensions (1, 2, or 3).
-    size_t       dims[3];   // The size of each dimension.
-} emu_md_variable_desc_t;

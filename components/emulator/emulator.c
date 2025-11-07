@@ -1,5 +1,6 @@
 #include "emulator_loop.h"
 #include "emulator_variables.h"
+#include "emulator_parse.h"
 #include "gatt_buff.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -22,10 +23,46 @@ emu_err_t code_set_blocks();
 emu_err_t code_set_end();
 void code_set_reset();
 
-SemaphoreHandle_t emulator_start;
+SemaphoreHandle_t loop_semaphore;
 emu_mem_t mem;
 uint8_t emu_mem_size[11];
 
+#define TABLE_SIZE 5
+#define ITERATIONS 400
+#define DELTA 1UL 
+
+extern int timer_counter;
+void loop_task(void* params){
+    //form here will be executed all logic 
+    size_t var_idx = 0;
+    while(1){
+        if(pdTRUE == xSemaphoreTake(loop_semaphore, portMAX_DELAY)) {
+            ESP_LOGI(TAG, "--- Loop Task Tick timer n %d", timer_counter);
+            int64_t start_time = esp_timer_get_time();
+            // Fill table initially
+            for (size_t i = 0; i < TABLE_SIZE; i++) {
+                for (size_t j = 0; j < TABLE_SIZE; j++) {
+                    MEM_SET_DATATYPE(DATA_UI32, var_idx, i, j, SIZE_MAX, i * 10 + j);
+                }
+            }
+
+
+            // Intensive read-modify-write loop
+             for (size_t iter = 0; iter < ITERATIONS; iter++) {
+                for (size_t i = 0; i < TABLE_SIZE; i++) {
+                    for (size_t j = 0; j < TABLE_SIZE; j++) {
+                        uint32_t val = MEM_GET_U32(var_idx, i, j, SIZE_MAX);
+                        val += MEM_GET_U32(var_idx, i, j, SIZE_MAX) + MEM_GET_U32(var_idx, i, j, SIZE_MAX);
+                        MEM_SET_DATATYPE(DATA_UI32, var_idx, i, j, SIZE_MAX, val);
+                    }
+                }
+            }
+        int64_t end_time = esp_timer_get_time(); // microseconds
+        ESP_LOGI("BENCH", "Benchmark completed in %.3f ms", (end_time - start_time) / 1000.0);
+    }
+        taskYIELD();
+    }
+}
 
 emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
     if (msg == NULL){
@@ -36,109 +73,6 @@ emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
 }
 
 //emu_err_t emulator_source_analyze(){} 
-
-/**
- * @brief Parses variable definitions from the BLE source buffer and creates memory holders.
- *
- * This function implements the parsing logic for your variable definition protocol:
- * 1. Finds `FFFF` (start) + `FF00` (vars).
- * 2. Parses 11 bytes for simple 1D array counts.
- * 3. Finds `FF01`, `FF02`, `FF03` packets for MD array definitions.
- * 4. Creates both simple and MD data holders.
- */
-emu_err_t emulator_process_variables_from_source() {
-    uint8_t *data;
-    uint16_t len;
-    int start_index = -1;
-
-    // --- Find the start of the variable definition sequence ---
-    for (int i = 0; i < chr_msg_buffer_size(source); ++i) {
-        chr_msg_buffer_get(source, i, &data, &len);
-        if (len == 2 && ((data[0] << 8) | data[1]) == ORD_START_BYTES) {
-            // Found FFFF, check if the next packet is FF00
-            if ((i + 1) < chr_msg_buffer_size(source)) {
-                chr_msg_buffer_get(source, i + 1, &data, &len);
-                if (len == 12 && ((data[0] << 8) | data[1]) == ORD_VARIABLES_BYTES) {
-                    ESP_LOGI(TAG, "Found variable definition start at buffer index %d", i);
-                    start_index = i + 1;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (start_index == -1) {
-        ESP_LOGE(TAG, "Variable definition start sequence (FFFF -> FF00) not found.");
-        return EMU_ERR_INVALID_DATA;
-    }
-
-    // --- 1. Parse and create simple 1D arrays ---
-    chr_msg_buffer_get(source, start_index, &data, &len);
-    memcpy(emu_mem_size, &data[2], 10); // Copy the 10 size bytes
-    ESP_LOGI(TAG, "Creating simple 1D data holder.");
-    for(int i=0; i<11; ++i) ESP_LOGD(TAG, "  type %d: count %d", i, emu_mem_size[i]);
-    emulator_dataholder_create(&mem, emu_mem_size);
-
-    // --- 2. Parse and create multi-dimensional (MD) arrays ---
-    size_t md_desc_capacity = 4; // Initial capacity
-    size_t md_desc_count = 0;
-    emu_md_variable_desc_t *md_descriptors = malloc(md_desc_capacity * sizeof(emu_md_variable_desc_t));
-    if (!md_descriptors) return EMU_ERR_NO_MEMORY;
-
-    // Iterate through the rest of the buffer to find MD definitions
-    for (int i = start_index + 1; i < chr_msg_buffer_size(source); ++i) {
-        chr_msg_buffer_get(source, i, &data, &len);
-        if (len < 3) continue; // Not a valid MD packet
-
-        uint16_t md_header = (data[0] << 8) | data[1];
-        uint8_t *payload = &data[2];
-        uint16_t payload_len = len - 2;
-        uint8_t num_dims = 0;
-        uint8_t record_size = 0;
-
-        if (md_header == 0xFF01) { num_dims = 1; record_size = 2; } // type, dim1
-        else if (md_header == 0xFF02) { num_dims = 2; record_size = 3; } // type, dim1, dim2
-        else if (md_header == 0xFF03) { num_dims = 3; record_size = 4; } // type, dim1, dim2, dim3
-        else continue; // Not an MD definition packet
-
-        if (payload_len % record_size != 0) {
-            ESP_LOGW(TAG, "Invalid payload length for MD packet 0x%04X", md_header);
-            continue;
-        }
-
-        int num_records = payload_len / record_size;
-        ESP_LOGI(TAG, "Found %d-D variable packet with %d records.", num_dims, num_records);
-
-        // Resize descriptor array if needed
-        if (md_desc_count + num_records > md_desc_capacity) {
-            md_desc_capacity = md_desc_count + num_records + 4;
-            emu_md_variable_desc_t *new_ptr = realloc(md_descriptors, md_desc_capacity * sizeof(emu_md_variable_desc_t));
-            if (!new_ptr) { free(md_descriptors); return EMU_ERR_NO_MEMORY; }
-            md_descriptors = new_ptr;
-        }
-
-        // Parse each record in the payload
-        for (int j = 0; j < num_records; ++j) {
-            emu_md_variable_desc_t *desc = &md_descriptors[md_desc_count++];
-            desc->type = (data_types_t)payload[0];
-            desc->num_dims = num_dims;
-            desc->dims[0] = (num_dims >= 1) ? payload[1] : 0;
-            desc->dims[1] = (num_dims >= 2) ? payload[2] : 0;
-            desc->dims[2] = (num_dims >= 3) ? payload[3] : 0;
-            payload += record_size;
-        }
-    }
-
-    if (md_desc_count > 0) {
-        ESP_LOGI(TAG, "Creating MD data holder with %d variables.", md_desc_count);
-        emulator_md_dataholder_create(&mem, md_descriptors, md_desc_count);
-    } else {
-        ESP_LOGI(TAG, "No MD variables defined.");
-    }
-
-    free(md_descriptors);
-    return EMU_OK;
-}
 
 //emu_err_t emulator_source_get_config(){}  //get config data from source
 
@@ -162,22 +96,7 @@ emu_err_t loop_stop_execution(){
 
 //emu_err_t emulator_run_with_remote(){}   //allows remote interaction
 
-void loop_task(void* params){
-    //form here will be executed all logic 
-    while(1){
-        if(pdTRUE == xSemaphoreTake(emulator_start, portMAX_DELAY)) {
-            ESP_LOGI(TAG, "--- Loop Task Tick ---");
 
-            // Simple test: read a value, increment it, and write it back.
-            uint8_t data =  MEM_GET(DATA_UI8, 0);
-            ESP_LOGI(TAG, "Read simple var DATA_UI8[0]: %d", data);
-            data++;
-            MEM_SET(DATA_UI8, 0, &data);
-            ESP_LOGI(TAG, "----------------------");
-            }
-        taskYIELD();
-    }
-}
 
 
 block_handle_t *block_init(block_define_t *block_define){
@@ -222,14 +141,14 @@ block_handle_t *block_init(block_define_t *block_define){
 
 void emu(void* params){
     ESP_LOGI(TAG, "emu task active");
-    emu_task_q  = xQueueCreate(3, sizeof(emu_order_code_t));
-    static emu_order_code_t orders;
+    emu_task_q  = xQueueCreate(3, sizeof(emu_order_t));
+    static emu_order_t orders;
     while(1){
         if (pdTRUE == xQueueReceive(emu_task_q, &orders, portMAX_DELAY)){
             ESP_LOGI(TAG, "execute order 0x%04X" , orders);
             switch (orders){
             case ORD_PROCESS_VARIABLES:
-                emulator_process_variables_from_source();
+                emu_parse_variables(source, &mem, emu_mem_size);
                 break;
 
             case ORD_PROCESS_CODE:

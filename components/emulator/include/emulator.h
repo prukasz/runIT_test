@@ -14,7 +14,7 @@ typedef enum {
     ORD_STOP_BYTES        = 0x0000,
     ORD_START_BYTES       = 0xFFFF,
     ORD_START_BLOCKS      = 0x00FF,
-    ORD_VARIABLES_BYTES   = 0xFF00,
+    ORD_H_VARIABLES       = 0xFF00,
     ORD_PROCESS_VARIABLES = 0x0010,
     ORD_RESET_TRANSMISSION= 0x0001, 
     ORD_PROCESS_CODE      = 0x0020,
@@ -22,7 +22,7 @@ typedef enum {
     ORD_EMU_LOOP_RUN      = 0x1000,
     ORD_EMU_LOOP_STOP     = 0x2000,
     ORD_EMU_LOOP_INIT     = 0x2137,
-} emu_order_code_t;
+} emu_order_t;
 
 typedef struct{
     uint16_t id;
