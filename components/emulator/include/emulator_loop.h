@@ -2,15 +2,15 @@
 #include "esp_timer.h"
 #include "stdint.h"
 
-#define LOOP_PERIOD_MIN 10000
-#define LOOP_PERIOD_MAX 100000
+#define LOOP_PERIOD_MIN 10000 //us
+#define LOOP_PERIOD_MAX 100000 //us
 
 typedef enum {
     EMU_OK = 0,
     EMU_ERR_INVALID_STATE,
     EMU_ERR_INVALID_ARG,
     EMU_ERR_NO_MEMORY,
-} emulator_err_t;
+} emulator_err_t; //ERRORS
 
 typedef enum {
     EMU_NOT_SET,

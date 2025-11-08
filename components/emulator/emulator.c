@@ -35,7 +35,7 @@ emulator_err_t emulator_source_assign(chr_msg_buffer_t * msg){
 
 //emulator_err_t emulator_source_analyze(){}   //check packets completeness
 
-//emulator_err_t emulator_source_get_varialbes(){}  //parse variable list
+//emulator_err_t emulator_source_get_variables(){}  //parse variable list
 
 //emulator_err_t emulator_source_get_config(){}  //get config data from source
 
