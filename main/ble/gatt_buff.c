@@ -2,6 +2,8 @@
 #include "esp_log.h"
 #include "string.h"
 
+/*Buffer to store received message or store messages to be sent via BLE*/
+
 static const char *TAG = "CHR_MSG_BUFFER";
 
 esp_err_t chr_msg_buffer_init(chr_msg_buffer_t *buf)

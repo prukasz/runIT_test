@@ -1,47 +1,206 @@
 #include "emulator_variables.h"
+#include "emulator_parse.h"
+#include "emulator.h"
 #include "esp_log.h"
 #include <stdlib.h>
+#include <stdarg.h>
 
 static const char *TAG = "DATAHOLDER";
+#define HEADER_SIZE 2
 
-emulator_err_t emulator_dataholder_create(emu_mem_t *mem, const emu_size_t *sizes)
+/*This macro setup pointers for tables of single varaibles different types*/
+#define SETUP_FIELD(base, field, index, ptr, count_array) \
+({ \
+    (base)->field = (typeof((base)->field))(ptr); \
+    (ptr) += (count_array)[index] * sizeof(*(base)->field); \
+    (base)->field; \
+})
+
+/*This macro set up pointers for single variables*/
+#define SETUP_SINGLE_VAR_PTR(mem, field, idx) ({ \
+        typeof((mem)->field) _p = (typeof(_p))current_ptr; \
+        (mem)->field = _p; \
+        current_ptr += sizes[idx] * sizeof(*_p); \
+})
+
+/*This macro set up pointers for arrays*/
+#define HANDLE_DATA_TYPE(mem, ENUM, FIELD, CTYPE, TAGSTR)                        \
+    case ENUM: {                                                                 \
+        typeof((mem)->FIELD[0]) *arr = &(mem)->FIELD[arr_index[ENUM]];           \
+        arr->num_dims = step - 1;                                                \
+        memcpy(arr->dims, &data[j + 1], step - 1);                               \
+        arr->data = (CTYPE *)((mem)->_base_arr_ptr + offset);                    \
+        ESP_LOGI(TAG,                                                            \
+                 "created at: %d " TAGSTR " table dims: %d, size_x: %d, size_y: %d, size_z: %d", \
+                 arr_index[ENUM],                                                \
+                 arr->num_dims, arr->dims[0], arr->dims[1], arr->dims[2]);       \
+        arr_index[ENUM]++;                                                       \
+        break;                                                                   \
+    }
+
+/*this macro sum size of total data needed*/
+#define ADD_SIZE(total, count, type) ((total) += (count) * sizeof(type))
+
+
+emu_err_t emu_variables_create(emu_mem_t *mem, uint8_t *sizes)
 {
-    if (!mem || !sizes) return EMU_ERR_INVALID_ARG;
-    *mem = (emu_mem_t){0};
+    if (!mem || !sizes) {
+        return EMU_ERR_INVALID_ARG;
+    }
+    size_t total_size = 0;
+    ADD_SIZE(total_size, sizes[0],  int8_t);
+    ADD_SIZE(total_size, sizes[1],  int16_t);
+    ADD_SIZE(total_size, sizes[2],  int32_t);
+    ADD_SIZE(total_size, sizes[4],  uint8_t);
+    ADD_SIZE(total_size, sizes[5],  uint16_t);
+    ADD_SIZE(total_size, sizes[6],  uint32_t);
+    ADD_SIZE(total_size, sizes[8],  float);
+    ADD_SIZE(total_size, sizes[9],  double);
+    ADD_SIZE(total_size, sizes[10], bool);
 
-    ESP_LOGI(TAG, "Allocating dataholder");
+    mem->_base_ptr = calloc(1, total_size);
+    if (!mem->_base_ptr) {
+        ESP_LOGE(TAG, "Failed to allocate memory for dataholder (%d bytes)", total_size);
+        return EMU_ERR_NO_MEMORY;
+    }
 
-    mem->i8  = calloc(sizes->i8, sizeof(int8_t));
-    mem->i16 = calloc(sizes->i16, sizeof(int16_t));
-    mem->i32 = calloc(sizes->i32, sizeof(int32_t));
-    mem->i64 = calloc(sizes->i64, sizeof(int64_t));
+    uint8_t* current_ptr = (uint8_t*)mem->_base_ptr;
+    SETUP_FIELD(mem, i8,  0, current_ptr, sizes);
+    SETUP_FIELD(mem, i16, 1, current_ptr, sizes);
+    SETUP_FIELD(mem, i32, 2, current_ptr, sizes);
+    SETUP_FIELD(mem, u8,  4, current_ptr, sizes);
+    SETUP_FIELD(mem, u16, 5, current_ptr, sizes);
+    SETUP_FIELD(mem, u32, 6, current_ptr, sizes);
+    SETUP_FIELD(mem, f,   8, current_ptr, sizes);
+    SETUP_FIELD(mem, d,   9, current_ptr, sizes);
+    SETUP_FIELD(mem, b,  10, current_ptr, sizes);
 
-    mem->u8  = calloc(sizes->u8, sizeof(uint8_t));
-    mem->u16 = calloc(sizes->u16, sizeof(uint16_t));
-    mem->u32 = calloc(sizes->u32, sizeof(uint32_t));
-    mem->u64 = calloc(sizes->u64, sizeof(uint64_t));
 
-    mem->f   = calloc(sizes->f, sizeof(float));
-    mem->d   = calloc(sizes->d, sizeof(double));
-    mem->b   = calloc(sizes->b, sizeof(bool));
-    mem->custom = calloc(sizes->custom, sizeof(int16_t));
-
-    //todo check if really allocated 
-
-    ESP_LOGI(TAG, "Dataholder created successfully");
+    ESP_LOGI(TAG, "Single variables dataholder created successfully");
     return EMU_OK;
 }
 
 
-void emulator_dataholder_free(emu_mem_t *mem)
+emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_index){
+    uint8_t *data;
+    uint16_t len;
+    size_t buff_size = chr_msg_buffer_size(source);
+    uint8_t types_cnt[9] = {0};
+    uint8_t step;
+    size_t total_size = 0;
+    start_index += 1;
+    for (size_t i = start_index; i < buff_size; ++i)
+    {
+        chr_msg_buffer_get(source, i, &data, &len);
+        if (_check_arr_header(data, &step) && _check_arr_packet_size(len, step))
+        {
+            for (size_t j = HEADER_SIZE; j < len; j += step)
+            {
+                types_cnt[(data_types_t)data[j]] += 1;
+                uint16_t table_cnt = data[j + 1];
+                if (step == 3)
+                {
+                    table_cnt *= data[j + 2];
+                }
+                if (step == 4)
+                {
+                    table_cnt *= data[j + 3];
+                }
+                total_size += data_size((data_types_t)data[j]) * table_cnt;
+            }
+        }
+        size_t handle_size = 0;
+        ADD_SIZE(handle_size, types_cnt[0], arr_ui8_t);
+        ADD_SIZE(handle_size, types_cnt[1], arr_ui16_t);
+        ADD_SIZE(handle_size, types_cnt[2], arr_ui32_t);
+        ADD_SIZE(handle_size, types_cnt[3], arr_i8_t);
+        ADD_SIZE(handle_size, types_cnt[4], arr_i16_t);
+        ADD_SIZE(handle_size, types_cnt[5], arr_i32_t);
+        ADD_SIZE(handle_size, types_cnt[6], arr_f_t);
+        ADD_SIZE(handle_size, types_cnt[7], arr_d_t);
+        ADD_SIZE(handle_size, types_cnt[8], arr_b_t);
+        mem->_base_arr_handle_ptr = calloc(1, handle_size);
+        if(!mem->_base_arr_handle_ptr) {
+            ESP_LOGW(TAG, "Alaocation for arrays handles failed");
+            free(mem->_base_ptr);
+            return EMU_ERR_NO_MEMORY; 
+        }
+        uint8_t* current_ptr = (uint8_t*)mem->_base_arr_handle_ptr;
+        SETUP_FIELD(mem, arr_ui8,  0, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_ui16, 1, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_ui32, 2, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_i8,  3, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_i16, 4, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_i32, 5, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_f,   6, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_d,   7, current_ptr, types_cnt);
+        SETUP_FIELD(mem, arr_b,   8, current_ptr, types_cnt);
+        
+        ESP_LOGI(TAG, "Total array size of arrays: %dB", total_size);
+        mem->_base_arr_ptr = calloc(1, total_size);
+        if(!mem->_base_arr_ptr) {
+            ESP_LOGW(TAG, "Arrays alocation failed");
+            free(mem->_base_ptr);
+            free(mem->_base_arr_handle_ptr);
+            return EMU_ERR_NO_MEMORY;
+        }
+        
+        size_t offset = 0;
+        for (uint8_t i = 0 ; i < 9 ; i++)
+        {ESP_LOGI(TAG,"alocated %d slots for %d type table", types_cnt[i], i);}
+
+        // Keep counters for each type to index into the allocated array structs
+        uint8_t arr_index[9] = {0};
+
+        for (size_t i = start_index; i < buff_size; ++i)
+        {
+            chr_msg_buffer_get(source, i, &data, &len);
+            if (_check_arr_header(data, &step) && _check_arr_packet_size(len, step))
+            {
+                for (size_t j = HEADER_SIZE; j < len; j += step)
+                {
+                    data_types_t type = (data_types_t)data[j];
+                    // Calculate number of elements in this array
+                    size_t elem_count = data[j + 1]; // dim1
+                    if (step >= 3)
+                        elem_count *= data[j + 2]; // dim2
+                    if (step == 4)
+                        elem_count *= data[j + 2] * data[j + 3]; // dim3
+
+                    size_t bytes_needed = elem_count * data_size(type);
+                    // Pick the correct struct array and assign data pointer
+                    switch (type)
+                    {
+                        HANDLE_DATA_TYPE(mem, DATA_UI8,  arr_ui8,  uint8_t,  "uint8_t");
+                        HANDLE_DATA_TYPE(mem, DATA_UI16, arr_ui16, uint16_t, "uint16_t");
+                        HANDLE_DATA_TYPE(mem, DATA_UI32, arr_ui32, uint32_t, "uint32_t");
+                        HANDLE_DATA_TYPE(mem, DATA_I8,   arr_i8,   int8_t,   "int8_t");
+                        HANDLE_DATA_TYPE(mem, DATA_I16,  arr_i16,  int16_t,  "int16_t");
+                        HANDLE_DATA_TYPE(mem, DATA_I32,  arr_i32,  int32_t,  "int32_t");
+                        HANDLE_DATA_TYPE(mem, DATA_F,    arr_f,    float,    "float");
+                        HANDLE_DATA_TYPE(mem, DATA_D,    arr_d,    double,   "double");
+                        HANDLE_DATA_TYPE(mem, DATA_B,    arr_b,    bool,     "bool");
+                        default:
+                            ESP_LOGE(TAG, "Unknown array data type encountered");
+                            break;
+                    }
+                    offset += bytes_needed;
+                }
+            }
+        }
+    }
+    return EMU_OK;
+}
+
+
+void emu_variables_reset(emu_mem_t *mem)
 {
     if (!mem) return;
-
-    free(mem->i8);   free(mem->i16);   free(mem->i32);   free(mem->i64);
-    free(mem->u8);   free(mem->u16);   free(mem->u32);   free(mem->u64);
-    free(mem->f);    free(mem->d);     free(mem->b);
-    free(mem->custom);
-
+    free(mem->_base_ptr);
+    free(mem->_base_arr_ptr);
+    free(mem->_base_arr_handle_ptr);
     *mem = (emu_mem_t){0};
-    ESP_LOGI(TAG, "Emulator memory freed");
+    ESP_LOGI(TAG, "Dataholder memory freed");
 }
+
+
