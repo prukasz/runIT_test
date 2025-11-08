@@ -2,7 +2,7 @@
 #include "gatt_svc.h"
 #include "gatt_uuids.h"
 
-extern QueueHandle_t emu_task_q;
+extern QueueHandle_t emu_task_queue;
 
 static chr_msg_buffer_t *emu_in_buffer = NULL;  // internal, not global outside this file
 
@@ -106,7 +106,7 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
         emu_order_t order_code = (emu_order_t)(temp[0] << 8) | temp[1];
         if (len == 2){
-            xQueueSend(emu_task_q,&order_code, pdMS_TO_TICKS(1000));
+            xQueueSend(emu_task_queue,&order_code, pdMS_TO_TICKS(1000));
             if(order_code == ORD_STOP_BYTES || order_code == ORD_START_BYTES || order_code == ORD_START_BLOCKS ){
                chr_msg_buffer_add(emu_in_buffer, temp, len); 
             }

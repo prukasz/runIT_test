@@ -9,10 +9,9 @@
 #include "emulator.h"
 #include "string.h"
 
-
-static chr_msg_buffer_t *source;
 static const char * TAG = "EMULATOR TASK";
-QueueHandle_t emu_task_q;
+static chr_msg_buffer_t *source;
+QueueHandle_t emu_task_queue;
 
 static bool is_code_start;
 static bool is_code_end;
@@ -23,58 +22,50 @@ emu_err_t code_set_blocks();
 emu_err_t code_set_end();
 void code_set_reset();
 
-SemaphoreHandle_t loop_semaphore;
+extern SemaphoreHandle_t loop_semaphore;
+extern SemaphoreHandle_t wtd_semaphore;
+
 emu_mem_t mem;
-uint8_t emu_mem_size[11];
 
-#define TABLE_SIZE 5
-#define ITERATIONS 400
-#define DELTA 1UL 
+uint8_t emu_mem_size_single[9];
 
-extern int timer_counter;
+extern emu_wtd_t wtd;
+
+#define TABLE_SIZE 3
+#define ITERATIONS 500000
+/*main block logic*/
 void loop_task(void* params){
-    //form here will be executed all logic 
-    size_t var_idx = 0;
     while(1){
         if(pdTRUE == xSemaphoreTake(loop_semaphore, portMAX_DELAY)) {
-            ESP_LOGI(TAG, "--- Loop Task Tick timer n %d", timer_counter);
             int64_t start_time = esp_timer_get_time();
-            // Fill table initially
-            for (size_t i = 0; i < TABLE_SIZE; i++) {
-                for (size_t j = 0; j < TABLE_SIZE; j++) {
-                    MEM_SET_DATATYPE(DATA_UI32, var_idx, i, j, SIZE_MAX, i * 10 + j);
+            /*
+            for(int i = 0; i < TABLE_SIZE; i++){
+                for(int j = 0; j < TABLE_SIZE; j++){
+                    MEM_GET_U8(0, i, j, SIZE_MAX);
+                    ESP_LOGI(TAG, "table i %d j %d vaj %d", i ,j ,MEM_GET_U8(0, i, j, SIZE_MAX));
                 }
             }
-
-
-            // Intensive read-modify-write loop
-             for (size_t iter = 0; iter < ITERATIONS; iter++) {
-                for (size_t i = 0; i < TABLE_SIZE; i++) {
-                    for (size_t j = 0; j < TABLE_SIZE; j++) {
-                        uint32_t val = MEM_GET_U32(var_idx, i, j, SIZE_MAX);
-                        val += MEM_GET_U32(var_idx, i, j, SIZE_MAX) + MEM_GET_U32(var_idx, i, j, SIZE_MAX);
-                        MEM_SET_DATATYPE(DATA_UI32, var_idx, i, j, SIZE_MAX, val);
-                    }
-                }
-            }
-        int64_t end_time = esp_timer_get_time(); // microseconds
-        ESP_LOGI("BENCH", "Benchmark completed in %.3f ms", (end_time - start_time) / 1000.0);
-    }
-        taskYIELD();
+            HERE
+            LOOP
+            LOGIC
+            EXECUTION
+            */
+            int64_t end_time = esp_timer_get_time();
+            ESP_LOGI(TAG, "loop completed in %.3f ms, watchdog triggered: %d", (end_time - start_time) / 1000.0, wtd.wtd_triggered);
+            xSemaphoreGive(wtd_semaphore);
+            taskYIELD();
+        }
     }
 }
 
-emu_err_t emulator_source_assign(chr_msg_buffer_t * msg){
+emu_err_t emulator_parse_source_add(chr_msg_buffer_t * msg){
     if (msg == NULL){
-        return EMU_ERR_INVALID_ARG;
+        ESP_LOGW(TAG, "no buffer provided");
+        return EMU_ERR_INVALID_ARG;   
     }
     source = msg;
     return EMU_OK;
 }
-
-//emu_err_t emulator_source_analyze(){} 
-
-//emu_err_t emulator_source_get_config(){}  //get config data from source
 
 emu_err_t loop_start_execution(){
     loop_start();
@@ -85,19 +76,6 @@ emu_err_t loop_stop_execution(){
     loop_stop();
     return EMU_OK;
 }   //stop and preserve state
-
-//emu_err_t emulator_halt_execution(){}   //emergency stop
-
-//emu_err_t emulator_end_execution(){}    //end execution (finish loop)
-
-//emu_err_t emulator_debug_varialbles(){}  //dump values
-
-//emu_err_t emulator_debug_code(){}   //dump code execution state
-
-//emu_err_t emulator_run_with_remote(){}   //allows remote interaction
-
-
-
 
 block_handle_t *block_init(block_define_t *block_define){
     //init block
@@ -141,14 +119,14 @@ block_handle_t *block_init(block_define_t *block_define){
 
 void emu(void* params){
     ESP_LOGI(TAG, "emu task active");
-    emu_task_q  = xQueueCreate(3, sizeof(emu_order_t));
+    emu_task_queue  = xQueueCreate(3, sizeof(emu_order_t));
     static emu_order_t orders;
     while(1){
-        if (pdTRUE == xQueueReceive(emu_task_q, &orders, portMAX_DELAY)){
+        if (pdTRUE == xQueueReceive(emu_task_queue, &orders, portMAX_DELAY)){
             ESP_LOGI(TAG, "execute order 0x%04X" , orders);
             switch (orders){
             case ORD_PROCESS_VARIABLES:
-                emu_parse_variables(source, &mem, emu_mem_size);
+                emu_parse_variables(source, &mem);
                 break;
 
             case ORD_PROCESS_CODE:
@@ -176,11 +154,10 @@ void emu(void* params){
                 break;
 
             case ORD_RESET_TRANSMISSION:
-                // Handle reset
                 code_set_reset();
                 chr_msg_buffer_clear(source);
+                emu_variables_reset(&mem);
                 break;
-
             case ORD_START_BYTES:
                 // Handle start bytes
                 code_set_start();

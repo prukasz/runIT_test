@@ -85,7 +85,7 @@ void app_main(void) {
     xTaskCreate(emu, "emu", 4*1024, NULL, 2, NULL);
     main_task = xTaskGetCurrentTaskHandle();
     
-    emulator_source_assign(&emu_in_buffer);
+    emulator_parse_source_add(&emu_in_buffer);
 
     while(1){
         vTaskDelay(pdMS_TO_TICKS(2000));

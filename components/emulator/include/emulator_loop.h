@@ -15,6 +15,13 @@ typedef enum {
     LOOP_FINISHED,
 } loop_status_t;
 
+typedef struct{
+    bool wtd_triggered;
+    uint8_t loops_skipped;
+    uint8_t max_skipp; 
+    uint64_t loop_counter;
+}emu_wtd_t;
+
 emu_err_t loop_start(void);
 emu_err_t loop_stop(void);
 emu_err_t loop_init(void);
