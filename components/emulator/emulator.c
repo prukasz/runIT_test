@@ -10,53 +10,19 @@
 #include "string.h"
 
 static const char * TAG = "EMULATOR TASK";
+
 static chr_msg_buffer_t *source;
+
+/*Freertos variables*/
 QueueHandle_t emu_task_queue;
-
-static bool is_code_start;
-static bool is_code_end;
-static bool is_blocks_start;
-
-emu_err_t code_set_start();
-emu_err_t code_set_blocks();
-emu_err_t code_set_end();
-void code_set_reset();
-
-extern SemaphoreHandle_t loop_semaphore;
-extern SemaphoreHandle_t wtd_semaphore;
+parse_status_t parse_status;
 
 emu_mem_t mem;
-
 uint8_t emu_mem_size_single[9];
 
-extern emu_wtd_t wtd;
-
-#define TABLE_SIZE 3
-#define ITERATIONS 500000
-/*main block logic*/
-void loop_task(void* params){
-    while(1){
-        if(pdTRUE == xSemaphoreTake(loop_semaphore, portMAX_DELAY)) {
-            int64_t start_time = esp_timer_get_time();
-            /*
-            for(int i = 0; i < TABLE_SIZE; i++){
-                for(int j = 0; j < TABLE_SIZE; j++){
-                    MEM_GET_U8(0, i, j, SIZE_MAX);
-                    ESP_LOGI(TAG, "table i %d j %d vaj %d", i ,j ,MEM_GET_U8(0, i, j, SIZE_MAX));
-                }
-            }
-            HERE
-            LOOP
-            LOGIC
-            EXECUTION
-            */
-            int64_t end_time = esp_timer_get_time();
-            ESP_LOGI(TAG, "loop completed in %.3f ms, watchdog triggered: %d", (end_time - start_time) / 1000.0, wtd.wtd_triggered);
-            xSemaphoreGive(wtd_semaphore);
-            taskYIELD();
-        }
-    }
-}
+emu_err_t parse_fill_variables();
+emu_err_t parse_allocate_variables();
+void parse_reset();
 
 emu_err_t emulator_parse_source_add(chr_msg_buffer_t * msg){
     if (msg == NULL){
@@ -121,94 +87,86 @@ void emu(void* params){
     ESP_LOGI(TAG, "emu task active");
     emu_task_queue  = xQueueCreate(3, sizeof(emu_order_t));
     static emu_order_t orders;
+    parse_reset();
     while(1){
         if (pdTRUE == xQueueReceive(emu_task_queue, &orders, portMAX_DELAY)){
             ESP_LOGI(TAG, "execute order 0x%04X" , orders);
-            switch (orders){
-            case ORD_PROCESS_VARIABLES:
-                emu_parse_variables(source, &mem);
+            switch (orders){    
+                case ORD_PROCESS_VARIABLES:
+                    parse_allocate_variables();
+                    break;
+                case ORD_FILL_VARIABLES:
+                    parse_fill_variables();
+                    break;
+                case ORD_PROCESS_CODE:
+                    // Handle processing code
+                    break;
+
+                case ORD_CHECK_CODE:
+                    // Handle checking completeness
+                    break;
+                    
+                case ORD_EMU_LOOP_RUN:
+                    loop_start();
+                    //add here check if code can be run
+                    break;
+                case ORD_EMU_LOOP_INIT:
+                    loop_init();
                 break;
 
-            case ORD_PROCESS_CODE:
-                // Handle processing code
-                break;
+                case ORD_EMU_LOOP_STOP:
+                    loop_stop();
+                    break;
 
-            case ORD_CHECK_CODE:
-                // Handle checking completeness
-                break;
+                case ORD_RESET_TRANSMISSION:
+                    parse_reset();
+                    chr_msg_buffer_clear(source);
+                    emu_variables_reset(&mem);
+                    break;
 
-            case ORD_START_BLOCKS:
-                // Handle starting blocks
-                code_set_blocks();
-                break;
-
-            case ORD_EMU_LOOP_RUN:
-                loop_start();
-                break;
-            case ORD_EMU_LOOP_INIT:
-                loop_init();
-            break;
-
-            case ORD_EMU_LOOP_STOP:
-                loop_stop();
-                break;
-
-            case ORD_RESET_TRANSMISSION:
-                code_set_reset();
-                chr_msg_buffer_clear(source);
-                emu_variables_reset(&mem);
-                break;
-            case ORD_START_BYTES:
-                // Handle start bytes
-                code_set_start();
-                break;
-
-            case ORD_STOP_BYTES:
-                code_set_end();
-                break;
-
-            default:
-                // Unknown order
-                break;
+                default:
+                    // Unknown order
+                    break;
             }// end case
         }//end if
     } //end while
 };
 
 
-
-//flags for transmission keypoints
-emu_err_t code_set_start(){
-    if (is_code_start == true){
-        ESP_LOGE(TAG, "code transmission already started");
+/*parse checks*/
+emu_err_t parse_allocate_variables(){
+    if (!PARSE_CAN_ALLOCATE()){
+        ESP_LOGE(TAG, "Variables parsing already done");
         return EMU_ERR_CMD_START;
     }
-    is_code_start = true;
-    ESP_LOGI(TAG, "code transmission started");
+    PARSE_SET_ALLOCATE(false);
+    ESP_LOGI(TAG, "Parsing variables");
+    emu_parse_variables(source, &mem);
+    ESP_LOGI(TAG, "Done parsing variables");
     return EMU_OK;
 }
-emu_err_t code_set_blocks(){
-    if (is_blocks_start == true){
-        ESP_LOGE(TAG, "blocks transmission already started");
+/*parse checks*/
+emu_err_t parse_fill_variables(){
+    if (PARSE_CAN_ALLOCATE()){
+        ESP_LOGE(TAG, "Cannot fill variables, first allocate space");
         return EMU_ERR_CMD_START;
     }
-    is_blocks_start = true;
-    ESP_LOGI(TAG, "blocks transmission started");
-    return EMU_OK;
-}
-emu_err_t code_set_end(){
-    if (is_code_end == true){
-        ESP_LOGE(TAG, "code already stopped");
-        return EMU_ERR_CMD_START;
+    else if(!PARSE_CAN_FILL_VAL()){
+        ESP_LOGW(TAG, "Overwritting variables");
+        emu_parse_into_variables(source, &mem);
+        ESP_LOGI(TAG, "Filling into done");
+        return EMU_OK;
     }
-    is_code_end = true;
-    ESP_LOGI(TAG, "code end reached");
+    PARSE_SET_FILL_VAL(false);
+    ESP_LOGI(TAG, "Filling into variables");
+    emu_parse_into_variables(source, &mem);
+    ESP_LOGI(TAG, "Filling into done");
     return EMU_OK;
 }
-
-void code_set_reset(){
-    is_code_start   = false;
-    is_blocks_start = false;
-    is_code_end     = false;
+/*parse checks*/
+void parse_reset(){
+    PARSE_SET_ALLOCATE(true);
+    PARSE_SET_FILL_VAL(true);
+    PARSE_SET_RUN_CODE(false);
     return;
 }

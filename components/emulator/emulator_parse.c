@@ -82,7 +82,6 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     }
     emu_variables_create(mem, emu_mem_size_single);
     emu_arrays_create(source, mem, start_index);
-    emu_parse_into_variables(source, mem);
     return EMU_OK;
 }
 
@@ -98,22 +97,31 @@ emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem){
             switch((emu_header_t)(data[0] << 8) | data[1]){
                 case EMU_H_VAR_DATA_0:
                     memcpy(&mem->arr_ui8[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_1:
-
+                    memcpy(&mem->arr_ui16[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_2:
-
+                    memcpy(&mem->arr_ui32[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_3:
-
+                    memcpy(&mem->arr_i8[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_4: 
-
+                    memcpy(&mem->arr_i16[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_5:
-
+                    memcpy(&mem->arr_i32[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_6:
-
+                    memcpy(&mem->arr_f[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_7:
-
+                    memcpy(&mem->arr_d[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 case EMU_H_VAR_DATA_8:
-
+                    memcpy(&mem->arr_b[(uint8_t)data[2]].data[(uint16_t)GET_2_BYTES(data)], &data[5], (len-5));
+                    break;
                 default:
                     break;
             }

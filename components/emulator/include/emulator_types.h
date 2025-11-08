@@ -37,9 +37,10 @@ typedef enum{
 typedef enum {
     ORD_STOP_BYTES        = 0x0000,
     ORD_START_BYTES       = 0xFFFF,
+    ORD_FILL_VARIABLES    = 0xDDDD,
     ORD_START_BLOCKS      = 0x00FF,
     ORD_H_VARIABLES       = 0xFF00,
-    ORD_PROCESS_VARIABLES = 0x0010,
+    ORD_PROCESS_VARIABLES = 0xEEEE,
     ORD_RESET_TRANSMISSION= 0x0001, 
     ORD_PROCESS_CODE      = 0x0020,
     ORD_CHECK_CODE        = 0x0030,
@@ -69,6 +70,15 @@ typedef enum{
     EMU_H_VAR_DATA_7 = 0xFF80,
     EMU_H_VAR_DATA_8 = 0xFF90,
 }emu_header_t;
+
+typedef enum {
+    LOOP_NOT_SET,
+    LOOP_SET,
+    LOOP_RUNNING,
+    LOOP_STOPPED,
+    LOOP_HALTED,
+    LOOP_FINISHED,
+} loop_status_t;
 
 typedef enum{
     ID_1 = 0x00,

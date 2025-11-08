@@ -1,85 +1,35 @@
 freertos config -> timer dispatch form ISR
 freertos config -> tickrate 1000Hz
 
+BLE INFO 
 
-todo rework variables alocation in emulator
+typedef enum{
+    DATA_UI8,   /00
+    DATA_UI16,  /01
+    DATA_UI32,  /02
+    DATA_I8,    /03
+    DATA_I16,   /04
+    DATA_I32,   /05  
+    DATA_F,     /06
+    DATA_D,     /07
+    DATA_B      /08
+}data_types_t;
 
-#include <stdint.h>
+Wysłanie ilości danych:
+FFFF -> start sekwencji
+FF00 xx xx xx xx xx xx xx xx xx -> ile zmnienych pojedyńczych (max 256, musi być jedna zmienna jakakolwiek w programie), w kolejnosci enum
+FF01 xx ->typ zmiennej , xx -> rozmiar (tablice 1d, można powtarzać wiele różnych na pakiet) 
+FF02 xx ->typ zmiennej , xx -> rozmiar1, xx -> rozmiar2 (tablice 2d), można powtarzać wiele różnych na pakiet
+FF03 xx ->typ zmiennej , xx -> rozmiar1, xx -> rozmiar2, xx -> rozmiar3 (tablice 3d) można powtarzać wiele różnych na pakiet
+EEEE -> stworz zmienne
+(opjonalnie)
 
+FF10 -> uzupełanianie tablic typu UI8 , xx index tablicy , xx index początkowy(spłaszczony) , xxxxxxxxxxxxx dane tablicy spłaszczonej
+FF11 -> uzupełanianie tablic typu UI16 analogicznie 
+(reszta FF1X)
+EEEE -> uzupełnij zmienne
 
-typedef struct{
-    uint8_t *t; //zapisuje które wejścia już zostały zaktualizowane w cyklu, jest aktualizowana przez blok poprzedni w stosunku do tego który ma wykorzsytywane wejścia
-    //tablica wszystkich wejść które są do kopiowania
-    //zmienne globalne jeśli są podpięte do tego bloczka, nie kopiować tylko pointer
-    // id zmiennej ?
-    // bool że się wykonał 
-    // id bloku które będzie kolejością wykonania
-} in_state;
-
-typedef struct 
-{
-    //do którego bloku skopiować zmienne wyjściowe i guess id ?
-    //zapsiuje do którego bloku przekazał wykoywanie 
-} out_state;
-
-//FF00 -> Start zmiennych
-// xx * 11 -> ile zmiennych danych typów / header
-// *11
-// xx -> ile zmodyfikowanych danego typu 
-// xx -> ID_ zmiennej czyli indeks w tableli
-// xx * rozmiar zmiennej -> dane
-// leci do kolejnego typu zmiennych dlatego *11
-
-//FFFF -> Start kodu
-
-// FF/FE ? -> start transmisji bloczku(bez segmentacji/z segmentacją)
-// xxxxxxxx -> numer trasmijsi/nr bloku/długość danych | BLOCK ID
-// xx -> Tag bloku                  | BLOCK ID
-// xx -> start bloczku
-// ile się zmieści -> dane
-// FF/FE -> jest kolejne dane bloczku
-
-// 0000 -> Koniec kodu
-
-
-
-
-
-
-
-//wersja 2.0 
-
-paket L=2 XXXX - komenda (emu_order_code_t)
-
-FFFF start transmisji kodu
-(const L=10)
-FF00 || xx ->  * 4int || xx-> * 4uint || xx -> float || xx -> double ||  xx -> bool || xx -> table1d || xx -> tablele 2d || xx -> table3d
-
-
-
-**wartości początkowe**
-L = 3 + ile*2
-FF0x -> kolejne typy|| xx -> ile || xx + xx (id/wartosc) || ........
-
-00FF  statrt transmisji bloczkow
-xxxx||xxxx  ile pakietów powinno być || ile bloczków 
-
-FF/FE -> początek bloczku lub kontynuacja || xxxx -> id bloczku || dane 
-opcjonalnie FE || kolejne dane 
-
-FF -> kolejny bloczek;
-
-
-0000 -> koniec
-
-
-//wersja 3.0
-FFFF - start transmisji kodu
-FF00 || xx -> * 11 ilosci kolejnych podstawowych zmiennych
-FF01 || xx xx array 1d (typ+rozmiar) * ile jest
-FF02 || xx xx xx array 2d (typ+ d1 + d2) * ile jest
-FF03 || xx xx xx xx array 3d (typ+ d1 + d2 + d3) * ile jest
-
+tablice są uzupełniane kolejno kolumnami 
 
 
 
