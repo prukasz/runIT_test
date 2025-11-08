@@ -1,15 +1,12 @@
 #pragma once 
 #include "stdint.h"
-#include "stdbool.h"
 #include "gatt_buff.h"
+#include "emulator_types.h"
+
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "emulator_types.h"
 
-/**
-* @brief commands from BLE
-*/
 
 typedef struct{
     uint16_t id;

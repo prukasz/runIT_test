@@ -82,7 +82,6 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     }
     emu_variables_create(mem, emu_mem_size_single);
     emu_arrays_create(source, mem, start_index);
-    emu_parse_into_variables(source, mem);
     return EMU_OK;
 }
 
