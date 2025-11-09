@@ -111,7 +111,12 @@ void emu(void* params){
                     //add here check if code can be run
                     break;
                 case ORD_EMU_LOOP_INIT:
+                    if(!PARSE_CAN_ALLOCATE()){
                     loop_init();
+                    }
+                    else{
+                        ESP_LOGE(TAG, "First allocate variables");
+                    }
                 break;
 
                 case ORD_EMU_LOOP_STOP:
@@ -139,9 +144,15 @@ emu_err_t parse_allocate_variables(){
         ESP_LOGE(TAG, "Variables parsing already done");
         return EMU_ERR_CMD_START;
     }
-    PARSE_SET_ALLOCATE(false);
+    
     ESP_LOGI(TAG, "Parsing variables");
-    emu_parse_variables(source, &mem);
+    if(EMU_ERR_NO_MEMORY == emu_parse_variables(source, &mem))
+    {   
+        ESP_LOGE(TAG, "Parsing variables failed");
+        PARSE_SET_ALLOCATE(true);
+        return EMU_ERR_INVALID_STATE;
+    }
+    PARSE_SET_ALLOCATE(false);
     ESP_LOGI(TAG, "Done parsing variables");
     return EMU_OK;
 }
