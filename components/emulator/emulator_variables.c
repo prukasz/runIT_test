@@ -61,6 +61,7 @@ emu_err_t emu_variables_create(emu_mem_t *mem, uint8_t *sizes)
     mem->_base_ptr = calloc(1, total_size);
     if (!mem->_base_ptr) {
         ESP_LOGE(TAG, "Failed to allocate memory for dataholder (%d bytes)", total_size);
+        emu_variables_reset(mem);
         return EMU_ERR_NO_MEMORY;
     }
 
@@ -85,10 +86,10 @@ emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_
 {
     uint8_t *data;
     uint16_t len;
-    size_t buff_size = chr_msg_buffer_size(source);
-        uint8_t types_cnt[9] = {0};
-    uint8_t step;
-    size_t total_size = 0;
+    uint64_t buff_size = chr_msg_buffer_size(source);
+    uint8_t types_cnt[9] = {0};
+        uint8_t step;
+    uint64_t total_size = 0;
     start_index += 1;
 
     for (size_t i = start_index; i < buff_size; ++i) {
@@ -96,13 +97,14 @@ emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_
         if (_check_arr_header(data, &step) && _check_arr_packet_size(len, step)) {
             for (size_t j = HEADER_SIZE; j < len; j += step) {
                 types_cnt[(data_types_t)data[j]]++;
-                uint16_t table_cnt = data[j + 1];
-                if (step >= 3) table_cnt *= data[j + 2];
-                if (step == 4) table_cnt *= data[j + 3];
+                uint64_t table_cnt = data[j + 1];
+                if (step >= 3) {table_cnt *= data[j + 2];}
+                if (step == 4) {table_cnt *= data[j + 3];}
                 total_size += data_size((data_types_t)data[j]) * table_cnt;
             }
         }
     }
+    ESP_LOGI(TAG, "Total array size of arrays: %lldB", total_size);
 
     size_t handle_size = 0;
     ADD_SIZE(handle_size, types_cnt[0], arr_ui8_t);
@@ -116,9 +118,12 @@ emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_
     ADD_SIZE(handle_size, types_cnt[8], arr_b_t);
 
     mem->_base_arr_handle_ptr = calloc(1, handle_size);
-    if (!mem->_base_arr_handle_ptr)
+    if (!mem->_base_arr_handle_ptr){
+        ESP_LOGW(TAG, "Arrays handle allocation failed");
+        emu_variables_reset(mem);
         return EMU_ERR_NO_MEMORY;
-        
+    }
+
     for (uint8_t i = 0 ; i < 9 ; i++) 
     {ESP_LOGI(TAG,"allocated %d slots for %d type table", types_cnt[i], i);}
 
@@ -134,10 +139,14 @@ emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_
     SETUP_FIELD(mem, arr_b,    8, current_ptr, types_cnt);
 
     mem->_base_arr_ptr = calloc(1, total_size);
-    if (!mem->_base_arr_ptr)
+    if (!mem->_base_arr_ptr){
+        ESP_LOGW(TAG, "Arrays allocation failed");
+        emu_variables_reset(mem);
         return EMU_ERR_NO_MEMORY;
+    }
 
-    ESP_LOGI(TAG, "Total array size of arrays: %dB", total_size);
+
+   
 
     uint8_t arr_index[9] = {0};
     size_t offset = 0;
