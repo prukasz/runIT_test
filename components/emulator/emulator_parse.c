@@ -63,7 +63,7 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
                 chr_msg_buffer_get(source, (i + 1), &data, &len);
                 if (len == PACKET_MEM_SIZE && _check_header(data, EMU_H_VAR_START))
                 {
-                    ESP_LOGI(TAG, "Found sizes of variables at index %d", i);
+                    ESP_LOGI(TAG, "Found sizes of variables at index %d", i+1);
                     start_index = i + 1;
                     memcpy(emu_mem_size_single, &data[HEADER_SIZE], (PACKET_MEM_SIZE - HEADER_SIZE));
                     for (int i = 0; i < PACKET_MEM_SIZE; ++i)
