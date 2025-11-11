@@ -15,12 +15,13 @@
     }                                                                \
 })
 
-
 /*max 16 inputs (apart from global variables)*/
 typedef struct {
-    uint16_t *block_id;   // ID of the connected block
-    uint8_t  q_number;  // Which output of this block connects
-    uint16_t blocks_visited;
+    /*output can be connected to -> block id+in_num and there is in_cnt connections*/ 
+    uint16_t *block_id;   
+    uint8_t  *in_num;
+    uint8_t  in_cnt;
+    uint8_t in_visited;
 } q_connection_t;
 
 typedef struct{
