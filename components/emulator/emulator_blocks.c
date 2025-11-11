@@ -2,7 +2,8 @@
 #include "string.h"
 #include "emulator_variables.h"
 
-extern block_handle_t** blocks_structs=NULL;
+extern block_handle_t** blocks_structs;
+expression_t *expression_table[5];
 
 emu_err_t block_compute(block_handle_t* block){
     ESP_LOGI("compute_block", "executing");

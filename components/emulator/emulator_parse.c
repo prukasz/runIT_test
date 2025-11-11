@@ -1,11 +1,13 @@
 #include "emulator_parse.h"
 #include "emulator.h"
 #include "emulator_variables.h"
+#include "emulator_blocks.h"
 #include "esp_log.h"
 
 static const char *TAG = "EMU_PARSE";
 #define PACKET_MEM_SIZE 11
 #define HEADER_SIZE 2
+#define BLOCK_HEADER_SIZE 3
 
 bool _check_arr_header(uint8_t *data, uint8_t *step)
 {
@@ -148,6 +150,95 @@ emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
                 break;
         }
     }
+    chr_msg_buffer_clear(source);
     return EMU_OK;
 }
+
+extern block_handle_t** blocks_structs;
+extern expression_t *expression_table[5];
+
+emu_err_t parse_math_block(chr_msg_buffer_t *source, uint16_t block_index)
+{
+    uint8_t *data;
+    uint16_t len;
+    uint8_t in_cnt = 0;
+    uint8_t q_cnt = 0;
+    size_t buff_size = chr_msg_buffer_size(source);
+
+    for (size_t i = 0; i < buff_size; i++) {
+        chr_msg_buffer_get(source, i, &data, &len);
+        if(len <= BLOCK_HEADER_SIZE) continue;
+
+        switch ((emu_header_t)((data[0] << 8) | data[1])) {
+            case EMU_H_BLOCK_GLOBAL_DATA:{
+                in_cnt = in_cnt + (len/2);
+                break;
+            }
+            case EMU_H_BLOCK_INPUT_DATA:{
+                in_cnt = in_cnt + (len/2);
+                break;
+            }
+            case EMU_H_BLOCK_OUTPUT_DATA:{
+                q_cnt = q_cnt + (len/2);
+                break;
+            }
+            default:{
+                break;
+            }
+        }
+    }
+
+    blocks_structs[block_index] = block_create_struct(in_cnt, q_cnt);
+
+    for (size_t i = 0; i < buff_size; i++) {
+        chr_msg_buffer_get(source, i, &data, &len);
+        if(len <= BLOCK_HEADER_SIZE) continue;
+
+        switch ((emu_header_t)((data[0] << 8) | data[1])) {
+            case EMU_H_BLOCK_GLOBAL_DATA:{
+                break;
+            }
+            case EMU_H_BLOCK_INPUT_DATA:{
+                break;
+            }
+            case EMU_H_BLOCK_OUTPUT_DATA:{
+                break;
+            }
+            case EMU_H_BLOCKS_OUTPUT_LIST:{
+                break;
+            }
+            case EMU_H_BLOCK_MATH_EXPR:{
+                int index;
+
+                for(int i = 0; i<5; i++){
+                    if(expression_table[i] == NULL)
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+                expression_table[index] = (expression_t*)malloc(sizeof(expression_t));
+
+                break;
+            }
+            default:{
+                break;
+            }
+        }
+    }
+}
+
+
+
+// union 
+// {
+//     struct globalenj
+//     {
+//         /* data */
+//     };
+//     struct lokalnej
+//     {
+//         /* data */
+//     };
+// };
 
