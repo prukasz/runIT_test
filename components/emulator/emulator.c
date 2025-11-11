@@ -20,6 +20,7 @@ parse_status_t parse_status;
 emu_mem_t mem;
 uint8_t emu_mem_size_single[9];
 
+/*parse checks*/
 emu_err_t parse_fill_variables();
 emu_err_t parse_allocate_variables();
 void parse_reset();
@@ -43,45 +44,18 @@ emu_err_t loop_stop_execution(){
     return EMU_OK;
 }   //stop and preserve state
 
-block_handle_t *block_init(block_define_t *block_define){
-    //init block
-    block_handle_t *block = (block_handle_t*)calloc(1,sizeof(block_handle_t));
-    block->id = block_define->id; 
-    block->type = block_define->type;
-    block->in_cnt = block_define->in_cnt;
-    block->in_data_type_table = (data_types_t*)calloc((block->in_cnt),sizeof(data_types_t));
-    memcpy(block->in_data_type_table, block_define->in_data_type_table, block->in_cnt*sizeof(data_types_t));
-    block->q_cnt = block_define->q_cnt;
-    block->q_nodes_cnt = block_define->q_nodes_cnt;
-    block->q_node_ids = (uint16_t*)calloc(block->q_nodes_cnt, sizeof(uint16_t));
-    memcpy(block->q_node_ids, block_define->q_node_ids, block->q_nodes_cnt*sizeof(uint16_t));
-    block->q_data_type_table = (data_types_t*)calloc((block->q_cnt),sizeof(data_types_t));
-    free(block_define);
-    
-    
-    block->in_data_offsets=(size_t*)calloc(block->in_cnt,sizeof(size_t));
-    size_t size_to_allocate = 0;
-    //allocating space for left pointers
-    for(int i = 0; i<block->in_cnt; i++)
-    {
-        block->in_data_offsets[i] = size_to_allocate;
-        size_to_allocate = size_to_allocate + data_size(block->in_data_type_table[i]);
-    }
 
-    block->in_data = (void*)calloc(1,size_to_allocate);
-
-    block->q_data_offsets=(size_t*)calloc(block->q_cnt,sizeof(size_t));
-    size_to_allocate = 0;
-    for(int i = 0; i<block->q_cnt; i++)
-    {
-        block->q_data_offsets[i] = size_to_allocate;
-        size_to_allocate = size_to_allocate + data_size(block->q_data_type_table[i]);
-    }
-
-    block->q_data = (void*)calloc(1,size_to_allocate);
-
+block_handle_t *block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
+    block_handle_t *block = calloc(1, sizeof(block_handle_t));
+    block -> in_cnt = in_cnt;
+    block -> q_cnt  = q_cnt;
+    block->in_data_type_table = calloc((size_t)in_cnt, sizeof(data_types_t));
+    block->q_data_type_table  = calloc((size_t)q_cnt, sizeof(data_types_t));
+    block->q_connections_id   = calloc((size_t)q_cnt, sizeof(q_connection_t));
     return block;
 }
+
+
 
 void emu(void* params){
     ESP_LOGI(TAG, "emu task active");

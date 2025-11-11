@@ -69,6 +69,15 @@ typedef enum{
     EMU_H_VAR_DATA_6 = 0xFF70,
     EMU_H_VAR_DATA_7 = 0xFF80,
     EMU_H_VAR_DATA_8 = 0xFF90,
+    EMU_H_VAR_DATA_S0 = 0xFF11,    //single varialbes
+    EMU_H_VAR_DATA_S1 = 0xFF21,
+    EMU_H_VAR_DATA_S2 = 0xFF31,
+    EMU_H_VAR_DATA_S3 = 0xFF41,
+    EMU_H_VAR_DATA_S4 = 0xFF51,
+    EMU_H_VAR_DATA_S5 = 0xFF61,
+    EMU_H_VAR_DATA_S6 = 0xFF71,
+    EMU_H_VAR_DATA_S7 = 0xFF81,
+    EMU_H_VAR_DATA_S8 = 0xFF91,
 }emu_header_t;
 
 typedef enum {

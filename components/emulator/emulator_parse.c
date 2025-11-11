@@ -87,6 +87,30 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 
 #define GET_2_BYTES(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
 
+#define HANDLE_ARRAY_CASE(ID, TYPE, MEMBER)                                      \
+    case ID: {                                                                   \
+        arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                   \
+        size_t total_size = arr->dims[0];                                        \
+        for (uint8_t d = 1; d < arr->num_dims; d++) total_size *= arr->dims[d];  \
+        total_size *= sizeof(TYPE);                                              \
+        if ((offset + bytes_to_copy) <= total_size) {                            \
+            memcpy(&arr->data[offset], &data[5], bytes_to_copy);                 \
+        } else {                                                                 \
+            ESP_LOGW("EMU_PARSE", "Write out of bounds (" #TYPE " table %d)", arr_index); \
+        }                                                                        \
+        break;                                                                   \
+    }
+
+#define HANDLE_SINGLE_CASE(ID, TYPE, MEMBER)                                     \
+    case ID: {                                                                   \
+        uint8_t var_idx = data[2];                                               \
+        size_t bytes_to_copy = len - 3;                                          \
+        if (bytes_to_copy > sizeof(TYPE)) bytes_to_copy = sizeof(TYPE);          \
+        memcpy(&mem->MEMBER[var_idx], &data[3], bytes_to_copy);                  \
+        break;                                                                   \
+    }
+
+
 emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
     uint8_t *data;
     uint16_t len;
@@ -94,154 +118,36 @@ emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
 
     for (size_t i = 0; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
-        if (len > HEADER_SIZE) {
-            uint8_t arr_index = (uint8_t)data[2];
-            uint16_t offset   = (uint16_t)GET_2_BYTES(data);
-            size_t bytes_to_copy = len - 5;
+        if (len <= HEADER_SIZE) continue;
 
-            switch ((emu_header_t)((data[0] << 8) | data[1])) {
+        uint8_t arr_index = data[2];
+        uint16_t offset   = GET_2_BYTES(data);
+        size_t bytes_to_copy = len - 5;
 
-                case EMU_H_VAR_DATA_0: { // uint8_t arrays
-                    arr_ui8_t *arr = &mem->arr_ui8[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(uint8_t);
+        switch ((emu_header_t)((data[0] << 8) | data[1])) {
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_0, uint8_t,  ui8)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_1, uint16_t, ui16)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_2, uint32_t, ui32)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_3, int8_t,   i8)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_4, int16_t,  i16)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_5, int32_t,  i32)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_6, float,    f)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_7, double,   d)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_8, bool,     b)
 
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (uint8_t table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_1: { // uint16_t arrays
-                    arr_ui16_t *arr = &mem->arr_ui16[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(uint16_t);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (uint16_t table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_2: { // uint32_t arrays
-                    arr_ui32_t *arr = &mem->arr_ui32[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(uint32_t);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (uint32_t table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_3: { // int8_t arrays
-                    arr_i8_t *arr = &mem->arr_i8[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(int8_t);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (int8_t table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_4: { // int16_t arrays
-                    arr_i16_t *arr = &mem->arr_i16[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(int16_t);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (int16_t table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_5: { // int32_t arrays
-                    arr_i32_t *arr = &mem->arr_i32[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(int32_t);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (int32_t table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_6: { // float arrays
-                    arr_f_t *arr = &mem->arr_f[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(float);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (float table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_7: { // double arrays
-                    arr_d_t *arr = &mem->arr_d[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(double);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (double table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                case EMU_H_VAR_DATA_8: { // bool arrays
-                    arr_b_t *arr = &mem->arr_b[arr_index];
-                    size_t total_size = arr->dims[0];
-                    if (arr->num_dims > 1) total_size *= arr->dims[1];
-                    if (arr->num_dims > 2) total_size *= arr->dims[2];
-                    total_size *= sizeof(bool);
-
-                    if ((offset + bytes_to_copy) <= total_size) {
-                        memcpy(&arr->data[offset], &data[5], bytes_to_copy);
-                    } else {
-                        ESP_LOGW("EMU_PARSE", "Write out of bounds (bool table %d)", arr_index);
-                    }
-                    break;
-                }
-
-                default:
-                    break;
-            }
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S0, uint8_t,  u8)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S1, uint16_t, u16)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S2, uint32_t, u32)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S3, int8_t,   i8)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S4, int16_t,  i16)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S5, int32_t,  i32)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S6, float,    f)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S7, double,   d)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S8, bool,     b)
+            default:
+                break;
         }
     }
     return EMU_OK;
 }
-
 

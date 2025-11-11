@@ -144,10 +144,6 @@ emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_
         emu_variables_reset(mem);
         return EMU_ERR_NO_MEMORY;
     }
-
-
-   
-
     uint8_t arr_index[9] = {0};
     size_t offset = 0;
 

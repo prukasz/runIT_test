@@ -19,8 +19,10 @@ void loop_task(void* params){
                     ESP_LOGI(TAG, "table i %d j %d vaj %d", i ,j ,MEM_GET_U8(0, i, j, SIZE_MAX));
                 }
             }
+            ESP_LOGI(TAG, "SINGLE1 %d",MEM_GET_U8(0, SIZE_MAX, SIZE_MAX, SIZE_MAX));
+            ESP_LOGI(TAG, "SINGL2 %d",MEM_GET_U8(1, SIZE_MAX, SIZE_MAX, SIZE_MAX));
             /*
-            HERE
+                HERE
             LOOP
             LOGIC
             EXECUTION

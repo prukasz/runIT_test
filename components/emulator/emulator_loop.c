@@ -38,6 +38,7 @@ static void IRAM_ATTR loop_intr_handler(void *parameters) {
 }
 
 emu_err_t loop_init(){
+    
     loop_semaphore = xSemaphoreCreateBinary();
     wtd_semaphore = xSemaphoreCreateBinary();
     WTD_SET_LIMIT(3);
