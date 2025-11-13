@@ -11,16 +11,26 @@ uint16_t blocks_cnt;
 block_handle_t** blocks_structs=NULL;
 emu_block_func * blocks_table=NULL;
 emu_err_t emu_execute();
+#define CNT 10000
 
 void loop_task(void* params){
     while(1){
         if(pdTRUE == xSemaphoreTake(loop_semaphore, portMAX_DELAY)) {
             int64_t start_time = esp_timer_get_time();
+            for (uint32_t i = 0; i < CNT; i++){
+            mem_get_as_d(DATA_UI8, 0,(uint8_t[]){0,0,0xFF});
+            MEM_GET_U8(0,((uint8_t[]){0,0,0xFF}));
+            //emu_execute();
+            mem_get_as_d(DATA_D, 0,(uint8_t[]){0,0,0});
+            uint8_t idx_arr[3] = {0,0,0};
+            //MEM_SET(DATA_D, 0, idx_arr , -10.1);
+            uint8_t idx_arr2[3] = {4,4,4};
+            MEM_SET(DATA_D, 0, idx_arr2 , -69.696969);
+            mem_get_as_d(DATA_D, 0,(uint8_t[]){4,4,4});
 
-            emu_execute();
-            
+            }
             int64_t end_time = esp_timer_get_time();
-            ESP_LOGI(TAG, "loop completed in %.3f ms, watchdog triggered: %d", (end_time - start_time) / 1000.0, status.wtd.wtd_triggered);
+            ESP_LOGI(TAG, "loop completed in %lld us, watchdog triggered: %d", (end_time - start_time), status.wtd.wtd_triggered);
             xSemaphoreGive(wtd_semaphore);
             taskYIELD();
         }
@@ -36,6 +46,7 @@ emu_err_t emu_execute(){
             return err;
         }
     }
+    return EMU_OK;
 }
 
 emu_err_t emu_create_block_tables(uint16_t num_blocks) {

@@ -190,4 +190,42 @@ void emu_variables_reset(emu_mem_t *mem)
     ESP_LOGI(TAG, "Dataholder memory freed");
 }
 
+double mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[3]) {
+    size_t flat_idx = SIZE_MAX;  // default for scalar
+    bool is_scalar = 0;
+
+    if(idx_table[0]==UINT8_MAX && idx_table[1]==UINT8_MAX && idx_table[2]==UINT8_MAX){is_scalar = true;}
+
+    if (!is_scalar) {
+        // Compute flat index using macro (bounds-checked)
+        switch (type) {
+            case DATA_UI8:   flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[var_idx].num_dims, mem.arr_ui8[var_idx].dims, idx_table); break;
+            case DATA_UI16:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui16[var_idx].num_dims, mem.arr_ui16[var_idx].dims, idx_table); break;
+            case DATA_UI32:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui32[var_idx].num_dims, mem.arr_ui32[var_idx].dims, idx_table); break;
+            case DATA_I8:    flat_idx = _ARR_FLAT_IDX(mem.arr_i8[var_idx].num_dims, mem.arr_i8[var_idx].dims, idx_table); break;
+            case DATA_I16:   flat_idx = _ARR_FLAT_IDX(mem.arr_i16[var_idx].num_dims, mem.arr_i16[var_idx].dims, idx_table); break;
+            case DATA_I32:   flat_idx = _ARR_FLAT_IDX(mem.arr_i32[var_idx].num_dims, mem.arr_i32[var_idx].dims,idx_table); break;
+            case DATA_F:     flat_idx = _ARR_FLAT_IDX(mem.arr_f[var_idx].num_dims, mem.arr_f[var_idx].dims, idx_table); break;
+            case DATA_D:     flat_idx = _ARR_FLAT_IDX(mem.arr_d[var_idx].num_dims, mem.arr_d[var_idx].dims, idx_table); break;
+            case DATA_B:     flat_idx = _ARR_FLAT_IDX(mem.arr_b[var_idx].num_dims, mem.arr_b[var_idx].dims, idx_table); break;
+            default: return 0.0;
+        }
+
+        if (flat_idx == (size_t)-1) return 0.0;  // out-of-bounds
+    }
+
+    // Return value casted to double
+    switch (type) {
+        case DATA_UI8:   return is_scalar ? mem.u8[var_idx] : mem.arr_ui8[var_idx].data[flat_idx];
+        case DATA_UI16:  return is_scalar ? mem.u16[var_idx] : mem.arr_ui16[var_idx].data[flat_idx];
+        case DATA_UI32:  return is_scalar ? mem.u32[var_idx] : mem.arr_ui32[var_idx].data[flat_idx];
+        case DATA_I8:    return is_scalar ? mem.i8[var_idx] : mem.arr_i8[var_idx].data[flat_idx];
+        case DATA_I16:   return is_scalar ? mem.i16[var_idx] : mem.arr_i16[var_idx].data[flat_idx];
+        case DATA_I32:   return is_scalar ? mem.i32[var_idx] : mem.arr_i32[var_idx].data[flat_idx];
+        case DATA_F:     return is_scalar ? mem.f[var_idx] : mem.arr_f[var_idx].data[flat_idx];
+        case DATA_D:     return is_scalar ? mem.d[var_idx] : mem.arr_d[var_idx].data[flat_idx];
+        case DATA_B:     return is_scalar ? mem.b[var_idx] : mem.arr_b[var_idx].data[flat_idx];
+        default: return 0.0;
+    }
+}
 
