@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import struct
 
-DATA_TYPE = "uint16"
+DATA_TYPE = "double"
 STARTING_INDEX = 5
 TABLE_INDEX = 0
-VALUES = [1, 255, 255, 55, 23, 13, 43, 4] 
+VALUES = [69] 
 OUTPUT_FILE = "valuedump.txt"
-MAX_MESSAGE_SIZE = 9
+MAX_MESSAGE_SIZE = 257
 
 TYPE_MAP = {
     "uint8": [">B", 1, "FF10"],
@@ -16,8 +16,8 @@ TYPE_MAP = {
     "int16": [">h", 2, "FF14"],
     "int32": [">i", 4, "FF15"],
     "bool": [">?", 1, "FF18"],
-    "float": [">f", 4, "FF16"],
-    "double": [">d", 8, "FF17"],
+    "float": ["<f", 4, "FF16"],
+    "double": ["<d", 8, "FF17"],
 }
 
 fmt, type_size, type_header = TYPE_MAP[DATA_TYPE]

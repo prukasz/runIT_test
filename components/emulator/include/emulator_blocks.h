@@ -18,7 +18,7 @@ typedef enum {
 
 typedef struct {
     op_code_t op;
-    uint8_t input_index;
+    uint8_t input_index; //for operator its 00
 } instruction_t;
 
 typedef struct{

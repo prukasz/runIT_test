@@ -209,7 +209,6 @@ emu_err_t parse_math_block(chr_msg_buffer_t *source, uint16_t block_index)
             }
             case EMU_H_BLOCK_MATH_EXPR:{
                 int index;
-
                 for(int i = 0; i<5; i++){
                     if(expression_table[i] == NULL)
                     {
@@ -218,7 +217,14 @@ emu_err_t parse_math_block(chr_msg_buffer_t *source, uint16_t block_index)
                     }
                 }
                 expression_table[index] = (expression_t*)malloc(sizeof(expression_t));
-
+                expression_table[index]->code = (instruction_t*)calloc(len-2, sizeof(instruction_t));
+                expression_table[index]->count = (len-2)/2;
+                for(int i = 2; i<len; i++)
+                {
+                    memcpy(&((expression_table[index]->code[(i-2)/2]).op), &data[i], 1);
+                    memcpy(&((expression_table[index]->code[(i-2)/2]).input_index), &data[i+1], 1);
+                }
+                expression_table[index]->block_index = block_index;
                 break;
             }
             default:{
