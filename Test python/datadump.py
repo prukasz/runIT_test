@@ -16,8 +16,8 @@ TYPE_MAP = {
     "int16": [">h", 2, "FF14"],
     "int32": [">i", 4, "FF15"],
     "bool": [">?", 1, "FF18"],
-    "float": [">f", 4, "FF16"],
-    "double": [">d", 8, "FF17"],
+    "float": ["<f", 4, "FF16"],
+    "double": ["<d", 8, "FF17"],
 }
 
 fmt, type_size, type_header = TYPE_MAP[DATA_TYPE]
