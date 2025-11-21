@@ -75,12 +75,12 @@ static inline double get_val_from_block_struct(uint8_t idx, block_handle_t* bloc
 static int cnt = 0;
 emu_err_t block_compute(block_handle_t* block){
    
-    ESP_LOGI("compute_block", "executing %d, double %lf", cnt++, get_val_from_block_struct(0, block));
-    ESP_LOGI("compute_block", "executing %d, double %lf", cnt++, get_val_from_block_struct(1, block));
+    //ESP_LOGI("compute_block", "executing %d, double %lf", cnt++, get_val_from_block_struct(0, block));
+    //ESP_LOGI("compute_block", "executing %d, double %lf", cnt++, get_val_from_block_struct(1, block));
     if(block->q_connections_table[0].in_cnt>0){
-        double data = -2137.69;
+        double data = -130.69;
         memcpy(block->q_data, &data, 8);
-        ESP_LOGI("compute_block", "making copy");
+        //ESP_LOGI("compute_block", "making copy");
         block_fill_results(block);
     }
     return EMU_OK;

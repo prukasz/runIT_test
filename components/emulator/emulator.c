@@ -143,14 +143,14 @@ void emu(void* params){
         // -------------------------
 
         // Input types
-        blocks_structs[1]->in_data_type_table[0] = DATA_I8;
+        blocks_structs[1]->in_data_type_table[0] = DATA_I16;
         blocks_structs[1]->in_data_type_table[1] = DATA_I8;
 
         // Input offsets
         blocks_structs[1]->in_data_offsets[0] = 0;
-        blocks_structs[1]->in_data_offsets[1] = 8;
+        blocks_structs[1]->in_data_offsets[1] = 4;
 
-        // Allocate input memory
+            // Allocate input memory
         blocks_structs[1]->in_data = calloc(1, 2 * sizeof(double));
 
         // Output types
@@ -173,17 +173,19 @@ void emu(void* params){
         blocks_structs[0]->q_connections_table = calloc(2, sizeof(q_connection_t));
 
         // One target for q0
-        blocks_structs[0]->q_connections_table[0].in_cnt = 1;
+        blocks_structs[0]->q_connections_table[0].in_cnt = 2;
 
         // Allocate target block id list
         blocks_structs[0]->q_connections_table[0].target_block_id =
-            calloc(1, sizeof(uint16_t));
+            calloc(2, sizeof(uint16_t));
         blocks_structs[0]->q_connections_table[0].target_block_id[0] = 1;
+        blocks_structs[0]->q_connections_table[0].target_block_id[1] = 1;
 
         // target input index list
         blocks_structs[0]->q_connections_table[0].target_in_num =
-            calloc(1, sizeof(uint8_t));
+            calloc(2, sizeof(uint8_t));
         blocks_structs[0]->q_connections_table[0].target_in_num[0] = 1;
+        blocks_structs[0]->q_connections_table[0].target_in_num[1] = 0;
                     blocks_table[0] = block_compute;
                     blocks_table[1] = block_compute;
                     

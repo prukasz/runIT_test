@@ -17,6 +17,7 @@ void loop_task(void* params){
         if(pdTRUE == xSemaphoreTake(loop_semaphore, portMAX_DELAY)) {
             int64_t start_time = esp_timer_get_time();
             emu_execute();
+            //ESP_LOGI(TAG, "folat at idx 1: %lf", mem_get_as_d(DATA_F, 0, (uint8_t[3]){0,255,255}));
             int64_t end_time = esp_timer_get_time();
             ESP_LOGI(TAG, "loop completed in %lld us, watchdog triggered: %d", (end_time - start_time), status.wtd.wtd_triggered);
             xSemaphoreGive(wtd_semaphore);
