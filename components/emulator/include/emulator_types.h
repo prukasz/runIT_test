@@ -47,6 +47,7 @@ typedef enum {
     ORD_EMU_LOOP_RUN      = 0x1000,
     ORD_EMU_LOOP_STOP     = 0x2000,
     ORD_EMU_LOOP_INIT     = 0x2137,
+    ORD_EMU_CREATE_BLOCK_STRUCT = 0xbb10,
 }emu_order_t;
 
 
@@ -92,3 +93,4 @@ typedef enum {
 typedef enum{
     ID_1 = 0x00,
 }block_id_t;
+

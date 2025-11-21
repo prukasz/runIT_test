@@ -85,8 +85,6 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     return err;
 }
 
-#define GET_2_BYTES(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
-
 #define HANDLE_ARRAY_CASE(ID, TYPE, MEMBER)                                      \
     case ID: {                                                                   \
         arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                   \
@@ -101,16 +99,19 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         break;                                                                   \
     }
 
-#define HANDLE_SINGLE_CASE(ID, TYPE, MEMBER)                                     \
-    case ID: {                                                                   \
-        uint8_t var_idx = data[2];                                               \
-        size_t bytes_to_copy = len - 3;                                          \
-        if (bytes_to_copy > sizeof(TYPE)) bytes_to_copy = sizeof(TYPE);          \
-        memcpy(&mem->MEMBER[var_idx], &data[3], bytes_to_copy);                  \
-        break;                                                                   \
+#define HANDLE_SINGLE_CASE(ID, TYPE, MEMBER, DATA_LEN)                      \
+    case ID: {                                                              \
+        size_t offset = 2;                                                  \
+        size_t end = DATA_LEN;                                              \
+        while (offset + sizeof(TYPE) < end) {                               \
+            uint8_t var_idx = data[offset];                                 \
+            memcpy(&mem->MEMBER[var_idx], &data[offset + 1], sizeof(TYPE)); \
+            offset += (1 + sizeof(TYPE));                                   \
+        }                                                                   \
+        break;                                                              \
     }
 
-
+#define GET_OFFSET(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
 emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
     uint8_t *data;
     uint16_t len;
@@ -121,7 +122,7 @@ emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
         if (len <= HEADER_SIZE) continue;
 
         uint8_t arr_index = data[2];
-        uint16_t offset   = GET_2_BYTES(data);
+        uint16_t offset   = GET_OFFSET(data);
         size_t bytes_to_copy = len - 5;
 
         switch ((emu_header_t)((data[0] << 8) | data[1])) {
@@ -135,15 +136,15 @@ emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
             HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_7, double,   d)
             HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_8, bool,     b)
 
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S0, uint8_t,  u8)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S1, uint16_t, u16)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S2, uint32_t, u32)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S3, int8_t,   i8)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S4, int16_t,  i16)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S5, int32_t,  i32)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S6, float,    f)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S7, double,   d)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S8, bool,     b)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S0, uint8_t,  u8,  buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S1, uint16_t, u16, buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S2, uint32_t, u32, buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S3, int8_t,   i8,  buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S4, int16_t,  i16, buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S5, int32_t,  i32, buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S6, float,    f,   buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S7, double,   d,   buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S8, bool,     b,   buff_size)
             default:
                 break;
         }

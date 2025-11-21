@@ -88,16 +88,16 @@ static inline size_t data_size(data_types_t type)
 }
 
 /*this macro returns index of variable in 1D table*/
-#define _ARR_FLAT_IDX(num_dims, dims, idx_table) ({            \
+#define _ARR_FLAT_IDX(num_dims, dims, idx_table) ({     \
     size_t _idx = (size_t)-1;                                     \
     if ((num_dims) == 1) {                                        \
-        _idx = ((idx_table[0]) < (dims)[0]) ? (idx_table[0]) : (size_t)-1;           \
+        _idx = ((idx_table[0]) < (dims)[0]) ? (idx_table[0]) : (size_t)-1; \
     } else if ((num_dims) == 2) {                                 \
-        _idx = ((idx_table[0]) < (dims)[0] && (idx_table[1]) < (dims)[1]) ?           \
-               ((idx_table[0]) + (idx_table[1]) * (dims)[0]) : (size_t)-1;           \
+        _idx = ((idx_table[0]) < (dims)[0] && (idx_table[1]) < (dims)[1]) ? \
+               ((idx_table[1]) + (idx_table[0]) * (dims)[1]) : (size_t)-1; \
     } else if ((num_dims) == 3) {                                 \
         _idx = ((idx_table[0]) < (dims)[0] && (idx_table[1]) < (dims)[1] && (idx_table[2]) < (dims)[2]) ? \
-               ((idx_table[0]) + (idx_table[1]) * (dims)[0] + (idx_table[2]) * (dims)[0] * (dims)[1]) : (size_t)-1; \
+               ((idx_table[2]) + (idx_table[1]) * (dims)[2] + (idx_table[0]) * (dims)[1] * (dims)[2]) : (size_t)-1; \
     }                                                              \
     _idx;                                                          \
 })

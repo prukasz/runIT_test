@@ -76,7 +76,6 @@ emu_err_t emu_variables_create(emu_mem_t *mem, uint8_t *sizes)
     SETUP_FIELD(mem, d,   9, current_ptr, sizes);
     SETUP_FIELD(mem, b,  10, current_ptr, sizes);
 
-
     ESP_LOGI(TAG, "Single variables dataholder created successfully");
     return EMU_OK;
 }
@@ -175,7 +174,6 @@ emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_
             }
         }
     }
-
     return EMU_OK;
 }
 
