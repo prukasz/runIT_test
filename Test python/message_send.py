@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 from bluepy.btle import Scanner, Peripheral, BTLEException
-import os
 import sys
 import time
+import subprocess
 
-
+MAX_MESSAGE_SIZE = 250
 DEVICE_NAME = "SKIBIDI"
-f = open("message.txt")
-
-os.system("sudo hciconfig hci0 down")
-os.system("sudo hciconfig hci0 up")
+UUID = "00000000-0000-0000-0000-000000000003"
+CMD_FILE = "valuedump.txt"
+subprocess.run(["sudo", "hciconfig", "hci0", "down"])
+subprocess.run(["sudo", "hciconfig", "hci0", "up"])
 
 scanner = Scanner()
 esp_mac = None
@@ -28,38 +28,72 @@ try:
             break
 
     if not esp_mac:
-        print(f"Device {DEVICE_NAME} not found. Exiting.")
+        print(f"{DEVICE_NAME} not found")
         sys.exit(1)
 
     print("Connecting to ESP32...")
     esp = Peripheral(esp_mac)
     print("Connected!")
+    esp.setMTU(MAX_MESSAGE_SIZE)
 
-    write_char = esp.getCharacteristics(uuid="00000000-0000-0000-0000-000000000003")[0]
+    chars = esp.getCharacteristics(uuid=UUID)
+    if not chars:
+        print(f"Characteristic not found!")
+        sys.exit(1)
+    write_char = chars[0]
+    
 
-    for i, line in enumerate(f, start=1):
-        clean_line = line.strip()
+    with open(CMD_FILE) as f:
+        for i, line in enumerate(f, start=1):
+            clean_line = line.strip()
+            if not clean_line:
+                continue
+            try:
+                data = bytes.fromhex(clean_line)
+            except ValueError:
+                print(f"Invalid hex string on line {i}: {clean_line}")
+                continue
+
+            try:
+                write_char.write(data, withResponse=False)
+                hex_str = " ".join(f"{b:02X}" for b in data)
+                print(f"Message {i} sent: {hex_str}")
+            except BTLEException as e:
+                print(f"Failed to send message {i}: {e}")
+            #time.sleep()
+
+    print("\nManual mode")
+    msg_num = i + 1
+    while True:
+        user_input = input(f"Message {msg_num} > ").strip()
+        if not user_input:
+            print("Exiting")
+            break
         try:
-            data = bytes.fromhex(clean_line)
+            data = bytes.fromhex(user_input)
         except ValueError:
-            print(f"Invalid hex string on line {i}: {clean_line}")
+            print("Invalid string")
             continue
 
-        print(f"Sending message {i}: {data}")
-        write_char.write(data, withResponse=False)
-        print(f"Message {i} sent successfully!")
-        time.sleep(5)
+        try:
+            write_char.write(data, withResponse=False)
+            hex_str = " ".join(f"{b:02X}" for b in data)
+            print(f"Message {msg_num} sent: {hex_str}")
+        except BTLEException as e:
+            print(f"Failed to send message {msg_num}: {e}")
+        msg_num += 1
+        time.sleep(0.2)
 
 except BTLEException as e:
     print(f"Bluetooth error: {e}")
 
 finally:
-    try:
-        esp.disconnect()
-        print("Disconnected from ESP32.")
-    except Exception:
-        pass
-
+    if 'esp' in locals():
+        try:
+            esp.disconnect()
+            print("Disconnected from ESP32.")
+        except Exception:
+            pass
     try:
         scanner.clear()
     except Exception:
