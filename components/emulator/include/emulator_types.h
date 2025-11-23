@@ -83,6 +83,7 @@ typedef enum{
     EMU_H_VAR_DATA_S6 = 0xFF71,
     EMU_H_VAR_DATA_S7 = 0xFF81,
     EMU_H_VAR_DATA_S8 = 0xFF91,
+    EMU_H_BLOCK_MATH_EXPR = 0xBE00,
 }emu_header_t;
 
 typedef enum {

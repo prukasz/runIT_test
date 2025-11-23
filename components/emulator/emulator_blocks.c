@@ -6,6 +6,7 @@
 
 static void block_pass_results(block_handle_t* block);
 extern block_handle_t** blocks_structs;
+expression_t *expression_table[5];
 
 
 static int cnt = 0;
