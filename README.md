@@ -31,6 +31,30 @@ EEEE -> uzupełnij zmienne
 
 tablice są uzupełniane kolejno kolumnami 
 
+Bloczki header 
+
+bbxx (xx) (0,1) typ bloczku - header, xx numer pakietu(2) (00 -> tworzenie bloczku), xxxx (3,4) id bloczku,  xx in_cnt(5) , xx ,xx, xx ... in type , xx q_cnt, xx ,xx ,xx. q type,
+następnie idzie lista połączeń wyść: 
+xx in_cnt (q0)
+xxxx - id bloczku xx- numer wejscia
+razy in_cnt
+xx in_cnt (q0)
+xxxx - id bloczku xx- numer wejscia
+razy in_cnt
+xx in_cnt (q0)
+xxxx - id bloczku xx- numer wejscia
+razy in_cnt
+
+przyklad: 
+bb00 00 0000 02 01 07 03 01 07 07 03 01 0100 00 00 02 0400 01 0100 01 
+bb00 00 0100 02 01 07 02 01 07 02 01 0200 00 01 0200 01 
+bb00 00 0200 02 01 07 02 01 07 02 01 0300 00 01 0300 01 
+bb00 00 0300 02 01 07 02 01 07 01 01 0400 00 
+bb00 00 0400 02 01 07 02 01 07 00
+
+
+
+
 
 
 

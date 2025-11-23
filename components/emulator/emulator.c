@@ -25,6 +25,8 @@ uint8_t emu_mem_size_single[9];
 /*parse checks*/
 emu_err_t parse_fill_variables();
 emu_err_t parse_allocate_variables();
+emu_err_t parse_create_blocks();
+emu_err_t parse_fill_blocks();
 void parse_reset(); 
 
 emu_err_t emulator_parse_source_add(chr_msg_buffer_t * msg){
@@ -47,17 +49,7 @@ emu_err_t loop_stop_execution(){
 }   //stop and preserve state
 
 
-block_handle_t *block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
-    block_handle_t *block = calloc(1, sizeof(block_handle_t));
-    block -> in_cnt = in_cnt;
-    block -> q_cnt  = q_cnt;
-    block -> in_data_offsets = calloc((size_t)in_cnt, sizeof(uint16_t));
-    block -> q_data_offsets  = calloc((size_t)q_cnt, sizeof(uint16_t));
-    block->in_data_type_table = calloc((size_t)in_cnt, sizeof(data_types_t));
-    block->q_data_type_table  = calloc((size_t)q_cnt, sizeof(data_types_t));
-    block->q_connections_table   = calloc((size_t)q_cnt, sizeof(q_connection_t));
-    return block;
-}
+
 extern block_handle_t** blocks_structs;
 extern emu_block_func *blocks_table;
 void emu(void* params){
@@ -88,109 +80,48 @@ void emu(void* params){
                     //add here check if code can be run
                     break;
                 case ORD_EMU_LOOP_INIT:
-                    if(!PARSE_CAN_ALLOCATE()){
-                    loop_init();
-                    }
+                    if(PARSE_FINISHED()){
+                        loop_init();
+                    }   
                     else{
-                        ESP_LOGE(TAG, "First allocate variables");
+                        ESP_LOGE(TAG, "First parse");
                     }
-                break;
+                    break;
 
                 case ORD_EMU_LOOP_STOP:
                     loop_stop();
                     break;
 
-                case ORD_RESET_TRANSMISSION:
-                    parse_reset();
+                case ORD_RESET_ALL:
                     chr_msg_buffer_clear(source);
-                    emu_variables_reset(&mem);
+                    if(PARSE_DONE_FILL_VAR()&&PARSE_DONE_ALLOCATE_VAR()){
+                    emu_variables_reset(&mem);}
+                    if(PARSE_DONE_FILL_BLOCKS()){
+                    blocks_free_all(blocks_structs,5);}
+                    parse_reset();
+                    break;
+                case ORD_RESET_BLOCKS:
+                    blocks_free_all(blocks_structs,5);
+                    break;
+                case ORD_RESET_MGS_BUF:
+                    ESP_LOGI(TAG, "Clearing Msg buffer");   
+                    chr_msg_buffer_clear(source);
                     break;
 
                 case ORD_EMU_CREATE_BLOCK_STRUCT:
-                    emu_create_block_tables(2);
-                    blocks_structs[0] = block_create_struct(2, 2);
-        blocks_structs[1] = block_create_struct(2, 2);
-
-        // -------------------------
-        // BLOCK 0
-        // -------------------------
-
-        // Input types
-        blocks_structs[0]->in_data_type_table[0] = DATA_D;
-        blocks_structs[0]->in_data_type_table[1] = DATA_D;
-
-        // Input offsets (in bytes!)
-        blocks_structs[0]->in_data_offsets[0] = 0;
-        blocks_structs[0]->in_data_offsets[1] = 8;
-
-        // Allocate input memory (2 doubles → 16 bytes)
-        blocks_structs[0]->in_data = calloc(1, 2 * sizeof(double));
-
-        // Output types
-        blocks_structs[0]->q_data_type_table[0] = DATA_D;
-        blocks_structs[0]->q_data_type_table[1] = DATA_D;
-
-        // Output offsets
-        blocks_structs[0]->q_data_offsets[0] = 0;
-        blocks_structs[0]->q_data_offsets[1] = 8;
-
-        // Allocate q memory (2 doubles → 16 bytes)
-        blocks_structs[0]->q_data = calloc(1, 2 * sizeof(double));
-
-
-        // -------------------------
-        // BLOCK 1
-        // -------------------------
-
-        // Input types
-        blocks_structs[1]->in_data_type_table[0] = DATA_I16;
-        blocks_structs[1]->in_data_type_table[1] = DATA_I8;
-
-        // Input offsets
-        blocks_structs[1]->in_data_offsets[0] = 0;
-        blocks_structs[1]->in_data_offsets[1] = 4;
-
-            // Allocate input memory
-        blocks_structs[1]->in_data = calloc(1, 2 * sizeof(double));
-
-        // Output types
-        blocks_structs[1]->q_data_type_table[0] = DATA_D;
-        blocks_structs[1]->q_data_type_table[1] = DATA_D;
-
-        // Output offsets
-        blocks_structs[1]->q_data_offsets[0] = 0;
-        blocks_structs[1]->q_data_offsets[1] = 8;
-
-        // Allocate q memory
-        blocks_structs[1]->q_data = calloc(1, 2 * sizeof(double));
-
-
-        // -------------------------
-        // CONNECTION: block 0 → block 1
-        // q0 of block 0 feeds in0 of block 1
-        // -------------------------
-
-        blocks_structs[0]->q_connections_table = calloc(2, sizeof(q_connection_t));
-
-        // One target for q0
-        blocks_structs[0]->q_connections_table[0].in_cnt = 2;
-
-        // Allocate target block id list
-        blocks_structs[0]->q_connections_table[0].target_block_id =
-            calloc(2, sizeof(uint16_t));
-        blocks_structs[0]->q_connections_table[0].target_block_id[0] = 1;
-        blocks_structs[0]->q_connections_table[0].target_block_id[1] = 1;
-
-        // target input index list
-        blocks_structs[0]->q_connections_table[0].target_in_num =
-            calloc(2, sizeof(uint8_t));
-        blocks_structs[0]->q_connections_table[0].target_in_num[0] = 1;
-        blocks_structs[0]->q_connections_table[0].target_in_num[1] = 0;
+                    emu_create_block_tables(5);
+                    emu_parse_block(source);
                     blocks_table[0] = block_compute;
                     blocks_table[1] = block_compute;
-                    
-                break;
+                    blocks_table[2] = block_compute;
+                    blocks_table[3] = block_compute;
+                    blocks_table[4] = block_compute;
+                    parse_create_blocks(source);
+                    break;
+                case ORD_EMU_FILL_BLOCK_STRUCT:
+                    parse_fill_blocks(source);
 
+                    break;
                 default:
                     // Unknown order
                     break;
@@ -199,11 +130,11 @@ void emu(void* params){
     } //end while
 };
 
-
 /*parse checks*/
+/*TODO add and check errors*/
 emu_err_t parse_allocate_variables(){
-    if (!PARSE_CAN_ALLOCATE()){
-        ESP_LOGE(TAG, "Variables parsing already done");
+    if (PARSE_DONE_ALLOCATE_VAR()){
+        ESP_LOGE(TAG, "Variables parsing already done, or can't be done");
         return EMU_ERR_CMD_START;
     }
     
@@ -211,35 +142,69 @@ emu_err_t parse_allocate_variables(){
     if(EMU_ERR_NO_MEMORY == emu_parse_variables(source, &mem))
     {   
         ESP_LOGE(TAG, "Parsing variables failed");
-        PARSE_SET_ALLOCATE(true);
+        PARSE_SET_ALLOCATE_VAR(false);
         return EMU_ERR_INVALID_STATE;
     }
-    PARSE_SET_ALLOCATE(false);
+    PARSE_SET_ALLOCATE_VAR(true);
+    PARSE_SET_FILL_VAR(false);
     ESP_LOGI(TAG, "Done parsing variables");
     return EMU_OK;
 }
 /*parse checks*/
 emu_err_t parse_fill_variables(){
-    if (PARSE_CAN_ALLOCATE()){
+    if (!PARSE_DONE_ALLOCATE_VAR()){
         ESP_LOGE(TAG, "Cannot fill variables, first allocate space");
         return EMU_ERR_CMD_START;
     }
-    else if(!PARSE_CAN_FILL_VAL()){
+    //if allocated and filled already
+    else if(PARSE_DONE_FILL_VAR()&&PARSE_DONE_ALLOCATE_VAR()){
         ESP_LOGW(TAG, "Overwritting variables");
         emu_parse_into_variables(source, &mem);
         ESP_LOGI(TAG, "Filling into done");
         return EMU_OK;
     }
-    PARSE_SET_FILL_VAL(false);
-    ESP_LOGI(TAG, "Filling into variables");
+    PARSE_SET_FILL_VAR(true);
+    ESP_LOGI(TAG, "Filling variables....");
     emu_parse_into_variables(source, &mem);
-    ESP_LOGI(TAG, "Filling into done");
+    ESP_LOGI(TAG, "Filling done");
+    return EMU_OK;
+    
+}
+emu_err_t parse_create_blocks(){
+    if(PARSE_DONE_ALLOCATE_VAR()){
+        ESP_LOGI(TAG, "Creating blocks");
+        emu_parse_block(source);
+        PARSE_SET_CREATE_BLOCKS(true);
+        return EMU_OK;
+    }
+    else{
+        ESP_LOGI(TAG, "Can't create blocks, first create variables");
+        return EMU_ERR_CMD_START;
+    }
     return EMU_OK;
 }
+
+emu_err_t parse_fill_blocks(){
+    if(PARSE_DONE_CREATE_BLOCKS()){
+        ESP_LOGI(TAG, "Filling blocks");
+        PARSE_SET_FILL_BLOCKS(true);
+        PARSE_SET_FINISHED(true);
+        return EMU_OK;
+    }
+    else{
+        ESP_LOGI(TAG, "Can't fill blocks, first create blocks");
+        return EMU_ERR_CMD_START;
+    }
+    return EMU_OK;
+}
+
 /*parse checks*/
 void parse_reset(){
-    PARSE_SET_ALLOCATE(true);
-    PARSE_SET_FILL_VAL(true);
+    PARSE_SET_ALLOCATE_VAR(false);
+    PARSE_SET_FILL_VAR(false);
     PARSE_SET_RUN_CODE(false);
+    PARSE_SET_CREATE_BLOCKS(false);
+    PARSE_SET_FILL_BLOCKS(false);
+    PARSE_SET_FINISHED(false);
     return;
 }

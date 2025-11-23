@@ -1,6 +1,7 @@
 #include "emulator_loop.h"
 #include "emulator.h"
 #include "emulator_body.h"
+#include "emulator_parse.h"
 
 static const char *TAG = "LOOP_TIMER";
 
@@ -26,8 +27,9 @@ static void IRAM_ATTR loop_intr_handler(void *parameters) {
             xSemaphoreGiveFromISR(loop_semaphore, &xHigherPriorityTaskWoken);
         }
         else{
+            WTD_CNT_UP();
             if(WTD_EXCEEDED()){
-                WTD_CNT_UP();
+                WTD_SET();
                 esp_timer_stop(loop_timer_handle);
                 LOOP_SET_STATUS(LOOP_HALTED);
             }
@@ -41,7 +43,7 @@ emu_err_t loop_init(){
     
     loop_semaphore = xSemaphoreCreateBinary();
     wtd_semaphore = xSemaphoreCreateBinary();
-    WTD_SET_LIMIT(3);
+    WTD_SET_LIMIT(2);
     xTaskCreate(loop_task, TAG, stack_depth, NULL, task_priority, &emulator_body_handle);
     ESP_LOGI(TAG, "Creating loop timer");
     loop_timer_params.name = TAG;
@@ -55,18 +57,19 @@ emu_err_t loop_init(){
 
 
 emu_err_t loop_start(void) {
-    if(LOOP_STATUS_CMP(LOOP_SET)){
+    if(LOOP_STATUS_CMP(LOOP_SET)&&PARSE_FINISHED()){
         LOOP_SET_STATUS(LOOP_RUNNING);
         ESP_LOGI(TAG, "Starting loop first time");
         ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
         return EMU_OK;
     }else if (LOOP_STATUS_CMP(LOOP_STOPPED)){
-        loop_status = LOOP_RUNNING;
+        LOOP_SET_STATUS(LOOP_RUNNING);
         ESP_LOGI(TAG, "Starting loop after stop");
         ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
         return EMU_OK;
     }else if (LOOP_STATUS_CMP(LOOP_HALTED)){
         ESP_LOGI(TAG, "Starting loop after halt");
+        LOOP_SET_STATUS(LOOP_RUNNING);
         ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
         return EMU_OK;
     }else{

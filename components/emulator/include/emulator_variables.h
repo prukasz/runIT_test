@@ -3,8 +3,7 @@
 #include <string.h>
 #include "emulator_types.h"
 #include "gatt_buff.h"
-#include "esp_log.h"
-#include "stdarg.h"
+
 /*here data for emulator is managed*/
 
 /*single array sruct*/
@@ -14,7 +13,6 @@ typedef struct { \
     uint8_t dims[3]; \
     c_type *data; \
 } arr_##name##_t;
-
 DEFINE_ARR_TYPE(uint8_t,  ui8)
 DEFINE_ARR_TYPE(uint16_t, ui16)
 DEFINE_ARR_TYPE(uint32_t, ui32)
@@ -24,7 +22,6 @@ DEFINE_ARR_TYPE(int32_t,  i32)
 DEFINE_ARR_TYPE(float,    f)
 DEFINE_ARR_TYPE(double,   d)
 DEFINE_ARR_TYPE(bool,     b)
-
 
 /**
  * @brief this is memory struct for emulator

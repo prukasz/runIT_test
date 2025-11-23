@@ -1,15 +1,45 @@
 #pragma once
 #include "emulator_types.h"
 #include "emulator.h"
+
+/*
+* this is list of blocks and it's inputs thatat one output is connected to
+* lists are size of conn_cnt
+*/
+typedef struct {
+    uint16_t* target_blocks_id_list;  //it's pair of block id and it's input number
+    uint8_t*  target_inputs_list;
+    uint8_t   conn_cnt;
+    uint8_t   in_visited;
+} q_connection_t;
+
+typedef struct{
+    uint16_t   block_id;
+    block_id_t block_type;    
+    bool       is_executed;  
+
+    uint8_t  in_cnt;                 //total inputs
+    uint8_t  in_set;
+
+    data_types_t* in_data_type_table;     //type of variable at each
+    void*         in_data;                //common input data pointer
+    uint8_t*      in_data_offsets;        //offset of common pointer for each input
+
+    uint8_t  q_cnt; 
+    uint8_t  q_set;
+
+    data_types_t*   q_data_type_table;
+    void*           q_data;  
+    uint8_t*        q_data_offsets;      
+    q_connection_t* q_connections_table;  //list of each output connections 
+   
+}block_handle_t;
+
 typedef emu_err_t (*emu_block_func)(block_handle_t *block);
-
-
 
 emu_err_t block_compute(block_handle_t* block);
 
-void block_fill_results(block_handle_t* block);
-
-
+void blocks_free_all(block_handle_t** blocks_structs, uint16_t num_blocks); 
 
 
 

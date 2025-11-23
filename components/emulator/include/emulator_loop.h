@@ -16,20 +16,23 @@ typedef struct{
     loop_status_t loop_status;
     emu_wtd_t wtd;
     uint64_t loop_counter;
+    bool can_run;
 }emu_status_t;
 
 /*loop watchdog*/
 extern emu_status_t status;
-#define WTD_SET() ({status.wtd.wtd_triggered = true;})
-#define WTD_RESET() ({status.wtd.wtd_triggered = false; status.wtd.loops_skipped=0;})
-#define WTD_SET_LIMIT(cnt) ({status.wtd.max_skipp = (uint8_t)(cnt);})
-#define WTD_CNT_UP() ({status.wtd.loops_skipped++;})
-#define WTD_EXCEEDED() ({(status.wtd.loops_skipped > status.wtd.max_skipp);})
+#define WTD_SET()        (status.wtd.wtd_triggered = true)
+#define WTD_RESET()      (status.wtd.wtd_triggered = false, status.wtd.loops_skipped = 0)
+#define WTD_SET_LIMIT(x) (status.wtd.max_skipp = (uint8_t)(x))
+#define WTD_CNT_UP()     (status.wtd.loops_skipped++)
+#define WTD_EXCEEDED()   (status.wtd.loops_skipped > status.wtd.max_skipp)
 
-#define LOOP_CNT_UP() ({status.loop_counter++;})
-#define LOOP_CNT_REST() ({status.loop_counter=0;})
-#define LOOP_SET_STATUS(to_set) ({status.loop_status = (to_set);})
-#define LOOP_STATUS_CMP(to_cmp) ({status.loop_status == (to_cmp);})
+#define LOOP_CNT_UP()         (status.loop_counter++)
+#define LOOP_CNT_REST()       (status.loop_counter = 0)
+#define LOOP_SET_STATUS(x)    (status.loop_status = (x))
+#define LOOP_STATUS_CMP(x)    (status.loop_status == (x))
+#define LOOP_SET_RUN(x)       (status.can_run = (x))
+#define LOOP_CAN_RUN()        (status.can_run)
 
 emu_err_t loop_start(void);
 emu_err_t loop_stop(void);

@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "emulator_blocks.c" "emulator_parse.c" "emulator_loop.c" "emulator_variables.c" "emulator.c" "emulator_body.c" "emulator_blocks.c"
+    SRCS "emulator_block_utils.c" "emulator_blocks.c" "emulator_parse.c" "emulator_loop.c" "emulator_variables.c" "emulator.c" "emulator_body.c" "emulator_blocks.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_timer main
 )
