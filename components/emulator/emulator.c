@@ -51,7 +51,7 @@ emu_err_t loop_stop_execution(){
 
 
 extern block_handle_t** blocks_structs;
-extern emu_block_func *blocks_table;
+extern emu_block_func *blocks_fun_table;
 void emu(void* params){
     ESP_LOGI(TAG, "emu task active");
     emu_task_queue  = xQueueCreate(3, sizeof(emu_order_t));
@@ -110,12 +110,6 @@ void emu(void* params){
 
                 case ORD_EMU_CREATE_BLOCK_STRUCT:
                     emu_create_block_tables(5);
-                    emu_parse_block(source);
-                    blocks_table[0] = block_compute;
-                    blocks_table[1] = block_compute;
-                    blocks_table[2] = block_compute;
-                    blocks_table[3] = block_compute;
-                    blocks_table[4] = block_compute;
                     parse_create_blocks(source);
                     break;
                 case ORD_EMU_FILL_BLOCK_STRUCT:

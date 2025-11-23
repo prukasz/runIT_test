@@ -15,12 +15,12 @@ typedef struct {
 
 typedef struct{
     uint16_t   block_id;
-    block_id_t block_type;    
+    block_type_t block_type;    
     bool       is_executed;  
 
     uint8_t  in_cnt;                 //total inputs
     uint8_t  in_set;
-
+    
     data_types_t* in_data_type_table;     //type of variable at each
     void*         in_data;                //common input data pointer
     uint8_t*      in_data_offsets;        //offset of common pointer for each input

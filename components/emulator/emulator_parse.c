@@ -4,6 +4,7 @@
 static const char *TAG = "EMU_PARSE";
 #define PACKET_MEM_SIZE 11
 #define HEADER_SIZE 2
+void parse_assign_fuction(uint8_t block_type, uint16_t block_id);
 
 bool _check_arr_header(uint8_t *data, uint8_t *step)
 {
@@ -164,7 +165,6 @@ static block_handle_t *block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
 }
 
 extern block_handle_t** blocks_structs;
-extern emu_block_func *blocks_table;
 
 #define IN_Q_STEP 3  //block id (2) + in num (1)
 #define READ_U16(DATA, IDX) \
@@ -268,10 +268,24 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             if(total_lines == 0){
                 ESP_LOGI(TAG, "No connections detected, block: %d is terminator block", block_ptr->block_id);
             }
+            parse_assign_fuction(data[1],block_id);
             ESP_LOGI(TAG, "Allocated handle for block block_id %d", block_id);
+
         }
         search_idx++;
     }
 
     return EMU_OK;
+}
+
+extern emu_block_func *blocks_fun_table;
+void parse_assign_fuction(uint8_t block_type, uint16_t block_id){
+    switch (block_type)
+    {
+    case BLOCK_COMPUTE:
+        blocks_fun_table[block_id] = block_compute;
+        break;
+    default:
+        break;
+    }
 }

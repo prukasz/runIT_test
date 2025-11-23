@@ -95,6 +95,6 @@ typedef enum {
 } loop_status_t;
 
 typedef enum{
-    ID_1 = 0x00,
-}block_id_t;
+    BLOCK_COMPUTE = 0x01,
+}block_type_t;
 

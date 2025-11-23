@@ -9,7 +9,7 @@ extern SemaphoreHandle_t wtd_semaphore;
 
 uint16_t blocks_cnt;
 block_handle_t** blocks_structs=NULL;
-emu_block_func *blocks_table=NULL;
+emu_block_func *blocks_fun_table=NULL;
 emu_err_t emu_execute();
 
 void loop_task(void* params){
@@ -27,7 +27,7 @@ void loop_task(void* params){
 
 emu_err_t emu_execute(){
     for (uint16_t i = 0; i < blocks_cnt; i++) {
-        emu_err_t err = blocks_table[i](blocks_structs[i]);
+        emu_err_t err = blocks_fun_table[i](blocks_structs[i]);
         if (err != EMU_OK) {
             ESP_LOGE("BLOCK", "Function %zu failed (err=%d)", i, err);
             return err;
@@ -48,8 +48,8 @@ emu_err_t emu_create_block_tables(uint16_t num_blocks) {
     }
 
     // Allocate array of function pointers
-    blocks_table = (emu_block_func*)calloc(blocks_cnt, sizeof(emu_block_func));
-    if (!blocks_table) {
+    blocks_fun_table = (emu_block_func*)calloc(blocks_cnt, sizeof(emu_block_func));
+    if (!blocks_fun_table) {
         free(blocks_structs);
         blocks_structs = NULL;
         return EMU_ERR_NO_MEMORY;
@@ -69,9 +69,9 @@ void emu_free_block_tables() {
         blocks_structs = NULL;
     }
 
-    if (blocks_table) {
-        free(blocks_table);
-        blocks_table = NULL;
+    if (blocks_fun_table) {
+        free(blocks_fun_table);
+        blocks_fun_table = NULL;
     }
 
     blocks_cnt = 0;
@@ -82,6 +82,6 @@ emu_err_t emu_assign_block(uint16_t index, block_handle_t *block, emu_block_func
         return EMU_ERR_INVALID_ARG;
     }
     blocks_structs[index] = block;
-    blocks_table[index] = func;
+    blocks_fun_table[index] = func;
     return EMU_OK;
 }
