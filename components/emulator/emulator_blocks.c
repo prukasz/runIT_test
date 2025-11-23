@@ -10,17 +10,8 @@ extern block_handle_t** blocks_structs;
 
 static int cnt = 0;
 emu_err_t block_compute(block_handle_t* block){
-   
-    ESP_LOGI("compute_block", "block block_id: %d executing %d, val0 %lf, val1 %lf",block->block_id, cnt++, get_in_val(0, block), get_in_val(1, block));
-    q_set_value(block, 0, get_in_val(0, block)+1);
-    q_set_value(block, 1, get_in_val(1, block)+1);
-    if (block->block_id==0){
-        q_set_value(block, 0, 2138.69);
-        q_set_value(block, 2, 2137.69);
-    }
-        ESP_LOGI("compute_block", "making copy");
-        block_pass_results(block);
-    return EMU_OK;      
+    block_pass_results(block);
+    return EMU_OK;
 }
 
 emu_err_t example_block(block_handle_t *block){
