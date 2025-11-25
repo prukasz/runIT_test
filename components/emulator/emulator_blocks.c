@@ -5,12 +5,13 @@
 #include <math.h>
 
 static void block_pass_results(block_handle_t* block);
-extern block_handle_t** blocks_structs;
+extern void **blocks_structs;
 
 
 static int cnt = 0;
-emu_err_t block_compute(block_handle_t* block){
-   
+emu_err_t block_compute(void* str){
+
+   block_handle_t *block = (block_handle_t*)str;
     ESP_LOGI("compute_block", "block block_id: %d executing %d, val0 %lf, val1 %lf",block->block_id, cnt++, get_in_val(0, block), get_in_val(1, block));
     q_set_value(block, 0, get_in_val(0, block)+1);
     q_set_value(block, 1, get_in_val(1, block)+1);
@@ -23,10 +24,14 @@ emu_err_t block_compute(block_handle_t* block){
     return EMU_OK;      
 }
 
+
+
 emu_err_t example_block(block_handle_t *block){
     return EMU_OK;
     block_pass_results(block);
 }
+
+
 
 static void block_pass_results(block_handle_t* block)
 {
@@ -103,12 +108,15 @@ void free_block(block_handle_t* block) {
     free(block);
 }
 
-void blocks_free_all(block_handle_t** blocks_structs, uint16_t num_blocks) {
-    if (!blocks_structs) return;
+void blocks_free_all(void** blocks_structs, uint16_t num_blocks) {
+    block_handle_t** data = (block_handle_t**)blocks_structs;
+    if (!data) return;
 
     for (size_t i = 0; i < num_blocks; i++) {
-        free_block(blocks_structs[i]);
+        free_block(data[i]);
     }
     free(blocks_structs);
 }
+
+
 

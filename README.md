@@ -52,6 +52,10 @@ bb00 00 0200 02 01 07 02 01 07 02 01 0300 00 01 0300 01
 bb00 00 0300 02 01 07 02 01 07 01 01 0400 00 
 bb00 00 0400 02 01 07 02 01 07 00
 
+blok uzupełniania zmienią globalną 
+
+bbff ff xxxx, xx->ile xx->case xx->datatyp xx->id || 
+
 
 
 

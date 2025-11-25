@@ -4,39 +4,49 @@
 #include "emulator_types.h"
 #include "gatt_buff.h"
 
-/*here data for emulator is managed*/
 
-/*single array sruct*/
-#define DEFINE_ARR_TYPE(c_type, name) \
+/** 
+*@brief This macro generate arrays of chosen datatype used in emulator global memory
+*/
+#define _DEFINE_ARR_TYPE(c_type, name) \
 typedef struct { \
     uint8_t num_dims; \
     uint8_t dims[3]; \
     c_type *data; \
 } arr_##name##_t;
-DEFINE_ARR_TYPE(uint8_t,  ui8)
-DEFINE_ARR_TYPE(uint16_t, ui16)
-DEFINE_ARR_TYPE(uint32_t, ui32)
-DEFINE_ARR_TYPE(int8_t,   i8)
-DEFINE_ARR_TYPE(int16_t,  i16)
-DEFINE_ARR_TYPE(int32_t,  i32)
-DEFINE_ARR_TYPE(float,    f)
-DEFINE_ARR_TYPE(double,   d)
-DEFINE_ARR_TYPE(bool,     b)
-
+_DEFINE_ARR_TYPE(uint8_t,  ui8)
+_DEFINE_ARR_TYPE(uint16_t, ui16)
+_DEFINE_ARR_TYPE(uint32_t, ui32)
+_DEFINE_ARR_TYPE(int8_t,   i8)
+_DEFINE_ARR_TYPE(int16_t,  i16)
+_DEFINE_ARR_TYPE(int32_t,  i32)
+_DEFINE_ARR_TYPE(float,    f)
+_DEFINE_ARR_TYPE(double,   d)
 /**
- * @brief this is memory struct for emulator
- */
+* @brief Reset all parse guard flags 
+*/
+_DEFINE_ARR_TYPE(bool,     b)
 
 typedef struct {
-    void     *_base_ptr; // Scalars memory block
+    //Common pointer for all "single varaibles"
+    void     *_base_ptr;
+    //pointer to an array of singe variables type: int8_t
     int8_t   *i8;
+    //pointer to an array of singe variables type: int16_t
     int16_t  *i16;
+    //pointer to an array of singe variables type: int32_t
     int32_t  *i32;
+    //pointer to an array of singe variables type: uint8_t
     uint8_t  *u8;
+    //pointer to an array of singe variables type: uint16_t
     uint16_t *u16;
+    //pointer to an array of singe variables type: uint32_t
     uint32_t *u32;
+    //pointer to an array of singe variables type: float
     float    *f;
+    //pointer to an array of singe variables type: double
     double   *d;
+    //pointer to an array of singe variables type: bool
     bool     *b;
 
     void  *_base_arr_ptr;
@@ -55,22 +65,30 @@ typedef struct {
 /*THIS IS GLOBAL MEMORY STRUCT INSTANCE*/
 extern emu_mem_t mem;
 /*THIS IS GLOBAL MEMORY STRUCT INSTANCE*/
+
 /**
  * @brief create arrays space
+ * @param mem pointer to global memory struct
+ * @param types_cnt_table poiter to count of sinle varaible of each type
  */
-emu_err_t emu_variables_create(emu_mem_t *mem, uint8_t *sizes);
+emu_err_t emu_variables_single_create(emu_mem_t *mem, uint8_t *types_cnt_table);
 
 /**
- * @brief create single variables space
+ * @brief create arrays space
+ * @param mem pointer to global memory struct
+ * @param start_index starting index in source buffer
  */
-emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_index);
+emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, uint16_t start_index);
 
 /**
-* @brief reset memory
+* @brief reset created memory
 */
 void emu_variables_reset(emu_mem_t *mem);
 
-/*Return correct data size from enum*/
+/**
+ * @brief Returns size of variables in bytes
+ * @param type variable type 
+ */
 static inline size_t data_size(data_types_t type)
 {
     switch (type) {
@@ -84,22 +102,28 @@ static inline size_t data_size(data_types_t type)
     }
 }
 
-/*this macro returns index of variable in 1D table*/
-#define _ARR_FLAT_IDX(num_dims, dims, idx_table) ({     \
+/**
+ * @brief Returns relative index of chosen variable in it's flattened table
+ * @param num_dims dimensions count of array
+ * @param dims_table table of array sizes
+ * @param idx_table target index
+ * @return Flat index or "-1" if index doesn't exist
+ */
+#define _ARR_FLAT_IDX(num_dims, dims_table, idx_table) ({     \
     size_t _idx = (size_t)-1;                                     \
     if ((num_dims) == 1) {                                        \
-        _idx = ((idx_table[0]) < (dims)[0]) ? (idx_table[0]) : (size_t)-1; \
+        _idx = ((idx_table[0]) < (dims_table)[0]) ? (idx_table[0]) : (size_t)-1; \
     } else if ((num_dims) == 2) {                                 \
-        _idx = ((idx_table[0]) < (dims)[0] && (idx_table[1]) < (dims)[1]) ? \
-               ((idx_table[1]) + (idx_table[0]) * (dims)[1]) : (size_t)-1; \
+        _idx = ((idx_table[0]) < (dims_table)[0] && (idx_table[1]) < (dims_table)[1]) ? \
+               ((idx_table[1]) + (idx_table[0]) * (dims_table)[1]) : (size_t)-1; \
     } else if ((num_dims) == 3) {                                 \
-        _idx = ((idx_table[0]) < (dims)[0] && (idx_table[1]) < (dims)[1] && (idx_table[2]) < (dims)[2]) ? \
-               ((idx_table[2]) + (idx_table[1]) * (dims)[2] + (idx_table[0]) * (dims)[1] * (dims)[2]) : (size_t)-1; \
+        _idx = ((idx_table[0]) < (dims_table)[0] && (idx_table[1]) < (dims_table)[1] && (idx_table[2]) < (dims_table)[2]) ? \
+               ((idx_table[2]) + (idx_table[1]) * (dims_table)[2] + (idx_table[0]) * (dims_table)[1] * (dims_table)[2]) : (size_t)-1; \
     }                                                              \
     _idx;                                                          \
 })
 
-/*this is internal macro*/
+/*this is internal macro for fetching value from memeory*/
 #define _MEM_GET(field, arr_field, var_idx, idx_table) \
     (((idx_table[0]) == UINT8_MAX && (idx_table[1]) == UINT8_MAX && (idx_table[2]) == UINT8_MAX) ? \
         (mem.field[var_idx]) : \
@@ -109,23 +133,93 @@ static inline size_t data_size(data_types_t type)
             (_idx != (size_t)-1 ? mem.arr_field[var_idx].data[_idx] : 0); \
         }))
 
-/*those are get macros UINT8_MAX (0xFF) to exclude index */
+
+/**
+ * @brief Get any global varaible as double
+ * @param type type of accesed variable
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
+double mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[3]);        
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_I8(var_idx, idx_table)   _MEM_GET(i8,   arr_i8,   var_idx, idx_table)
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_I16(var_idx, idx_table)  _MEM_GET(i16,  arr_i16,  var_idx, idx_table)
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_I32(var_idx, idx_table)  _MEM_GET(i32,  arr_i32,  var_idx, idx_table)
 
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_U8(var_idx, idx_table)   _MEM_GET(u8,   arr_ui8,  var_idx, idx_table)
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_U16(var_idx, idx_table)  _MEM_GET(u16,  arr_ui16, var_idx, idx_table)
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_U32(var_idx, idx_table)  _MEM_GET(u32,  arr_ui32, var_idx, idx_table)
 
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_F(var_idx, idx_table)    _MEM_GET(f,    arr_f,    var_idx, idx_table)
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_D(var_idx, idx_table)    _MEM_GET(d,    arr_d,    var_idx, idx_table)
+/**
+ * @brief Return value from table or single variable from chosen type
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_GET_B(var_idx, idx_table)    _MEM_GET(b,    arr_b,    var_idx, idx_table)
 
 
-double mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[3]);
-
-/*this is universal set macro UINT8_MAX (0xFF) to exclude index*/
+/*
+Todo: rework so it caps value or round it
+*/
+/**
+ * @brief Set varaible to chosen value
+ * @param type type of variable accesed
+ * @param var_idx index of single variable or table
+ * @param idx_table indices to acces from table
+ * @note This macros cast value if it is to big 
+ * @note 0xFF idx is reserved for dimensional exclusion
+ */
 #define MEM_SET(type, var_idx, idx_table, value) ({                 \
     if ((idx_table[0]) == UINT8_MAX && (idx_table[1]) == UINT8_MAX && (idx_table[2]) == UINT8_MAX) {\
         switch(type) {                                                         \

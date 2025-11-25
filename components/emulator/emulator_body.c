@@ -8,7 +8,7 @@ extern SemaphoreHandle_t loop_semaphore;
 extern SemaphoreHandle_t wtd_semaphore;
 
 uint16_t blocks_cnt;
-block_handle_t** blocks_structs=NULL;
+void** blocks_structs=NULL;
 emu_block_func *blocks_fun_table=NULL;
 emu_err_t emu_execute();
 
@@ -42,7 +42,7 @@ emu_err_t emu_create_block_tables(uint16_t num_blocks) {
     blocks_cnt = num_blocks;
 
     // Allocate array of pointers to block_handle_t
-    blocks_structs = (block_handle_t**)calloc(blocks_cnt, sizeof(block_handle_t*));
+    blocks_structs = (void**)calloc(blocks_cnt, sizeof(void*));
     if (!blocks_structs) {
         return EMU_ERR_NO_MEMORY;
     }

@@ -1,5 +1,10 @@
 #pragma once
 
+/******************************************
+Specific enums used in emulator code
+
+******************************************/
+
 /**
 * @brief emulator scope errors
 */
@@ -16,23 +21,31 @@ typedef enum {
 }emu_err_t;
 
 /**
-* @brief Data types used within the emulator.
+* @brief Data types used within emulator internal memory
 */
 typedef enum{
-    DATA_UI8,
-    DATA_UI16,
-    DATA_UI32,
-    DATA_I8,
-    DATA_I16,
-    DATA_I32,
-    DATA_F,
-    DATA_D,
-    DATA_B
+    //uint8_t
+    DATA_UI8  = 0,
+    //uint16_t
+    DATA_UI16 = 1,
+    //uint32_t
+    DATA_UI32 = 2,
+    //int8_t
+    DATA_I8   = 3,
+    //int16_t
+    DATA_I16  = 4,
+    //int32_t
+    DATA_I32  = 5,
+    //float
+    DATA_F    = 6,
+    //double
+    DATA_D    = 7,
+    //bool
+    DATA_B    = 8
 }data_types_t;
 
-
 /**
-* @brief Orders to execute
+* @brief Orders for emulator interface to execute
 */
 typedef enum {
     ORD_STOP_BYTES        = 0x0000,
@@ -56,9 +69,9 @@ typedef enum {
 
 
 /**
-* @brief Block type identifiers.
+* @brief Block packet header
+* @attention Each packet must start with emu_header_t or be single emu_order_t
 */
-
 typedef enum{
     EMU_H_VAR_ORD    = 0xFFFF,
     EMU_H_VAR_START  = 0xFF00,
@@ -85,6 +98,9 @@ typedef enum{
     EMU_H_VAR_DATA_S8 = 0xFF91,
 }emu_header_t;
 
+/**
+* @brief emulator main loop flags
+*/
 typedef enum {
     LOOP_NOT_SET,
     LOOP_SET,
@@ -94,7 +110,11 @@ typedef enum {
     LOOP_FINISHED,
 } loop_status_t;
 
+/**
+* @brief Block type identification code
+*/
 typedef enum{
     BLOCK_COMPUTE = 0x01,
+    BLOCK_INJECT  = 0xFF
 }block_type_t;
 

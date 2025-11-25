@@ -1,39 +1,40 @@
 #include "emulator_parse.h"
 #include "emulator_blocks.h"
+#include "emulator_block_utils.h"
 
 static const char *TAG = "EMU_PARSE";
-#define PACKET_MEM_SIZE 11
+#define PACKET_SINGLE_VAR_SIZE 11  //2 + 9 * type cnt
 #define HEADER_SIZE 2
-void parse_assign_fuction(uint8_t block_type, uint16_t block_id);
+static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id);
 
+/*********************ARR cheks*****************/
+#define STEP_ARR_1D 2 // type, dim1
+#define STEP_ARR_2D 3 // type, dim1, dim2
+#define STEP_ARR_3D 4 // type, dim1, dim2, dim3
 bool _check_arr_header(uint8_t *data, uint8_t *step)
 {
     uint16_t header = ((data[0] << 8) | data[1]);
     if (header == EMU_H_VAR_ARR_1D)
     {
-        *step = 2;
+        *step = STEP_ARR_1D;
         return true;
-    } // type, dim1
+    } 
     if (header == EMU_H_VAR_ARR_2D)
     {
-        *step = 3;
+        *step = STEP_ARR_2D;
         return true;
-    } // type, dim1, dim2
-    if (header == EMU_H_VAR_ARR_3D)
+    } 
+    if (header == EMU_H_VAR_ARR_3D)  
     {
-        *step = 4;
+        *step = STEP_ARR_3D;
         return true;
-    } // type, dim1, dim2, dim3
+    }
     return false;
 }
-
-/*check if header match desired*/
 bool _check_header(uint8_t *data, emu_header_t header)
-{
+{   
     return ((data[0] << 8) | data[1]) == header;
 }
-
-/*check if packet includes all sizes for arrays*/
 bool _check_arr_packet_size(uint16_t len, uint8_t step)
 {
     if (len <= HEADER_SIZE)
@@ -60,12 +61,12 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
             if ((i + 1) < buff_size)
             {
                 chr_msg_buffer_get(source, (i + 1), &data, &len);
-                if (len == PACKET_MEM_SIZE && _check_header(data, EMU_H_VAR_START))
+                if (len == PACKET_SINGLE_VAR_SIZE && _check_header(data, EMU_H_VAR_START))
                 {
                     ESP_LOGI(TAG, "Found sizes of variables at index %d", i+1);
                     start_index = i + 1;
-                    memcpy(emu_mem_size_single, &data[HEADER_SIZE], (PACKET_MEM_SIZE - HEADER_SIZE));
-                    for (int i = 0; i < PACKET_MEM_SIZE; ++i)
+                    memcpy(emu_mem_size_single, &data[HEADER_SIZE], (PACKET_SINGLE_VAR_SIZE - HEADER_SIZE));
+                    for (int i = 0; i < PACKET_SINGLE_VAR_SIZE; ++i)
                     {
                         ESP_LOGD(TAG, "type %d: count %d", i, emu_mem_size_single[i]);
                     }
@@ -79,11 +80,12 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         ESP_LOGE(TAG, "Varaibles sizes not found");
         return EMU_ERR_INVALID_DATA;
     }
-    emu_err_t err = emu_variables_create(mem, emu_mem_size_single);
-    err = emu_arrays_create(source, mem, start_index);
+    emu_err_t err = emu_variables_single_create(mem, emu_mem_size_single);
+    err = emu_variables_arrays_create(source, mem, start_index);
     return err;
 }
 
+/*parse switch case generato for handling different types of arrays that needs to be filled*/
 #define HANDLE_ARRAY_CASE(ID, TYPE, MEMBER)                                      \
     case ID: {                                                                   \
         arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                   \
@@ -98,6 +100,8 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         break;                                                                   \
     }
 
+/*parse switch case generatoer for handling different types of single variables
+ that needs to be filled*/
 #define HANDLE_SINGLE_CASE(ID, TYPE, MEMBER, DATA_LEN)                      \
     case ID: {                                                              \
         uint16_t offset = 2;                                                  \
@@ -110,8 +114,9 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         break;                                                              \
     }
 
+
 #define GET_OFFSET(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
-emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
+emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
     uint8_t *data;
     uint16_t len;
     uint16_t buff_size = chr_msg_buffer_size(source);
@@ -124,6 +129,7 @@ emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem) {
         uint16_t offset   = GET_OFFSET(data);
         uint16_t bytes_to_copy = len - 5;
 
+        /*switch header type*/
         switch ((emu_header_t)((data[0] << 8) | data[1])) {
             HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_0, uint8_t,  ui8)
             HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_1, uint16_t, ui16)
@@ -164,7 +170,7 @@ static block_handle_t *block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
     return block;
 }
 
-extern block_handle_t** blocks_structs;
+extern void **blocks_structs;
 
 #define IN_Q_STEP 3  //block id (2) + in num (1)
 #define READ_U16(DATA, IDX) \
@@ -200,7 +206,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             idx++; // move to first Q type
 
             block_handle_t *block_ptr = block_create_struct(in_cnt, q_cnt);
-            blocks_structs[block_id] = block_ptr;
+            blocks_structs[block_id] = (void*)block_ptr;
             block_ptr->block_id = block_id;
 
             // PARSE INPUT TYPES
@@ -268,24 +274,39 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             if(total_lines == 0){
                 ESP_LOGI(TAG, "No connections detected, block: %d is terminator block", block_ptr->block_id);
             }
-            parse_assign_fuction(data[1],block_id);
+            _parse_assign_fuction(data[1],block_id);
             ESP_LOGI(TAG, "Allocated handle for block block_id %d", block_id);
 
         }
         search_idx++;
-    }
 
+    }
     return EMU_OK;
 }
 
 extern emu_block_func *blocks_fun_table;
-void parse_assign_fuction(uint8_t block_type, uint16_t block_id){
+static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id){
     switch (block_type)
     {
     case BLOCK_COMPUTE:
         blocks_fun_table[block_id] = block_compute;
         break;
+    case BLOCK_INJECT:
     default:
         break;
     }
 }
+
+void parse_global_acces(chr_msg_buffer_t *source, uint16_t search_idx)
+{
+    uint8_t *data;
+    uint16_t len;
+    uint16_t start_idx = 5;
+    _block_get_global_t* result = (_block_get_global_t*)calloc(1, sizeof(_block_get_global_t));
+   chr_msg_buffer_get(source, search_idx, &data, &len);
+   {
+    
+   }
+
+}
+

@@ -179,3 +179,16 @@ static inline void q_set_value(block_handle_t* block, uint8_t q_id, double val)
             break;
     }
 }
+
+typedef struct{
+    uint8_t idx;
+    uint8_t type;
+    uint8_t access_idx[3];
+}_idx_table_t;
+
+typedef struct{
+    uint8_t *global_idx_table;
+    uint8_t *global_flag_and_type_table;    //type and flag
+    uint8_t *static_idx;                    //
+    _idx_table_t *optional_idx_table;       //
+}_block_get_global_t;

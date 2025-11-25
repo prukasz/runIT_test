@@ -42,7 +42,7 @@ static const char *TAG = "DATAHOLDER";
 #define ADD_SIZE(total, count, type) ((total) += (count) * sizeof(type))
 
 
-emu_err_t emu_variables_create(emu_mem_t *mem, uint8_t *sizes)
+emu_err_t emu_variables_single_create(emu_mem_t *mem, uint8_t *sizes)
 {
     if (!mem || !sizes) {
         return EMU_ERR_INVALID_ARG;
@@ -81,7 +81,7 @@ emu_err_t emu_variables_create(emu_mem_t *mem, uint8_t *sizes)
 }
 
 
-emu_err_t emu_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, int start_index)
+emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, uint16_t start_index)
 {
     uint8_t *data;
     uint16_t len;

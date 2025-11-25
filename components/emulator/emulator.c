@@ -15,10 +15,14 @@ static const char * TAG = "EMULATOR TASK";
 
 static chr_msg_buffer_t *source;
 
-/*Freertos variables*/
-QueueHandle_t emu_task_queue;
-parse_status_t parse_status;
+/**
+* @brief Reset all parse guard flags 
+*/
+static void _parse_guard_flags_reset(); 
 
+/*Freertos variables*/
+QueueHandle_t emu_interface_orders_queue;
+parse_guard_flags_t _parse_guard_flags;
 emu_mem_t mem;
 uint8_t emu_mem_size_single[9];
 
@@ -27,9 +31,9 @@ emu_err_t parse_fill_variables();
 emu_err_t parse_allocate_variables();
 emu_err_t parse_create_blocks();
 emu_err_t parse_fill_blocks();
-void parse_reset(); 
 
-emu_err_t emulator_parse_source_add(chr_msg_buffer_t * msg){
+
+emu_err_t emu_parse_source_add(chr_msg_buffer_t * msg){
     if (msg == NULL){
         ESP_LOGW(TAG, "no buffer provided");
         return EMU_ERR_INVALID_ARG;   
@@ -50,15 +54,16 @@ emu_err_t loop_stop_execution(){
 
 
 
-extern block_handle_t** blocks_structs;
+extern void **blocks_structs;
 extern emu_block_func *blocks_fun_table;
-void emu(void* params){
-    ESP_LOGI(TAG, "emu task active");
-    emu_task_queue  = xQueueCreate(3, sizeof(emu_order_t));
+
+void emu_interface_task(void* params){
+    ESP_LOGI(TAG, "Emulator interface task created");
+    emu_interface_orders_queue  = xQueueCreate(5, sizeof(emu_order_t));
     static emu_order_t orders;
-    parse_reset();
+    _parse_guard_flags_reset();
     while(1){
-        if (pdTRUE == xQueueReceive(emu_task_queue, &orders, portMAX_DELAY)){
+        if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &orders, portMAX_DELAY)){
             ESP_LOGI(TAG, "execute order 0x%04X" , orders);
             switch (orders){    
                 case ORD_PROCESS_VARIABLES:
@@ -98,7 +103,7 @@ void emu(void* params){
                     emu_variables_reset(&mem);}
                     if(PARSE_DONE_FILL_BLOCKS()){
                     blocks_free_all(blocks_structs,5);}
-                    parse_reset();
+                    _parse_guard_flags_reset();
                     break;
                 case ORD_RESET_BLOCKS:
                     blocks_free_all(blocks_structs,5);
@@ -193,7 +198,7 @@ emu_err_t parse_fill_blocks(){
 }
 
 /*parse checks*/
-void parse_reset(){
+static void _parse_guard_flags_reset(){
     PARSE_SET_ALLOCATE_VAR(false);
     PARSE_SET_FILL_VAR(false);
     PARSE_SET_RUN_CODE(false);

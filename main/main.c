@@ -84,10 +84,10 @@ void app_main(void) {
     // Configure NimBLE host callbacks
     nimble_host_config_init();  
     xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 3, NULL);
-    xTaskCreate(emu, "emu", 4*1024, NULL, 2, NULL);
+    xTaskCreate(emu_interface_task, "emu_interface_task", 4*1024, NULL, 2, NULL);
     main_task = xTaskGetCurrentTaskHandle();
     
-    emulator_parse_source_add(&emu_in_buffer);
+    emu_parse_source_add(&emu_in_buffer);
 
     while(1){
         vTaskDelay(pdMS_TO_TICKS(2000));

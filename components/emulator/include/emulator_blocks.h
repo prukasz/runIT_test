@@ -20,7 +20,7 @@ typedef struct{
 
     uint8_t  in_cnt;                 //total inputs
     uint8_t  in_set;
-    
+
     data_types_t* in_data_type_table;     //type of variable at each
     void*         in_data;                //common input data pointer
     uint8_t*      in_data_offsets;        //offset of common pointer for each input
@@ -32,14 +32,18 @@ typedef struct{
     void*           q_data;  
     uint8_t*        q_data_offsets;      
     q_connection_t* q_connections_table;  //list of each output connections 
-   
+    void* extras;
 }block_handle_t;
 
-typedef emu_err_t (*emu_block_func)(block_handle_t *block);
+typedef emu_err_t (*emu_block_func)(void *block);
 
-emu_err_t block_compute(block_handle_t* block);
+emu_err_t block_compute(void* src);
 
-void blocks_free_all(block_handle_t** blocks_structs, uint16_t num_blocks); 
+emu_err_t block_inject_global(void* src);
+
+void blocks_free_all(void** blocks_structs, uint16_t num_blocks); 
+
+
 
 
 
