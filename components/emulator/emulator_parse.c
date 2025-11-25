@@ -157,16 +157,15 @@ emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
     return EMU_OK;
 }
 
-
-static block_handle_t *block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
+static block_handle_t *_block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
     block_handle_t *block = calloc(1, sizeof(block_handle_t));
     block -> in_cnt = in_cnt;
     block -> q_cnt  = q_cnt;
     block -> in_data_offsets     = calloc(in_cnt, sizeof(uint16_t));
-    block -> q_data_offsets      = calloc(q_cnt, sizeof(uint16_t));
+    block -> q_data_offsets      = calloc(q_cnt,  sizeof(uint16_t));
     block->in_data_type_table    = calloc(in_cnt, sizeof(data_types_t));
-    block->q_data_type_table     = calloc(q_cnt, sizeof(data_types_t));
-    block->q_connections_table   = calloc(q_cnt, sizeof(q_connection_t));
+    block->q_data_type_table     = calloc(q_cnt,  sizeof(data_types_t));
+    block->q_connections_table   = calloc(q_cnt,  sizeof(q_connection_t));
     return block;
 }
 
@@ -205,7 +204,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             uint8_t q_cnt = data[idx];
             idx++; // move to first Q type
 
-            block_handle_t *block_ptr = block_create_struct(in_cnt, q_cnt);
+            block_handle_t *block_ptr = _block_create_struct(in_cnt, q_cnt);
             blocks_structs[block_id] = (void*)block_ptr;
             block_ptr->block_id = block_id;
 

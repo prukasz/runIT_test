@@ -1,15 +1,13 @@
-#include "emulator_loop.h"
-#include "emulator_variables.h"
-#include "emulator_parse.h"
 #include "gatt_buff.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "esp_log.h"
 #include "emulator.h"
-#include "string.h"
 #include "emulator_body.h"
 #include "emulator_blocks.h"
+#include "emulator_loop.h"
+#include "emulator_variables.h"
+#include "emulator_parse.h"
 
 static const char * TAG = "EMULATOR TASK";
 
@@ -27,10 +25,10 @@ emu_mem_t mem;
 uint8_t emu_mem_size_single[9];
 
 /*parse checks*/
-emu_err_t parse_fill_variables();
-emu_err_t parse_allocate_variables();
-emu_err_t parse_create_blocks();
-emu_err_t parse_fill_blocks();
+emu_err_t emu_execute_parse_fill_variables();
+emu_err_t emu_execute_parse_allocate_variables();
+emu_err_t emu_execute_parse_create_blocks();
+emu_err_t emu_execute_parse_fill_blocks();
 
 
 emu_err_t emu_parse_source_add(chr_msg_buffer_t * msg){
@@ -42,13 +40,13 @@ emu_err_t emu_parse_source_add(chr_msg_buffer_t * msg){
     return EMU_OK;
 }
 
-emu_err_t loop_start_execution(){
-    loop_start();
+emu_err_t emu_execute_loop_start_execution(){
+    emu_loop_start();
     return EMU_OK;
 }  //start execution
 
-emu_err_t loop_stop_execution(){
-    loop_stop();
+emu_err_t emu_execute_loop_stop_execution(){
+    emu_loop_stop();
     return EMU_OK;
 }   //stop and preserve state
 
@@ -66,11 +64,11 @@ void emu_interface_task(void* params){
         if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &orders, portMAX_DELAY)){
             ESP_LOGI(TAG, "execute order 0x%04X" , orders);
             switch (orders){    
-                case ORD_PROCESS_VARIABLES:
-                    parse_allocate_variables();
+                case ORD_PARSE_VARIABLES:
+                    emu_execute_parse_allocate_variables();
                     break;
-                case ORD_FILL_VARIABLES:
-                    parse_fill_variables();
+                case ORD_PARSE_INTO_VARIABLES:
+                    emu_execute_parse_fill_variables();
                     break;
                 case ORD_PROCESS_CODE:
                     // Handle processing code
@@ -80,13 +78,13 @@ void emu_interface_task(void* params){
                     // Handle checking completeness
                     break;
                     
-                case ORD_EMU_LOOP_RUN:
-                    loop_start();
+                case ORD_EMU_LOOP_START:
+                    emu_loop_start();
                     //add here check if code can be run
                     break;
                 case ORD_EMU_LOOP_INIT:
                     if(PARSE_FINISHED()){
-                        loop_init();
+                        emu_loop_init();
                     }   
                     else{
                         ESP_LOGE(TAG, "First parse");
@@ -94,7 +92,7 @@ void emu_interface_task(void* params){
                     break;
 
                 case ORD_EMU_LOOP_STOP:
-                    loop_stop();
+                    emu_loop_stop();
                     break;
 
                 case ORD_RESET_ALL:
@@ -102,36 +100,36 @@ void emu_interface_task(void* params){
                     if(PARSE_DONE_FILL_VAR()&&PARSE_DONE_ALLOCATE_VAR()){
                     emu_variables_reset(&mem);}
                     if(PARSE_DONE_FILL_BLOCKS()){
-                    blocks_free_all(blocks_structs,5);}
+                    emu_execute_blocks_free_all(blocks_structs,5);}
                     _parse_guard_flags_reset();
                     break;
                 case ORD_RESET_BLOCKS:
-                    blocks_free_all(blocks_structs,5);
+                    emu_execute_blocks_free_all(blocks_structs,5);
                     break;
                 case ORD_RESET_MGS_BUF:
                     ESP_LOGI(TAG, "Clearing Msg buffer");   
                     chr_msg_buffer_clear(source);
                     break;
 
-                case ORD_EMU_CREATE_BLOCK_STRUCT:
+                case ORD_EMU_ALLOCATE_BLOCKS_LIST:
                     emu_create_block_tables(5);
-                    parse_create_blocks(source);
+                    emu_execute_parse_create_blocks(source);
                     break;
-                case ORD_EMU_FILL_BLOCK_STRUCT:
-                    parse_fill_blocks(source);
+                case ORD_EMU_FILL_BLOCKS_LIST:
+                    emu_execute_parse_fill_blocks(source);
 
                     break;
                 default:
                     // Unknown order
                     break;
-            }// end case
-        }//end if
-    } //end while
+            }
+        }
+    }
 };
 
 /*parse checks*/
-/*TODO add and check errors*/
-emu_err_t parse_allocate_variables(){
+/*TODO add check errors*/
+emu_err_t emu_execute_parse_allocate_variables(){
     if (PARSE_DONE_ALLOCATE_VAR()){
         ESP_LOGE(TAG, "Variables parsing already done, or can't be done");
         return EMU_ERR_CMD_START;
@@ -150,7 +148,7 @@ emu_err_t parse_allocate_variables(){
     return EMU_OK;
 }
 /*parse checks*/
-emu_err_t parse_fill_variables(){
+emu_err_t emu_execute_parse_fill_variables(){
     if (!PARSE_DONE_ALLOCATE_VAR()){
         ESP_LOGE(TAG, "Cannot fill variables, first allocate space");
         return EMU_ERR_CMD_START;
@@ -158,18 +156,18 @@ emu_err_t parse_fill_variables(){
     //if allocated and filled already
     else if(PARSE_DONE_FILL_VAR()&&PARSE_DONE_ALLOCATE_VAR()){
         ESP_LOGW(TAG, "Overwritting variables");
-        emu_parse_into_variables(source, &mem);
+        emu_parse_variables_into(source, &mem);
         ESP_LOGI(TAG, "Filling into done");
         return EMU_OK;
     }
     PARSE_SET_FILL_VAR(true);
     ESP_LOGI(TAG, "Filling variables....");
-    emu_parse_into_variables(source, &mem);
+    emu_parse_variables_into(source, &mem);
     ESP_LOGI(TAG, "Filling done");
     return EMU_OK;
     
 }
-emu_err_t parse_create_blocks(){
+emu_err_t emu_execute_parse_create_blocks(){
     if(PARSE_DONE_ALLOCATE_VAR()){
         ESP_LOGI(TAG, "Creating blocks");
         emu_parse_block(source);
@@ -183,7 +181,7 @@ emu_err_t parse_create_blocks(){
     return EMU_OK;
 }
 
-emu_err_t parse_fill_blocks(){
+emu_err_t emu_execute_parse_fill_blocks(){
     if(PARSE_DONE_CREATE_BLOCKS()){
         ESP_LOGI(TAG, "Filling blocks");
         PARSE_SET_FILL_BLOCKS(true);

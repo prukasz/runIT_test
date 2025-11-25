@@ -4,22 +4,22 @@
 #include "emulator_blocks.h"
 
 static const char *TAG = "BODY TASK";
-extern SemaphoreHandle_t loop_semaphore;
-extern SemaphoreHandle_t wtd_semaphore;
+extern SemaphoreHandle_t loop_start_semaphore;
+extern SemaphoreHandle_t loop_wtd_semaphore;
 
 uint16_t blocks_cnt;
 void** blocks_structs=NULL;
 emu_block_func *blocks_fun_table=NULL;
 emu_err_t emu_execute();
 
-void loop_task(void* params){
+void emu_body_loop_task(void* params){
     while(1){
-        if(pdTRUE == xSemaphoreTake(loop_semaphore, portMAX_DELAY)) {
+        if(pdTRUE == xSemaphoreTake(loop_start_semaphore, portMAX_DELAY)) {
             int64_t start_time = esp_timer_get_time();
             emu_execute();
             int64_t end_time = esp_timer_get_time();
             ESP_LOGI(TAG, "loop completed in %lld us, watchdog triggered: %d", (end_time - start_time), status.wtd.wtd_triggered);
-            xSemaphoreGive(wtd_semaphore);
+            xSemaphoreGive(loop_wtd_semaphore);
             taskYIELD();
         }
     }

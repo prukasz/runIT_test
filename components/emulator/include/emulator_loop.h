@@ -6,12 +6,18 @@
 #define LOOP_PERIOD_MIN 10000
 #define LOOP_PERIOD_MAX 1000000
 
+/**
+* @brief loop watchdog struct 
+*/
 typedef struct{
-    bool wtd_triggered;
     uint8_t loops_skipped;
     uint8_t max_skipp; 
+    bool wtd_triggered;
 }emu_wtd_t;
 
+/**
+* @brief loop watchdog struct 
+*/
 typedef struct{
     loop_status_t loop_status;
     emu_wtd_t wtd;
@@ -34,11 +40,30 @@ extern emu_status_t status;
 #define LOOP_SET_RUN(x)       (status.can_run = (x))
 #define LOOP_CAN_RUN()        (status.can_run)
 
-emu_err_t loop_start(void);
-emu_err_t loop_stop(void);
-emu_err_t loop_init(void);
-emu_err_t loop_start_execution(void);
-emu_err_t loop_stop_execution(void);
-void loop_set_period(uint64_t period_us);
+/**
+* @brief start loop if possible, else return error
+*/
+emu_err_t emu_loop_start(void);
+/**
+* @brief stop loop if running, else return error
+*/
+emu_err_t emu_loop_stop(void);
+/**
+* @brief create loop and emulator body_loop_task
+*/
+emu_err_t emu_loop_init(void);
 
-void loop_task(void* params);
+/**
+* @brief execute wrapper for emu_loop_start
+*/
+emu_err_t emu_execute_loop_start_execution(void);
+
+/**
+* @brief execute wrapper for emu_loop_stop
+*/
+emu_err_t emu_execute_loop_stop_execution(void);
+
+/** 
+*@brief set emulator tickrate
+*/
+void emu_loop_period_set(uint64_t period_us); 
