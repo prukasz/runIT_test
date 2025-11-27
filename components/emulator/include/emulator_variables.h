@@ -22,10 +22,11 @@ _DEFINE_ARR_TYPE(int16_t,  i16)
 _DEFINE_ARR_TYPE(int32_t,  i32)
 _DEFINE_ARR_TYPE(float,    f)
 _DEFINE_ARR_TYPE(double,   d)
+_DEFINE_ARR_TYPE(bool,     b)
 /**
 * @brief Reset all parse guard flags 
 */
-_DEFINE_ARR_TYPE(bool,     b)
+
 
 typedef struct {
     uint8_t single_cnt[9];

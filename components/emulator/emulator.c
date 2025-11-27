@@ -8,6 +8,7 @@
 #include "emulator_loop.h"
 #include "emulator_variables.h"
 #include "emulator_parse.h"
+#include "esp_heap_caps.h"
 
 static const char * TAG = "EMULATOR TASK";
 
@@ -66,9 +67,13 @@ void emu_interface_task(void* params){
             switch (orders){    
                 case ORD_PARSE_VARIABLES:
                     emu_execute_parse_allocate_variables();
+                    size_t free_bytes = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+                    ESP_LOGI("MEMORY", "Free heap: %d bytes", free_bytes);
                     break;
                 case ORD_PARSE_INTO_VARIABLES:
                     emu_execute_parse_fill_variables();
+                    free_bytes = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+                    ESP_LOGI("MEMORY", "Free heap: %d bytes", free_bytes);
                     break;
                 case ORD_PROCESS_CODE:
                     // Handle processing code
@@ -114,6 +119,8 @@ void emu_interface_task(void* params){
                 case ORD_EMU_ALLOCATE_BLOCKS_LIST:
                     emu_create_block_tables(5);
                     emu_execute_parse_create_blocks(source);
+                    free_bytes = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+                    ESP_LOGI("MEMORY", "Free heap: %d bytes", free_bytes);
                     break;
                 case ORD_EMU_FILL_BLOCKS_LIST:
                     emu_execute_parse_fill_blocks(source);
@@ -158,7 +165,7 @@ emu_err_t emu_execute_parse_fill_variables(){
         ESP_LOGW(TAG, "Overwritting variables");
         emu_parse_variables_into(source, &mem);
         ESP_LOGI(TAG, "Filling into done");
-        return EMU_OK;
+        return EMU_OK; 
     }
     PARSE_SET_FILL_VAR(true);
     ESP_LOGI(TAG, "Filling variables....");

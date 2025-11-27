@@ -64,7 +64,7 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
                 {
                     ESP_LOGI(TAG, "Found sizes of variables at index %d", i+1);
                     start_index = i + 1;
-                    memcpy(mem->single_cnt, &data[HEADER_SIZE], (PACKET_SINGLE_VAR_SIZE - HEADER_SIZE));
+                    memcpy(mem->single_cnt, &data[HEADER_SIZE], 9);
                     for (uint8_t i = 0; i < PACKET_SINGLE_VAR_SIZE-2; ++i)
                     {
                         ESP_LOGI(TAG, "type %d: count %d", i, mem->single_cnt[i]);
@@ -85,14 +85,14 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 }
 
 /*parse switch case generato for handling different types of arrays that needs to be filled*/
-#define HANDLE_ARRAY_CASE(ID, TYPE, MEMBER)                                      \
+#define HANDLE_ARRAY_CASE(ID, TYPE, MEMBER, LEN)                                      \
     case ID: {                                                                   \
         arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                   \
         uint16_t total_size = arr->dims[0];                                        \
         for (uint8_t d = 1; d < arr->num_dims; d++) total_size *= arr->dims[d];  \
         total_size *= sizeof(TYPE);                                              \
-        if ((offset + bytes_to_copy) <= total_size) {                            \
-            memcpy(&arr->data[offset], &data[5], bytes_to_copy);                 \
+        if ((offset +(LEN)) <= total_size) {                            \
+            memcpy(&arr->data[offset], &data[5], (LEN));                 \
         } else {                                                                 \
             ESP_LOGW("EMU_PARSE", "Write out of bounds (" #TYPE " table %d)", arr_index); \
         }                                                                        \
@@ -122,33 +122,33 @@ emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
 
     for (uint16_t i = 0; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
-        if (len <= HEADER_SIZE) continue;
+        if (len < 5) continue;
 
         uint8_t arr_index = data[2];
-        uint16_t offset   = GET_OFFSET(data);
+        uint16_t offset   = GET_OFFSET(data);    
         uint16_t bytes_to_copy = len - 5;
 
         /*switch header type*/
         switch ((emu_header_t)((data[0] << 8) | data[1])) {
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_0, uint8_t,  ui8)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_1, uint16_t, ui16)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_2, uint32_t, ui32)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_3, int8_t,   i8)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_4, int16_t,  i16)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_5, int32_t,  i32)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_6, float,    f)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_7, double,   d)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_8, bool,     b)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_0, uint8_t,  ui8, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_1, uint16_t, ui16, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_2, uint32_t, ui32, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_3, int8_t,   i8, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_4, int16_t,  i16, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_5, int32_t,  i32, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_6, float,    f, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_7, double,   d, bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_8, bool,     b, bytes_to_copy)
 
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S0, uint8_t,  u8,  buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S1, uint16_t, u16, buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S2, uint32_t, u32, buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S3, int8_t,   i8,  buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S4, int16_t,  i16, buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S5, int32_t,  i32, buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S6, float,    f,   buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S7, double,   d,   buff_size)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S8, bool,     b,   buff_size)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S0, uint8_t,  u8,  len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S1, uint16_t, u16, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S2, uint32_t, u32, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S3, int8_t,   i8,  len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S4, int16_t,  i16, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S5, int32_t,  i32, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S6, float,    f,   len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S7, double,   d,   len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S8, bool,     b,   len)
             default:
                 break;
         }
@@ -196,7 +196,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
 
             // Move idx past: in_cnt (1) + input type table (in_cnt)
             idx++; // to first input type
-            uint16_t in_types_start = idx;
+            uint16_t in_types_start = idx;  
             idx += in_cnt;   // skip input types
 
             // --- PARSE Q COUNT ---

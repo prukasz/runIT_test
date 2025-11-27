@@ -101,9 +101,13 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
             
         uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+        if(len > 100){
+            ESP_LOGW(TAG, "Received data length %d exceeds buffer limit", len);
+        }
+        size_t free_bytes = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+        ESP_LOGI("MEMORY", "Free heap: %d bytes", free_bytes);
         uint8_t *temp = malloc(len);
         os_mbuf_copydata(ctxt->om, 0, len, temp);
-
         emu_order_t order_code = (emu_order_t)(temp[0] << 8) | temp[1];
         if (len == 2){
             xQueueSend(emu_interface_orders_queue,&order_code, pdMS_TO_TICKS(1000));

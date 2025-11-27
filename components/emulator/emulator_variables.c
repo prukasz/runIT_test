@@ -103,7 +103,8 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
         }
     }
     ESP_LOGI(TAG, "Total array size of arrays: %lldB", total_size);
-
+    for (uint8_t i = 0 ; i < 9 ; i++)
+    {ESP_LOGI(TAG,"need %d slots for %d type table", mem->arr_cnt[i], i);}
     size_t handle_size = 0;
     ADD_SIZE(handle_size, mem->arr_cnt[0], arr_ui8_t);
     ADD_SIZE(handle_size, mem->arr_cnt[1], arr_ui16_t);

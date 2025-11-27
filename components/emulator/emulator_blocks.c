@@ -11,7 +11,7 @@ void test_rec()
 {   
     _recursive_mem_get_t idx_from_float = {
         .target_type = DATA_F,
-        .target_idx  = 1,
+        .target_idx  = 3,
         .target_custom_indices = {255,255,255},  // legalny indeks w tablicy
         .next0 = NULL,
         .next1 = NULL,
@@ -20,8 +20,8 @@ void test_rec()
     // indeks z single var -> scalar, ustawiamy 0
     _recursive_mem_get_t idx_from_single = {
         .target_type = DATA_UI8,
-        .target_idx  = 0,
-        .target_custom_indices = {1,255,255},  // legalny indeks w tablicy
+        .target_idx  = 3,
+        .target_custom_indices = {0,255,255},  // legalny indeks w tablicy
         .next0 = &idx_from_float,
         .next1 = NULL,
         .next2 = NULL

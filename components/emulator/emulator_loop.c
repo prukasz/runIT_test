@@ -3,6 +3,7 @@
 #include "emulator_body.h"
 #include "emulator_parse.h"
 
+
 /***********************************************************
 In this file loop timer is created and managed
 Simple loop watchdog implemented in timer callback
@@ -58,7 +59,7 @@ emu_err_t emu_loop_init(){
     
     loop_start_semaphore = xSemaphoreCreateBinary();
     loop_wtd_semaphore   = xSemaphoreCreateBinary();
-    WTD_SET_LIMIT(5);
+    WTD_SET_LIMIT(10);
     /*create task that will execute code*/
     xTaskCreate(emu_body_loop_task, TAG, stack_depth, NULL, task_priority, &emulator_loop_body_handle);
     ESP_LOGI(TAG,"Creating loop timer");
