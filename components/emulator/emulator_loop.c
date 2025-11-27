@@ -58,7 +58,7 @@ emu_err_t emu_loop_init(){
     
     loop_start_semaphore = xSemaphoreCreateBinary();
     loop_wtd_semaphore   = xSemaphoreCreateBinary();
-    WTD_SET_LIMIT(2);
+    WTD_SET_LIMIT(5);
     /*create task that will execute code*/
     xTaskCreate(emu_body_loop_task, TAG, stack_depth, NULL, task_priority, &emulator_loop_body_handle);
     ESP_LOGI(TAG,"Creating loop timer");

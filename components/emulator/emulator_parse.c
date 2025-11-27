@@ -46,7 +46,6 @@ bool _check_arr_packet_size(uint16_t len, uint8_t step)
 
 emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 {
-    uint8_t emu_mem_size_single[9];
     uint8_t *data;
     uint16_t len;
     int start_index = -1;
@@ -65,10 +64,10 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
                 {
                     ESP_LOGI(TAG, "Found sizes of variables at index %d", i+1);
                     start_index = i + 1;
-                    memcpy(emu_mem_size_single, &data[HEADER_SIZE], (PACKET_SINGLE_VAR_SIZE - HEADER_SIZE));
-                    for (int i = 0; i < PACKET_SINGLE_VAR_SIZE; ++i)
+                    memcpy(mem->single_cnt, &data[HEADER_SIZE], (PACKET_SINGLE_VAR_SIZE - HEADER_SIZE));
+                    for (uint8_t i = 0; i < PACKET_SINGLE_VAR_SIZE-2; ++i)
                     {
-                        ESP_LOGD(TAG, "type %d: count %d", i, emu_mem_size_single[i]);
+                        ESP_LOGI(TAG, "type %d: count %d", i, mem->single_cnt[i]);
                     }
                     break;
                 }
@@ -80,7 +79,7 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         ESP_LOGE(TAG, "Varaibles sizes not found");
         return EMU_ERR_INVALID_DATA;
     }
-    emu_err_t err = emu_variables_single_create(mem, emu_mem_size_single);
+    emu_err_t err = emu_variables_single_create(mem);
     err = emu_variables_arrays_create(source, mem, start_index);
     return err;
 }
@@ -294,18 +293,5 @@ static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id){
     default:
         break;
     }
-}
-
-void parse_global_acces(chr_msg_buffer_t *source, uint16_t search_idx)
-{
-    uint8_t *data;
-    uint16_t len;
-    uint16_t start_idx = 5;
-    _block_get_global_t* result = (_block_get_global_t*)calloc(1, sizeof(_block_get_global_t));
-   chr_msg_buffer_get(source, search_idx, &data, &len);
-   {
-    
-   }
-
 }
 

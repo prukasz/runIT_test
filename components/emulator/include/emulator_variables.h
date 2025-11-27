@@ -3,7 +3,7 @@
 #include <string.h>
 #include "emulator_types.h"
 #include "gatt_buff.h"
-
+#include "math.h"
 
 /** 
 *@brief This macro generate arrays of chosen datatype used in emulator global memory
@@ -28,6 +28,7 @@ _DEFINE_ARR_TYPE(double,   d)
 _DEFINE_ARR_TYPE(bool,     b)
 
 typedef struct {
+    uint8_t single_cnt[9];
     //Common pointer for all "single varaibles"
     void     *_base_ptr;
     //pointer to an array of singe variables type: int8_t
@@ -49,6 +50,7 @@ typedef struct {
     //pointer to an array of singe variables type: bool
     bool     *b;
 
+    uint8_t arr_cnt[9];
     void  *_base_arr_ptr;
     void  *_base_arr_handle_ptr;
     arr_ui8_t  *arr_ui8;
@@ -69,9 +71,8 @@ extern emu_mem_t mem;
 /**
  * @brief create arrays space
  * @param mem pointer to global memory struct
- * @param types_cnt_table poiter to count of sinle varaible of each type
  */
-emu_err_t emu_variables_single_create(emu_mem_t *mem, uint8_t *types_cnt_table);
+emu_err_t emu_variables_single_create(emu_mem_t *mem);
 
 /**
  * @brief create arrays space
@@ -141,7 +142,7 @@ static inline size_t data_size(data_types_t type)
  * @param idx_table indices to acces from table
  * @note 0xFF idx is reserved for dimensional exclusion
  */
-double mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[3]);        
+emu_err_t mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[3], double* value_out);        
 /**
  * @brief Return value from table or single variable from chosen type
  * @param var_idx index of single variable or table
@@ -259,6 +260,19 @@ Todo: rework so it caps value or round it
         }                                                                       \
     }                                                                           \
 })
+
+typedef struct _recursive_mem_get_t{
+    uint8_t target_type;
+    uint8_t target_idx;
+    uint8_t target_custom_indices[3];
+    uint8_t which_idx;
+    struct _recursive_mem_get_t* next0;
+    struct _recursive_mem_get_t* next1;
+    struct _recursive_mem_get_t* next2;
+} _recursive_mem_get_t;
+ 
+
+emu_err_t mem_get_global_recursive(_recursive_mem_get_t *b, double *value_out);
 
 /******************************************************************************************************** 
 *   VARIABLE ACCES AND USAGE 

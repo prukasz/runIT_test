@@ -9,12 +9,13 @@ static const char *TAG = "DATAHOLDER";
 #define HEADER_SIZE 2
 
 /*This macro setup pointers for tables of single varaibles different types*/
-#define SETUP_FIELD(base, field, index, ptr, count_array) \
-({ \
-    (base)->field = (typeof((base)->field))(ptr); \
-    (ptr) += (count_array)[index] * sizeof(*(base)->field); \
-    (base)->field; \
-})
+#define SETUP_FIELD(base, field, index, ptr, is_array) \
+({\
+size_t cnt = is_array ? base->arr_cnt[index] : base->single_cnt[index];\
+(base)->field = (typeof((base)->field))(ptr);\
+(ptr) += cnt * sizeof(*(base)->field);\
+(base)->field;\
+})\
 
 /*This macro set up pointers for single variables*/
 #define SETUP_SINGLE_VAR_PTR(mem, field, idx) ({ \
@@ -42,21 +43,21 @@ static const char *TAG = "DATAHOLDER";
 #define ADD_SIZE(total, count, type) ((total) += (count) * sizeof(type))
 
 
-emu_err_t emu_variables_single_create(emu_mem_t *mem, uint8_t *sizes)
+emu_err_t emu_variables_single_create(emu_mem_t *mem)
 {
-    if (!mem || !sizes) {
+    if (!mem) {
         return EMU_ERR_INVALID_ARG;
     }
     size_t total_size = 0;
-    ADD_SIZE(total_size, sizes[0],  int8_t);
-    ADD_SIZE(total_size, sizes[1],  int16_t);
-    ADD_SIZE(total_size, sizes[2],  int32_t);
-    ADD_SIZE(total_size, sizes[4],  uint8_t);
-    ADD_SIZE(total_size, sizes[5],  uint16_t);
-    ADD_SIZE(total_size, sizes[6],  uint32_t);
-    ADD_SIZE(total_size, sizes[8],  float);
-    ADD_SIZE(total_size, sizes[9],  double);
-    ADD_SIZE(total_size, sizes[10], bool);
+    ADD_SIZE(total_size, mem->single_cnt[0],  int8_t);
+    ADD_SIZE(total_size, mem->single_cnt[1],  int16_t);
+    ADD_SIZE(total_size, mem->single_cnt[2],  int32_t);
+    ADD_SIZE(total_size, mem->single_cnt[3],  uint8_t);
+    ADD_SIZE(total_size, mem->single_cnt[4],  uint16_t);
+    ADD_SIZE(total_size, mem->single_cnt[5],  uint32_t);
+    ADD_SIZE(total_size, mem->single_cnt[6],  float);
+    ADD_SIZE(total_size, mem->single_cnt[7],  double);
+    ADD_SIZE(total_size, mem->single_cnt[8],  bool);
 
     mem->_base_ptr = calloc(1, total_size);
     if (!mem->_base_ptr) {
@@ -64,17 +65,16 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem, uint8_t *sizes)
         emu_variables_reset(mem);
         return EMU_ERR_NO_MEMORY;
     }
-
     uint8_t* current_ptr = (uint8_t*)mem->_base_ptr;
-    SETUP_FIELD(mem, i8,  0, current_ptr, sizes);
-    SETUP_FIELD(mem, i16, 1, current_ptr, sizes);
-    SETUP_FIELD(mem, i32, 2, current_ptr, sizes);
-    SETUP_FIELD(mem, u8,  4, current_ptr, sizes);
-    SETUP_FIELD(mem, u16, 5, current_ptr, sizes);
-    SETUP_FIELD(mem, u32, 6, current_ptr, sizes);
-    SETUP_FIELD(mem, f,   8, current_ptr, sizes);
-    SETUP_FIELD(mem, d,   9, current_ptr, sizes);
-    SETUP_FIELD(mem, b,  10, current_ptr, sizes);
+    SETUP_FIELD(mem, i8,  0, current_ptr, false);
+    SETUP_FIELD(mem, i16, 1, current_ptr, false);
+    SETUP_FIELD(mem, i32, 2, current_ptr, false);
+    SETUP_FIELD(mem, u8,  3, current_ptr, false);
+    SETUP_FIELD(mem, u16, 4, current_ptr, false);
+    SETUP_FIELD(mem, u32, 5, current_ptr, false);
+    SETUP_FIELD(mem, f,   6, current_ptr, false);
+    SETUP_FIELD(mem, d,   7, current_ptr, false);
+    SETUP_FIELD(mem, b,   8, current_ptr, false);
 
     ESP_LOGI(TAG, "Single variables dataholder created successfully");
     return EMU_OK;
@@ -86,8 +86,7 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
     uint8_t *data;
     uint16_t len;
     uint64_t buff_size = chr_msg_buffer_size(source);
-    uint8_t types_cnt[9] = {0};
-        uint8_t step;
+    uint8_t step;
     uint64_t total_size = 0;
     start_index += 1;
 
@@ -95,7 +94,7 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
         chr_msg_buffer_get(source, i, &data, &len);
         if (_check_arr_header(data, &step) && _check_arr_packet_size(len, step)) {
             for (size_t j = HEADER_SIZE; j < len; j += step) {
-                types_cnt[(data_types_t)data[j]]++;
+                mem->arr_cnt[(data_types_t)data[j]]++;
                 uint64_t table_cnt = data[j + 1];
                 if (step >= 3) {table_cnt *= data[j + 2];}
                 if (step == 4) {table_cnt *= data[j + 3];}
@@ -106,15 +105,15 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
     ESP_LOGI(TAG, "Total array size of arrays: %lldB", total_size);
 
     size_t handle_size = 0;
-    ADD_SIZE(handle_size, types_cnt[0], arr_ui8_t);
-    ADD_SIZE(handle_size, types_cnt[1], arr_ui16_t);
-    ADD_SIZE(handle_size, types_cnt[2], arr_ui32_t);
-    ADD_SIZE(handle_size, types_cnt[3], arr_i8_t);
-    ADD_SIZE(handle_size, types_cnt[4], arr_i16_t);
-    ADD_SIZE(handle_size, types_cnt[5], arr_i32_t);
-    ADD_SIZE(handle_size, types_cnt[6], arr_f_t);
-    ADD_SIZE(handle_size, types_cnt[7], arr_d_t);
-    ADD_SIZE(handle_size, types_cnt[8], arr_b_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[0], arr_ui8_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[1], arr_ui16_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[2], arr_ui32_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[3], arr_i8_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[4], arr_i16_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[5], arr_i32_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[6], arr_f_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[7], arr_d_t);
+    ADD_SIZE(handle_size, mem->arr_cnt[8], arr_b_t);
 
     mem->_base_arr_handle_ptr = calloc(1, handle_size);
     if (!mem->_base_arr_handle_ptr){
@@ -124,18 +123,18 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
     }
 
     for (uint8_t i = 0 ; i < 9 ; i++) 
-    {ESP_LOGI(TAG,"allocated %d slots for %d type table", types_cnt[i], i);}
+    {ESP_LOGI(TAG,"allocated %d slots for %d type table", mem->arr_cnt[i], i);}
 
     uint8_t *current_ptr = (uint8_t*)mem->_base_arr_handle_ptr;
-    SETUP_FIELD(mem, arr_ui8,  0, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_ui16, 1, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_ui32, 2, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_i8,   3, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_i16,  4, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_i32,  5, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_f,    6, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_d,    7, current_ptr, types_cnt);
-    SETUP_FIELD(mem, arr_b,    8, current_ptr, types_cnt);
+    SETUP_FIELD(mem, arr_ui8,  0, current_ptr, true);
+    SETUP_FIELD(mem, arr_ui16, 1, current_ptr, true);
+    SETUP_FIELD(mem, arr_ui32, 2, current_ptr, true);
+    SETUP_FIELD(mem, arr_i8,   3, current_ptr, true);
+    SETUP_FIELD(mem, arr_i16,  4, current_ptr, true);
+    SETUP_FIELD(mem, arr_i32,  5, current_ptr, true);
+    SETUP_FIELD(mem, arr_f,    6, current_ptr, true);
+    SETUP_FIELD(mem, arr_d,    7, current_ptr, true);
+    SETUP_FIELD(mem, arr_b,    8, current_ptr, true);
 
     mem->_base_arr_ptr = calloc(1, total_size);
     if (!mem->_base_arr_ptr){
@@ -188,42 +187,132 @@ void emu_variables_reset(emu_mem_t *mem)
     ESP_LOGI(TAG, "Dataholder memory freed");
 }
 
-double mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[3]) {
-    size_t flat_idx = SIZE_MAX;  // default for scalar
-    bool is_scalar = 0;
+emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
+                       uint8_t idx_table[3], double *out_value)
+{
+    if (!out_value) return 0x100;
 
-    if(idx_table[0]==UINT8_MAX && idx_table[1]==UINT8_MAX && idx_table[2]==UINT8_MAX){is_scalar = true;}
+    size_t flat_idx = SIZE_MAX;
+    bool is_scalar =
+        (idx_table[0] == UINT8_MAX &&
+         idx_table[1] == UINT8_MAX &&
+         idx_table[2] == UINT8_MAX);
 
+    /* Compute flat index if array */
     if (!is_scalar) {
-        // Compute flat index using macro (bounds-checked)
+
         switch (type) {
             case DATA_UI8:   flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[var_idx].num_dims, mem.arr_ui8[var_idx].dims, idx_table); break;
             case DATA_UI16:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui16[var_idx].num_dims, mem.arr_ui16[var_idx].dims, idx_table); break;
             case DATA_UI32:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui32[var_idx].num_dims, mem.arr_ui32[var_idx].dims, idx_table); break;
             case DATA_I8:    flat_idx = _ARR_FLAT_IDX(mem.arr_i8[var_idx].num_dims, mem.arr_i8[var_idx].dims, idx_table); break;
             case DATA_I16:   flat_idx = _ARR_FLAT_IDX(mem.arr_i16[var_idx].num_dims, mem.arr_i16[var_idx].dims, idx_table); break;
-            case DATA_I32:   flat_idx = _ARR_FLAT_IDX(mem.arr_i32[var_idx].num_dims, mem.arr_i32[var_idx].dims,idx_table); break;
+            case DATA_I32:   flat_idx = _ARR_FLAT_IDX(mem.arr_i32[var_idx].num_dims, mem.arr_i32[var_idx].dims, idx_table); break;
             case DATA_F:     flat_idx = _ARR_FLAT_IDX(mem.arr_f[var_idx].num_dims, mem.arr_f[var_idx].dims, idx_table); break;
             case DATA_D:     flat_idx = _ARR_FLAT_IDX(mem.arr_d[var_idx].num_dims, mem.arr_d[var_idx].dims, idx_table); break;
             case DATA_B:     flat_idx = _ARR_FLAT_IDX(mem.arr_b[var_idx].num_dims, mem.arr_b[var_idx].dims, idx_table); break;
-            default: return 0.0;
+            default: return 0x100;
         }
 
-        if (flat_idx == (size_t)-1) return 0.0;  // out-of-bounds
+        if (flat_idx == (size_t)-1)
+            return 0x100;
     }
 
-    // Return value casted to double
+    /* Extract value */
     switch (type) {
-        case DATA_UI8:   return is_scalar ? mem.u8[var_idx] : mem.arr_ui8[var_idx].data[flat_idx];
-        case DATA_UI16:  return is_scalar ? mem.u16[var_idx] : mem.arr_ui16[var_idx].data[flat_idx];
-        case DATA_UI32:  return is_scalar ? mem.u32[var_idx] : mem.arr_ui32[var_idx].data[flat_idx];
-        case DATA_I8:    return is_scalar ? mem.i8[var_idx] : mem.arr_i8[var_idx].data[flat_idx];
-        case DATA_I16:   return is_scalar ? mem.i16[var_idx] : mem.arr_i16[var_idx].data[flat_idx];
-        case DATA_I32:   return is_scalar ? mem.i32[var_idx] : mem.arr_i32[var_idx].data[flat_idx];
-        case DATA_F:     return is_scalar ? mem.f[var_idx] : mem.arr_f[var_idx].data[flat_idx];
-        case DATA_D:     return is_scalar ? mem.d[var_idx] : mem.arr_d[var_idx].data[flat_idx];
-        case DATA_B:     return is_scalar ? mem.b[var_idx] : mem.arr_b[var_idx].data[flat_idx];
-        default: return 0.0;
+        case DATA_UI8:  *out_value = is_scalar ? mem.u8[var_idx]  : mem.arr_ui8[var_idx].data[flat_idx]; break;
+        case DATA_UI16: *out_value = is_scalar ? mem.u16[var_idx] : mem.arr_ui16[var_idx].data[flat_idx]; break;
+        case DATA_UI32: *out_value = is_scalar ? mem.u32[var_idx] : mem.arr_ui32[var_idx].data[flat_idx]; break;
+
+        case DATA_I8:   *out_value = is_scalar ? mem.i8[var_idx]  : mem.arr_i8[var_idx].data[flat_idx]; break;
+        case DATA_I16:  *out_value = is_scalar ? mem.i16[var_idx] : mem.arr_i16[var_idx].data[flat_idx]; break;
+        case DATA_I32:  *out_value = is_scalar ? mem.i32[var_idx] : mem.arr_i32[var_idx].data[flat_idx]; break;
+
+        case DATA_F:    *out_value = is_scalar ? mem.f[var_idx]   : mem.arr_f[var_idx].data[flat_idx]; break;
+        case DATA_D:    *out_value = is_scalar ? mem.d[var_idx]   : mem.arr_d[var_idx].data[flat_idx]; break;
+
+        case DATA_B:    *out_value = is_scalar ? mem.b[var_idx]   : mem.arr_b[var_idx].data[flat_idx]; break;
+
+        default: return 0x100;
     }
+
+    return EMU_OK;
+}
+
+emu_err_t mem_get_global_recursive(_recursive_mem_get_t *b, double *value_out)
+{
+    if (!value_out) return 0x100;
+
+    if (!b) {
+        ESP_LOGW(TAG, "NULL block passed");
+        return 0x100;
+    }
+
+    uint8_t idx_table[3];
+    _recursive_mem_get_t *next_arr[3] = {
+        b->next0, b->next1, b->next2
+    };
+
+    /* resolve indices */
+    for (int i = 0; i < 3; i++) {
+
+        if (next_arr[i]) {
+            ESP_LOGI(TAG, "Resolving next%d recursively...", i);
+
+            double tmp;
+            emu_err_t e = mem_get_global_recursive(next_arr[i], &tmp);
+            if (e != EMU_OK) return e;
+
+            if (tmp < 0.0) idx_table[i] = 0;
+            else if (tmp > 254.0) idx_table[i] = 254;
+            else idx_table[i] = (uint8_t)round(tmp);
+
+            ESP_LOGI(TAG, "Resolved next%d => raw=%f => idx=%d", i, tmp, idx_table[i]);
+
+        } else {
+            idx_table[i] = b->target_custom_indices[i];
+            ESP_LOGI(TAG, "Using static index%d: %d", i, idx_table[i]);
+        }
+    }
+
+    /* Check scalar flag */
+    bool is_scalar =
+        idx_table[0] == UINT8_MAX &&
+        idx_table[1] == UINT8_MAX &&
+        idx_table[2] == UINT8_MAX;
+
+    ESP_LOGI(TAG,
+             "Target type=%d idx=%u scalar=%d idx=[%d,%d,%d]",
+             b->target_type, (unsigned)b->target_idx, is_scalar,
+             idx_table[0], idx_table[1], idx_table[2]);
+
+    /* Bounds checking */
+    if (is_scalar) {
+        if (b->target_idx >= mem.single_cnt[b->target_type]) {
+            ESP_LOGE(TAG, "Scalar index out of range");
+            return 0x100;
+        }
+    } else {
+        if (b->target_idx >= mem.arr_cnt[b->target_type]) {
+            ESP_LOGE(TAG, "Array index out of range");
+            return 0x100;
+        }
+    }
+
+    /* final dereference */
+    double val;
+    emu_err_t err = mem_get_as_d(b->target_type, b->target_idx, idx_table, &val);
+    if (err != EMU_OK) {
+        ESP_LOGE(TAG, "mem_get_as_d error %d", err);
+        return err;
+    }
+
+    ESP_LOGI(TAG,
+        "Accessing type=%d idx=%u indices=[%d,%d,%d] => value=%f",
+        b->target_type, (unsigned)b->target_idx,
+        idx_table[0], idx_table[1], idx_table[2], val);
+
+    *value_out = val;
+    return EMU_OK;
 }
 
