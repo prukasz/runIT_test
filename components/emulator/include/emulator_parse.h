@@ -4,6 +4,7 @@
 #include "stdbool.h"
 #include "emulator_types.h"
 #include "emulator_variables.h"
+#include "emulator_blocks.h"
 
 typedef struct{
     bool can_allocate_var;
@@ -43,3 +44,8 @@ bool _check_arr_header(uint8_t *data, uint8_t *step);
 emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem);
 emu_err_t emu_parse_into_variables(chr_msg_buffer_t *source, emu_mem_t *mem);
 emu_err_t emu_parse_block(chr_msg_buffer_t *source);
+emu_err_t parse_math_block(chr_msg_buffer_t *source, size_t msg_index);
+emu_err_t parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression);
+emu_err_t parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code);
+emu_err_t parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
+emu_err_t parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table);

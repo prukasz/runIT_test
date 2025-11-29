@@ -271,7 +271,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             }
             parse_assign_fuction(data[1],block_id);
             ESP_LOGI(TAG, "Allocated handle for block block_id %d", block_id);
-
+            parse_math_block(source, search_idx+1);
         }
         search_idx++;
     }
@@ -296,74 +296,56 @@ emu_err_t parse_math_block(chr_msg_buffer_t *source, size_t msg_index)
     uint8_t *data;
     uint16_t len;
     size_t const_msg_cnt = 1;
+    block_handle_t *block_ptr;
 
     chr_msg_buffer_get(source, msg_index, &data, &len);
-    uint8_t msg_order = data[2];
-    uint16_t block_id = ((uint16_t)data[4]<<8) | data[3];
+    uint16_t block_id = READ_U16(data, 3);
 
-    blocks_structs[block_id]->extras = calloc(1, sizeof(expression_t));
+    block_ptr = blocks_structs[block_id];
+
+    block_ptr->extras = calloc(1, sizeof(expression_t));
     
-
-
-
-    // for (size_t i = 0; i < message_cnt; i++)
-    // {
-    //     chr_msg_buffer_get(source, i, &data, &len)
-    // }
-
-    // for (size_t i = 0; i < buff_size; i++) {
-    //     chr_msg_buffer_get(source, i, &data, &len);
-    //     if(len <= BLOCK_HEADER_SIZE) continue;
-
-    //     switch ((emu_header_t)((data[0] << 8) | data[1])) {
-    //         case EMU_H_BLOCK_MATH_EXPR:{
-    //             int index;
-    //             for(int i = 0; i<5; i++){
-    //                 if(expression_table[i] == NULL)
-    //                 {
-    //                     index = i;
-    //                     break;
-    //                 }
-    //             }
-    //             expression_table[index] = (expression_t*)malloc(sizeof(expression_t));
-    //             expression_table[index]->code = (instruction_t*)calloc(len-2, sizeof(instruction_t));
-    //             expression_table[index]->count = (len-2)/2;
-    //             for(int i = 2; i<len; i++)
-    //             {
-    //                 memcpy(&((expression_table[index]->code[(i-2)/2]).op), &data[i], 1);
-    //                 memcpy(&((expression_table[index]->code[(i-2)/2]).input_index), &data[i+1], 1);
-    //             }
-    //             expression_table[index]->block_index = block_index;
-    //             break;
-    //         }
-    //         default:{
-    //             break;
-    //         }
-    //     }
+    parse_math_const(source, msg_index, (block_ptr->extras), &const_msg_cnt);
+    parse_math_expr(source, msg_index+const_msg_cnt, (block_ptr->extras));
+    
+    return EMU_OK;
 }
 
-emu_err_t parse_math_expr(chr_msg_buffer_t *source, size_t msg_index)
+emu_err_t parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression)
 {
     uint8_t *data;
     uint16_t len;
     uint16_t len_total;
-    uint8_t count = 0;
+    uint8_t op_count = 0;
     uint8_t idx_start = 0;
-}
 
-emu_err_t parse_math_expr_msg(uint8_t *data, uint16_t len, uint8_t *idx_start)
-{
-    expression_table[index] = (expression_t*)malloc(sizeof(expression_t));
-    expression_table[index]->code = (instruction_t*)calloc(len-2, sizeof(instruction_t));
-    expression_table[index]->count = (len-2)/2;
-    for(int i = 2; i<len; i++){
-        memcpy(&((expression_table[index]->code[(i-2)/2]).op), &data[i], 1);
-        memcpy(&((expression_table[index]->code[(i-2)/2]).input_index), &data[i+1], 1);
+    chr_msg_buffer_get(source, msg_index, &data, &len);
+    op_count = data[5];
+    expression->count = op_count;
+    expression->code = (instruction_t*)calloc(op_count, sizeof(instruction_t));
+    len_total = op_count * 2 + 1;
+    parse_math_expr_msg(data, len, 6, &idx_start, expression->code);
+    
+    while(len_total>(len-5)){
+        len_total = len_total - (len - 5);
+        chr_msg_buffer_get(source, msg_index++, &data, &len);
+        parse_math_expr_msg(data, len, 5, &idx_start, expression->code);
     }
-    expression_table[index]->block_index = block_index;
+
+    return EMU_OK;
 }
 
-emu_err_t parse_math_const(chr_msg_buffer_t *source, size_t msg_index, double* table, size_t *const_msg_cnt){
+emu_err_t parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code)
+{
+    for(int i = start_index; i<len; i+=2){
+        memcpy(&(code[(*idx_start)].op), &data[i], 1);
+        memcpy(&(code[(*idx_start)].input_index), &data[i+1], 1);
+        (*idx_start)++;
+    }
+    return EMU_OK;
+}
+
+emu_err_t parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt){
 
     uint8_t *data;
     uint16_t len;
@@ -374,21 +356,22 @@ emu_err_t parse_math_const(chr_msg_buffer_t *source, size_t msg_index, double* t
     chr_msg_buffer_get(source, msg_index, &data, &len);
     const_cnt = data[5];
     len_total = const_cnt * sizeof(double) + 1;
-    parse_math_const_msg(data, len, 6, &idx_start, NULL);
+    expression->constant_table = (double*)calloc(const_cnt, sizeof(double));
 
     while(len_total>(len-5)){
         len_total = len_total - (len - 5);
         chr_msg_buffer_get(source, msg_index++, &data, &len);
-        parse_math_const_msg(data, len, 5, &idx_start, NULL);
-        *const_msg_cnt++;
+        parse_math_const_msg(data, len, 5, &idx_start, expression->constant_table);
+        (*const_msg_cnt)++;
     }
+    return EMU_OK;
 }
 
 
-emu_err_t parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start ,double* table){
+emu_err_t parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table){
     for(size_t i = start_index; i<len; i=i+sizeof(double)){
         memcpy(&(table[*idx_start]), &data[i], sizeof(double));
-        *idx_start++;
+        (*idx_start)++;
     }
     return EMU_OK;
 }
