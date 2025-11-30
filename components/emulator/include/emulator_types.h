@@ -12,7 +12,8 @@ typedef enum {
     EMU_ERR_CMD_STOP,
     EMU_ERR_CMD_START_BLOCKS,
     EMU_ERR_INVALID_DATA,
-    EMU_ERR_UNLIKELY
+    EMU_ERR_UNLIKELY,
+    EMU_ERR_DIVISION_BY_ZERO
 }emu_err_t;
 
 /**

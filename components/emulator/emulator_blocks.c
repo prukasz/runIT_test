@@ -3,14 +3,83 @@
 #include "emulator_variables.h"
 #include "emulator_block_utils.h"
 #include <math.h>
+#include <float.h>
+#include <stdbool.h>
 
 static void block_pass_results(block_handle_t* block);
 extern block_handle_t** blocks_structs;
 expression_t *expression_table[5];
 
+bool is_greater(double a, double b);
+bool is_equal(double a, double b);
+bool is_zero(double a);
 
 static int cnt = 0;
 emu_err_t block_compute(block_handle_t* block){
+    
+    expression_t* eval = block->extras;
+    double stack[16];
+    int over_top = 0;
+    double result = 0;
+
+    for(int i = 0; i<eval->count; i++){
+        instruction_t *ins = &(eval->code[i]);
+
+        switch(ins->op){
+            case OP_VAR:
+                stack[over_top++] = get_in_val(ins->input_index, block);
+                break;
+
+            case OP_CONST:
+                stack[over_top++] = eval->constant_table[ins->input_index];
+                break;
+
+            case OP_ADD:
+                stack[over_top-2] = stack[over_top-2] + stack[over_top-1];
+                over_top--;
+                break;
+
+            case OP_MUL:
+                stack[over_top-2] = stack[over_top-2] * stack[over_top-1];
+                over_top--;
+                break;
+
+            case OP_DIV:
+                if(is_zero(stack[over_top-1]))
+                    return EMU_ERR_DIVISION_BY_ZERO;
+
+                stack[over_top-2] = stack[over_top-2]/stack[over_top-1];
+                over_top--;
+                // Do we want to check if divison is by zero in ESP or in PYTHON ?
+                // I guess the result of other things could be 0 and then it would be hard to evaluate it in python
+                break;
+
+            case OP_COS:
+                stack[over_top-1] = cos(stack[over_top-1]);
+                break;
+
+            case OP_SIN:
+                stack[over_top-1] = sin(stack[over_top-1]);
+                break; 
+
+            case OP_POWER:
+                stack[over_top-2] = pow(stack[over_top-2], stack[over_top-1]);
+                over_top--;
+                break;
+
+            case OP_ROOT:
+                stack[over_top-1] = sqrt(stack[over_top-1]);
+                break;
+
+            case OP_SUB:
+                stack[over_top-2] = stack[over_top-2] - stack[over_top-1];
+                over_top--;
+                break; 
+        }
+    }
+    result = stack[0];
+    // I dont wanna break something i guess so i need to ask how the hell u want different outputs in math block that gives you double ;--; i mean u could cast
+    // if u wanna make uint16 from double
     block_pass_results(block);
     return EMU_OK;
 }
@@ -102,5 +171,17 @@ void blocks_free_all(block_handle_t** blocks_structs, uint16_t num_blocks) {
         free_block(blocks_structs[i]);
     }
     free(blocks_structs);
+}
+
+bool is_equal(double a, double b){
+    return fabs(a-b)<DBL_EPSILON;
+}
+
+bool is_zero(double a){
+    return fabs(a)<DBL_EPSILON;
+}
+
+bool is_greater(double a, double b){
+    return fabs(a-b)>DBL_EPSILON;
 }
 
