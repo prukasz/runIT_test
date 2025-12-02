@@ -38,7 +38,6 @@ emu_err_t emu_execute(){
 
 emu_err_t emu_create_block_tables(uint16_t num_blocks) {
     if (num_blocks == 0) return EMU_ERR_INVALID_ARG;
-
     blocks_cnt = num_blocks;
 
     // Allocate array of pointers to block_handle_t

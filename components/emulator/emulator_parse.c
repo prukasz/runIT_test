@@ -11,9 +11,10 @@ static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id);
 #define STEP_ARR_1D 2 // type, dim1
 #define STEP_ARR_2D 3 // type, dim1, dim2
 #define STEP_ARR_3D 4 // type, dim1, dim2, dim3
+#define GET_HEADER(data)   ((uint16_t)(((data[0]) << 8) | (data[1])))
 bool _check_arr_header(uint8_t *data, uint8_t *step)
 {
-    uint16_t header = ((data[0] << 8) | data[1]);
+    uint16_t header = GET_HEADER(data);
     if (header == EMU_H_VAR_ARR_1D)
     {
         *step = STEP_ARR_1D;
@@ -33,7 +34,7 @@ bool _check_arr_header(uint8_t *data, uint8_t *step)
 }
 bool _check_header(uint8_t *data, emu_header_t header)
 {   
-    return ((data[0] << 8) | data[1]) == header;
+    return GET_HEADER(data) == header;
 }
 bool _check_arr_packet_size(uint16_t len, uint8_t step)
 {
@@ -64,8 +65,8 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
                 {
                     ESP_LOGI(TAG, "Found sizes of variables at index %d", i+1);
                     start_index = i + 1;
-                    memcpy(mem->single_cnt, &data[HEADER_SIZE], 9);
-                    for (uint8_t i = 0; i < PACKET_SINGLE_VAR_SIZE-2; ++i)
+                    memcpy(mem->single_cnt, &data[HEADER_SIZE], TYPE_COUNT);
+                    for (uint8_t i = 0; i < TYPE_COUNT; ++i)
                     {
                         ESP_LOGI(TAG, "type %d: count %d", i, mem->single_cnt[i]);
                     }
@@ -84,26 +85,27 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     return err;
 }
 
+#define ARR_DATA_START_IDX 5
 /*parse switch case generato for handling different types of arrays that needs to be filled*/
-#define HANDLE_ARRAY_CASE(ID, TYPE, MEMBER, LEN)                                      \
-    case ID: {                                                                   \
+#define HANDLE_ARRAY_CASE(HEADER, TYPE, MEMBER, DATA_LEN)                                      \
+    case HEADER: {                                                                   \
         arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                   \
         uint16_t total_size = arr->dims[0];                                        \
         for (uint8_t d = 1; d < arr->num_dims; d++) total_size *= arr->dims[d];  \
         total_size *= sizeof(TYPE);                                              \
-        if ((offset +(LEN)) <= total_size) {                            \
-            memcpy(&arr->data[offset], &data[5], (LEN));                 \
+        if ((offset +(DATA_LEN)) <= total_size) {                            \
+            memcpy(&arr->data[offset], &data[ARR_DATA_START_IDX], (DATA_LEN));                 \
         } else {                                                                 \
-            ESP_LOGW("EMU_PARSE", "Write out of bounds (" #TYPE " table %d)", arr_index); \
+            ESP_LOGW("Parse into variables", "Write out of bounds (" #TYPE " table %d)", arr_index); \
         }                                                                        \
         break;                                                                   \
     }
 
 /*parse switch case generatoer for handling different types of single variables
  that needs to be filled*/
-#define HANDLE_SINGLE_CASE(ID, TYPE, MEMBER, DATA_LEN)                      \
-    case ID: {                                                              \
-        uint16_t offset = 2;                                                  \
+#define HANDLE_SINGLE_CASE(HEADER, TYPE, MEMBER, DATA_LEN)                      \
+    case HEADER: {                                                              \
+        uint16_t offset = HEADER_SIZE;                                                  \
         uint16_t end = DATA_LEN;                                              \
         while (offset + sizeof(TYPE) < end) {                               \
             uint8_t var_idx = data[offset];                                 \
@@ -113,8 +115,7 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         break;                                                              \
     }
 
-
-#define GET_OFFSET(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
+#define GET_ARR_START_OFFSET(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
 emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
     uint8_t *data;
     uint16_t len;
@@ -122,23 +123,23 @@ emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
 
     for (uint16_t i = 0; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
-        if (len < 5) continue;
+        if (len < ARR_DATA_START_IDX) continue;
 
-        uint8_t arr_index = data[2];
-        uint16_t offset   = GET_OFFSET(data);    
-        uint16_t bytes_to_copy = len - 5;
+        uint8_t arr_index = data[HEADER_SIZE];
+        uint16_t offset   = GET_ARR_START_OFFSET(data);    
+        uint16_t arr_bytes_to_copy = len - ARR_DATA_START_IDX;
 
         /*switch header type*/
-        switch ((emu_header_t)((data[0] << 8) | data[1])) {
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_0, uint8_t,  ui8, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_1, uint16_t, ui16, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_2, uint32_t, ui32, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_3, int8_t,   i8, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_4, int16_t,  i16, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_5, int32_t,  i32, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_6, float,    f, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_7, double,   d, bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_8, bool,     b, bytes_to_copy)
+        switch ((emu_header_t)(GET_HEADER(data))) {
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_0, uint8_t,  ui8,  arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_1, uint16_t, ui16, arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_2, uint32_t, ui32, arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_3, int8_t,   i8,   arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_4, int16_t,  i16,  arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_5, int32_t,  i32,  arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_6, float,    f,    arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_7, double,   d,    arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_8, bool,     b,    arr_bytes_to_copy)
 
             HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S0, uint8_t,  u8,  len)
             HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S1, uint16_t, u16, len)
@@ -179,7 +180,8 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
     uint8_t *data;
     uint16_t len;
     uint16_t buff_size = chr_msg_buffer_size(source);
-    uint16_t search_idx = 0;
+    uint8_t search_idx = 0;
+    uint16_t block_id = 0;
 
     while (search_idx < buff_size)
     {
@@ -189,7 +191,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
         {
             ESP_LOGI(TAG, "Dected start header of block type: %d", data[1]);
 
-            uint16_t block_id = READ_U16(data, 3);
+            block_id = READ_U16(data, 3);
             // --- PARSE INPUT COUNT ---
             uint16_t idx = 5;  // points at in_cnt
             uint8_t in_cnt = data[idx];
@@ -275,23 +277,161 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             _parse_assign_fuction(data[1],block_id);
             ESP_LOGI(TAG, "Allocated handle for block block_id %d", block_id);
 
+
+        }
+        if ((data[0] == 0xBB) && (data[2] >= 0xF0)) {
+            ESP_LOGI(TAG, "Detected global variable reference at block: %d", block_id);
+            
+            _global_val_acces_t *store = NULL; // Initialize to NULL
+            
+            // 1. Pass the ADDRESS of store (&store)
+            emu_err_t err = _parse_block_mem_acces_data(source, &search_idx, &store);
+            
+            // 2. Only assign if parsing succeeded AND store is not NULL
+            if (err == EMU_OK && store != NULL) {
+                block_handle_t** blocks = (block_handle_t**)blocks_structs;
+                blocks[block_id]->extras = (void*)store;
+            } else {
+                ESP_LOGE(TAG, "Parsing failed or returned NULL. Error: %d", err);
+            }
         }
         search_idx++;
 
     }
     return EMU_OK;
 }
+#define ACCES_STEP 5
+#define MAX_ARR_DIMS 3
+
+static const char* TAG_PARSER = "MEM_PARSER";
+
+static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uint16_t len, 
+                                             _global_val_acces_t *pool, uint16_t *pool_idx) 
+{
+    if (*cursor >= len) return NULL;
+
+    // LOG: Trace node creation
+    // ESP_LOGD(TAG_PARSER, "Linking node at pool_idx=%d, cursor=%d", *pool_idx, *cursor);
+
+    // 1. Consume a node from the pool
+    _global_val_acces_t *node = &pool[*pool_idx];
+    (*pool_idx)++;
+
+    // 2. Parse the 5 bytes of data for this node
+    node->target_type = data[*cursor];
+    node->target_idx  = data[*cursor + 1];
+    node->target_custom_indices[0] = data[*cursor + 2];
+    node->target_custom_indices[1] = data[*cursor + 3];
+    node->target_custom_indices[2] = data[*cursor + 4];
+
+    // LOG: Trace node data
+    // ESP_LOGI(TAG_PARSER, "Node parsed: Type=%d Idx=%d Static=[%d,%d,%d]", 
+    //          node->target_type, node->target_idx, 
+    //          node->target_custom_indices[0], node->target_custom_indices[1], node->target_custom_indices[2]);
+
+    // Advance cursor past the data block
+    *cursor += ACCES_STEP;
+
+    // 3. Process the 3 potential children
+    // --- Child 0 ---
+    if (*cursor < len && data[*cursor] == 0xFF) {
+        node->next0 = NULL;
+        (*cursor)++; 
+    } else {
+        node->next0 = _link_recursive(data, cursor, len, pool, pool_idx);
+    }
+
+    // --- Child 1 ---
+    if (*cursor < len && data[*cursor] == 0xFF) {
+        node->next1 = NULL;
+        (*cursor)++;
+    } else {
+        node->next1 = _link_recursive(data, cursor, len, pool, pool_idx);
+    }
+
+    // --- Child 2 ---
+    if (*cursor < len && data[*cursor] == 0xFF) {
+        node->next2 = NULL;
+        (*cursor)++;
+    } else {
+        node->next2 = _link_recursive(data, cursor, len, pool, pool_idx);
+    }
+
+    return node;
+}
+
+emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, _global_val_acces_t **store) {
+    uint8_t *data;
+    uint16_t len;
+    
+    // Get pointer to raw data inside the buffer
+    // NOTE: Check if chr_msg_buffer_get expects a pointer (*start) or value (*start) for the index.
+    chr_msg_buffer_get(source, *start, &data, &len);
+
+    // LOG: Print the header to verify what we actually received
+    ESP_LOGI(TAG_PARSER, "Parse Start. Len=%d. Header Bytes: [0]=%02X [1]=%02X [2]=%02X [3]=%02X", 
+             len, data[0], data[1], data[2], data[3]);
+
+    if (data[2] == 0xF0) {
+        ESP_LOGI(TAG_PARSER, "Block ID match (0xF0). Starting parse...");
+
+        // --- PASS 1: Count required nodes ---
+        uint16_t total_struct_list = 1; 
+        uint16_t check_idx = 10; 
+
+        while (check_idx < len) {
+            if (data[check_idx] == 0xFF) {
+                check_idx++;
+            } else {
+                total_struct_list++;
+                check_idx += ACCES_STEP;
+            }
+        }
+
+        ESP_LOGI(TAG_PARSER, "Pass 1 Complete. Total nodes required: %d", total_struct_list);
+
+        // --- PASS 2: Allocate Memory ---
+        _global_val_acces_t *pool = calloc(total_struct_list, sizeof(_global_val_acces_t));
+        if (!pool) {
+            ESP_LOGE(TAG_PARSER, "Memory allocation failed for %d nodes", total_struct_list);
+            return EMU_ERR_MEM_ALLOC; 
+        }
+
+        // --- PASS 3: Recursive Linking ---
+        uint16_t cursor = 5;      
+        uint16_t pool_usage = 0;  
+
+        _global_val_acces_t *root = _link_recursive(data, &cursor, len, pool, &pool_usage);
+
+        // Sanity check
+        if (pool_usage != total_struct_list) {
+            ESP_LOGW(TAG_PARSER, "Pool usage mismatch: calc %d vs used %d", total_struct_list, pool_usage);
+        } else {
+            ESP_LOGI(TAG_PARSER, "Parse success. Root created.");
+        }
+        *store = root;
+    } else {
+        // LOG: Explain why parsing was skipped
+        ESP_LOGW(TAG_PARSER, "Skipped parsing: Expected 0xF0 at data[2], but found %02X", data[2]);
+    }
+    
+    return EMU_OK;
+}
 
 extern emu_block_func *blocks_fun_table;
 static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id){
+    static const char* TAG = "Assign block function";
     switch (block_type)
     {
     case BLOCK_COMPUTE:
         blocks_fun_table[block_id] = block_compute;
+        ESP_LOGI(TAG, "Assigned compute function to block id %d", block_id);
         break;
     case BLOCK_INJECT:
+        ESP_LOGI(TAG, "Block inject detected (No function assigned yet)");
+        break;
     default:
+        ESP_LOGW(TAG, "Unknown block type %d for block id %d", block_type, block_id);
         break;
     }
 }
-

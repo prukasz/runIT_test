@@ -1,5 +1,10 @@
 #pragma once
 
+
+#define EMU_RETURN_ON_ERROR(expr) ({             \
+    emu_err_t _err = (expr);         \
+    if (_err != EMU_OK) return _err; \
+})
 /******************************************
 Specific enums used in emulator code
 
@@ -17,11 +22,27 @@ typedef enum {
     EMU_ERR_CMD_STOP,
     EMU_ERR_CMD_START_BLOCKS,
     EMU_ERR_INVALID_DATA,
-    EMU_ERR_UNLIKELY
+    EMU_ERR_UNLIKELY           =0xFFFF,  
+    EMU_ERR_MEM_ALLOC          =0xFF00,
+    EMU_ERR_MEM_INVALID_INDEX  =0xFF01,
+    EMU_ERR_MEM_INVALID_ACCESS =0xFF02,
+    EMU_ERR_MEM_OUT_OF_BOUNDS  =0xFF03,
+    EMU_ERR_NULL_POINTER       =0xFF04,   
+    EMU_ERR_DIV_BY_ZERO        =0xBB01,
+    EMU_ERR_OUT_OF_RANGE       =0xBB02,
+    EMU_ERR_INVALID_PARAMETER  =0xBB03   
 }emu_err_t;
 
 /**
-* @brief Data types used within emulator internal memory
+ * @brief block type identifier (what block does)
+ */
+typedef enum {
+    BLOCK_PASS_IN_OUT = 0x00,
+    BLOCK_PASS_GLOBAL = 0xFA,
+}block_special_packet_t;
+
+/**
+* @brief Data types used within emulator
 */
 typedef enum{
     //uint8_t

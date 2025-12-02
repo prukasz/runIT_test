@@ -9,18 +9,18 @@ extern void **blocks_structs;
 
 void test_rec()
 {   
-    _recursive_mem_get_t idx_from_float = {
+    _global_val_acces_t idx_from_float = {
         .target_type = DATA_F,
-        .target_idx  = 3,
+        .target_idx  = 1,
         .target_custom_indices = {255,255,255},  // legalny indeks w tablicy
         .next0 = NULL,
         .next1 = NULL,
         .next2 = NULL
     };
     // indeks z single var -> scalar, ustawiamy 0
-    _recursive_mem_get_t idx_from_single = {
+    _global_val_acces_t idx_from_single = {
         .target_type = DATA_UI8,
-        .target_idx  = 3,
+        .target_idx  = 0,
         .target_custom_indices = {0,255,255},  // legalny indeks w tablicy
         .next0 = &idx_from_float,
         .next1 = NULL,
@@ -28,7 +28,7 @@ void test_rec()
     };
 
     // indeks z tablicy 2D -> ustawiamy legalne indeksy
-    _recursive_mem_get_t idx_from_s = {
+    _global_val_acces_t idx_from_s = {
             .target_type = DATA_UI8,
             .target_idx  = 1,
             .target_custom_indices = {0,0,255}, // table[0][1], legalny zakres
@@ -37,7 +37,7 @@ void test_rec()
             .next2 = NULL
         };
 
-    _recursive_mem_get_t idx_from_table = {
+    _global_val_acces_t idx_from_table = {
         .target_type = DATA_UI8,
         .target_idx  = 1,
         .target_custom_indices = {0,0,255}, // table[0][1], legalny zakres
@@ -47,7 +47,7 @@ void test_rec()
     };
 
     // finalna zmienna -> używa rekurencji do wyznaczenia indeksów
-    _recursive_mem_get_t final = {
+    _global_val_acces_t final = {
         .target_type = DATA_F,
         .target_idx  = 1,
         .target_custom_indices = {0,0,255},  // placeholder, zostanie nadpisany przez next0/next1
@@ -68,10 +68,13 @@ emu_err_t block_compute(void* str){
 
    block_handle_t *block = (block_handle_t*)str;
     ESP_LOGI("compute_block", "block block_id: %d executing %d, val0 %lf, val1 %lf",block->block_id, cnt++, get_in_val(0, block), get_in_val(1, block));
-    test_rec();
+    
     
     if (block->block_id==0){
-        
+        double v;
+        _global_val_acces_t  * test = (_global_val_acces_t  *)block->extras;
+        ESP_LOGI("return of memget", "%d", mem_get_global_recursive(test, &v));
+        printf("Result = %f\n", v);  // oczekiwany wynik np. 7.0
     }
         ESP_LOGI("compute_block", "making copy");
         block_pass_results(block);

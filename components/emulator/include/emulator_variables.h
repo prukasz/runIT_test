@@ -5,13 +5,17 @@
 #include "gatt_buff.h"
 #include "math.h"
 
+#define MAX_VAR_IDX_SIZE 254
+#define MAX_ARR_DIM_SIZE 254
+#define MAX_ARR_DIMS    3
+#define TYPE_COUNT      9 //different types  
 /** 
 *@brief This macro generate arrays of chosen datatype used in emulator global memory
 */
 #define _DEFINE_ARR_TYPE(c_type, name) \
 typedef struct { \
     uint8_t num_dims; \
-    uint8_t dims[3]; \
+    uint8_t dims[MAX_ARR_DIMS]; \
     c_type *data; \
 } arr_##name##_t;
 _DEFINE_ARR_TYPE(uint8_t,  ui8)
@@ -23,13 +27,10 @@ _DEFINE_ARR_TYPE(int32_t,  i32)
 _DEFINE_ARR_TYPE(float,    f)
 _DEFINE_ARR_TYPE(double,   d)
 _DEFINE_ARR_TYPE(bool,     b)
-/**
-* @brief Reset all parse guard flags 
-*/
 
 
 typedef struct {
-    uint8_t single_cnt[9];
+    uint8_t single_cnt[TYPE_COUNT];
     //Common pointer for all "single varaibles"
     void     *_base_ptr;
     //pointer to an array of singe variables type: int8_t
@@ -51,7 +52,7 @@ typedef struct {
     //pointer to an array of singe variables type: bool
     bool     *b;
 
-    uint8_t arr_cnt[9];
+    uint8_t arr_cnt[TYPE_COUNT];
     void  *_base_arr_ptr;
     void  *_base_arr_handle_ptr;
     arr_ui8_t  *arr_ui8;
@@ -113,12 +114,12 @@ static inline size_t data_size(data_types_t type)
  */
 #define _ARR_FLAT_IDX(num_dims, dims_table, idx_table) ({     \
     size_t _idx = (size_t)-1;                                     \
-    if ((num_dims) == 1) {                                        \
+    if ((num_dims) == MAX_ARR_DIMS - 2) {                                        \
         _idx = ((idx_table[0]) < (dims_table)[0]) ? (idx_table[0]) : (size_t)-1; \
-    } else if ((num_dims) == 2) {                                 \
+    } else if ((num_dims) == MAX_ARR_DIMS-1) {                                 \
         _idx = ((idx_table[0]) < (dims_table)[0] && (idx_table[1]) < (dims_table)[1]) ? \
                ((idx_table[1]) + (idx_table[0]) * (dims_table)[1]) : (size_t)-1; \
-    } else if ((num_dims) == 3) {                                 \
+    } else if ((num_dims) == MAX_ARR_DIMS) {                                 \
         _idx = ((idx_table[0]) < (dims_table)[0] && (idx_table[1]) < (dims_table)[1] && (idx_table[2]) < (dims_table)[2]) ? \
                ((idx_table[2]) + (idx_table[1]) * (dims_table)[2] + (idx_table[0]) * (dims_table)[1] * (dims_table)[2]) : (size_t)-1; \
     }                                                              \
@@ -143,7 +144,7 @@ static inline size_t data_size(data_types_t type)
  * @param idx_table indices to acces from table
  * @note 0xFF idx is reserved for dimensional exclusion
  */
-emu_err_t mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[3], double* value_out);        
+emu_err_t mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[MAX_ARR_DIMS], double* value_out);        
 /**
  * @brief Return value from table or single variable from chosen type
  * @param var_idx index of single variable or table
@@ -262,18 +263,16 @@ Todo: rework so it caps value or round it
     }                                                                           \
 })
 
-typedef struct _recursive_mem_get_t{
+typedef struct _global_val_acces_t{
     uint8_t target_type;
     uint8_t target_idx;
-    uint8_t target_custom_indices[3];
-    uint8_t which_idx;
-    struct _recursive_mem_get_t* next0;
-    struct _recursive_mem_get_t* next1;
-    struct _recursive_mem_get_t* next2;
-} _recursive_mem_get_t;
- 
+    uint8_t target_custom_indices[MAX_ARR_DIMS];
+    struct _global_val_acces_t* next0;
+    struct _global_val_acces_t* next1;
+    struct _global_val_acces_t* next2;
+} _global_val_acces_t;
 
-emu_err_t mem_get_global_recursive(_recursive_mem_get_t *b, double *value_out);
+emu_err_t mem_get_global_recursive(_global_val_acces_t *b, double *value_out);
 
 /******************************************************************************************************** 
 *   VARIABLE ACCES AND USAGE 

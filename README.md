@@ -56,6 +56,9 @@ blok uzupełniania zmienią globalną
 
 bbff ff xxxx, xx->ile xx->case xx->datatyp xx->id || 
 
+(dostęp rekursywny)
+bb00 FE 0400 XX target type, XX target idx, (xx, xx, xx static idxs), (XX target type, XX target idx, (xx, xx, xx static idxs))(idx 0 D1), FF (empty) , FF(exmpty) FF(empty), 
+
 
 
 

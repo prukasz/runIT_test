@@ -1,6 +1,7 @@
 #pragma once
 #include "emulator_types.h"
 #include "emulator.h"
+#include "emulator_variables.h"
 
 /*block specific function pointer*/
 typedef emu_err_t (*emu_block_func)(void *block);
@@ -16,11 +17,13 @@ typedef struct {
     uint8_t   in_visited;
 } q_connection_t;
 
+
 /**
  * @brief struct handling inputs and outputs of each block
 */
 typedef struct {
     void*           extras;  /*block specific data*/
+    _global_val_acces_t **global_reference;
 
     data_types_t*   in_data_type_table; /*array of input datatypes (in order)*/
     void*           in_data;            /*array for all input data*/

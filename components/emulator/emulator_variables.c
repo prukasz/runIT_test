@@ -240,78 +240,62 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
     return EMU_OK;
 }
 
-emu_err_t mem_get_global_recursive(_recursive_mem_get_t *b, double *value_out)
+static const char *TAG_MEM_GET_RECURSIVE = "mem_get_global_recursive";
+emu_err_t mem_get_global_recursive(_global_val_acces_t *b, double *value_out)
 {
-    if (!value_out) return 0x100;
+    if (!value_out || !b) {
+        ESP_LOGW(TAG_MEM_GET_RECURSIVE, "NULL mem_get_global_recursive input struct or no output provided");
+        return EMU_ERR_NULL_POINTER;}
 
-    if (!b) {
-        ESP_LOGW(TAG, "NULL block passed");
-        return 0x100;
-    }
+    uint8_t idx_table[MAX_ARR_DIMS];
+    _global_val_acces_t *next_arr[MAX_ARR_DIMS] = {b->next0, b->next1, b->next2};
 
-    uint8_t idx_table[3];
-    _recursive_mem_get_t *next_arr[3] = {
-        b->next0, b->next1, b->next2
-    };
-
-    /* resolve indices */
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_ARR_DIMS; i++) {
 
         if (next_arr[i]) {
-            ESP_LOGI(TAG, "Resolving next%d recursively...", i);
-
             double tmp;
             emu_err_t e = mem_get_global_recursive(next_arr[i], &tmp);
             if (e != EMU_OK) return e;
 
-            if (tmp < 0.0) idx_table[i] = 0;
-            else if (tmp > 254.0) idx_table[i] = 254;
-            else idx_table[i] = (uint8_t)round(tmp);
+            if (tmp < 0.0) {idx_table[i] = 0;}
+            else if (tmp > 254.0) {idx_table[i] = 254;}
+            else {idx_table[i] = (uint8_t)round(tmp);}
 
-            ESP_LOGI(TAG, "Resolved next%d => raw=%f => idx=%d", i, tmp, idx_table[i]);
+            //ESP_LOGI(TAG_MEM_GET_RECURSIVE, "Resolved next%d => raw=%f => idx=%d", i, tmp, idx_table[i]);
 
         } else {
             idx_table[i] = b->target_custom_indices[i];
-            ESP_LOGI(TAG, "Using static index%d: %d", i, idx_table[i]);
+            ESP_LOGI(TAG_MEM_GET_RECURSIVE, "Using static index%d: %d", i, idx_table[i]);
         }
     }
 
-    /* Check scalar flag */
-    bool is_scalar =
-        idx_table[0] == UINT8_MAX &&
-        idx_table[1] == UINT8_MAX &&
-        idx_table[2] == UINT8_MAX;
+   //check if scalar or array access
+    bool is_scalar = (idx_table[0] == UINT8_MAX && idx_table[1] == UINT8_MAX &&idx_table[2] == UINT8_MAX);
 
-    ESP_LOGI(TAG,
-             "Target type=%d idx=%u scalar=%d idx=[%d,%d,%d]",
+    ESP_LOGI(TAG, "Target type=%d idx=%u scalar=%d idx=[%d,%d,%d]",
              b->target_type, (unsigned)b->target_idx, is_scalar,
              idx_table[0], idx_table[1], idx_table[2]);
 
     /* Bounds checking */
     if (is_scalar) {
         if (b->target_idx >= mem.single_cnt[b->target_type]) {
-            ESP_LOGE(TAG, "Scalar index out of range");
-            return 0x100;
+            ESP_LOGE(TAG_MEM_GET_RECURSIVE, "Scalar index out of range");
+            return EMU_ERR_MEM_INVALID_INDEX;
         }
     } else {
         if (b->target_idx >= mem.arr_cnt[b->target_type]) {
-            ESP_LOGE(TAG, "Array index out of range");
-            return 0x100;
+            ESP_LOGE(TAG_MEM_GET_RECURSIVE, "Array index out of range");
+            return EMU_ERR_MEM_INVALID_INDEX;
         }
     }
 
-    /* final dereference */
     double val;
     emu_err_t err = mem_get_as_d(b->target_type, b->target_idx, idx_table, &val);
     if (err != EMU_OK) {
-        ESP_LOGE(TAG, "mem_get_as_d error %d", err);
         return err;
     }
 
-    ESP_LOGI(TAG,
-        "Accessing type=%d idx=%u indices=[%d,%d,%d] => value=%f",
-        b->target_type, (unsigned)b->target_idx,
-        idx_table[0], idx_table[1], idx_table[2], val);
+    //ESP_LOGI(TAG_MEM_GET_RECURSIVE,"Accessing type=%d idx=%u indices=[%d,%d,%d] => value=%f", b->target_type, (uint8_t)b->target_idx, idx_table[0], idx_table[1], idx_table[2], val);
 
     *value_out = val;
     return EMU_OK;

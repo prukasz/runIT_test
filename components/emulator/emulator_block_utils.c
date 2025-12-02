@@ -2,7 +2,8 @@
 #include "emulator_variables.h"
 #include "esp_log.h"
 
-double math_get_in(uint8_t idx, block_handle_t *block){
+
+double block_get_var_autoselect(uint8_t idx, block_handle_t *block){
     if(idx<block->in_cnt){
         return get_in_val(idx, block);
     }else{

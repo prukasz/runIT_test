@@ -49,7 +49,7 @@ emu_err_t emu_execute_loop_start_execution(){
 emu_err_t emu_execute_loop_stop_execution(){
     emu_loop_stop();
     return EMU_OK;
-}   //stop and preserve state
+}   //stop and preserve state (stops after loop ends)
 
 
 
