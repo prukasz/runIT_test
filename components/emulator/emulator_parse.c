@@ -357,6 +357,7 @@ emu_err_t parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expressio
     const_cnt = data[5];
     len_total = const_cnt * sizeof(double) + 1;
     expression->constant_table = (double*)calloc(const_cnt, sizeof(double));
+    parse_math_const_msg(data, len, 6, &idx_start, expression->constant_table);
 
     while(len_total>(len-5)){
         len_total = len_total - (len - 5);
