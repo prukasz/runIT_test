@@ -3,7 +3,7 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "host/ble_gap.h"
 #include "gatt_buff.h"
-#include "emulator.h"
+#include "emulator_interface.h"
 
 
 void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg);

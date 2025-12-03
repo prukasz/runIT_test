@@ -8,7 +8,7 @@
 #include "servo_manager.h"
 #include "esc_manager.h"
 #include "emulator_loop.h"
-#include "emulator.h"
+#include "emulator_interface.h"
 #include "emulator_types.h"
 
 

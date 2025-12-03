@@ -100,7 +100,7 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         //write only
         if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
             
-        uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+        size_t len = OS_MBUF_PKTLEN(ctxt->om);
         if(len > 512){
             ESP_LOGW(TAG, "Received data length %d exceeds buffer limit", len);
         }
@@ -109,11 +109,8 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         emu_order_t order_code = (emu_order_t)(temp[0] << 8) | temp[1];
         if (len == 2){
             xQueueSend(emu_interface_orders_queue,&order_code, pdMS_TO_TICKS(1000));
-            if(order_code == ORD_STOP_BYTES || order_code == ORD_START_BYTES || order_code == ORD_START_BLOCKS ){
-               chr_msg_buffer_add(emu_in_buffer, temp, len); 
-            }
-        }//end if len
-        else{chr_msg_buffer_add(emu_in_buffer, temp, len);}// do not fill buff with commands(add to queue)
+            chr_msg_buffer_add(emu_in_buffer, temp, len); 
+        }else{chr_msg_buffer_add(emu_in_buffer, temp, len);}// do not fill buff with commands(add to queue)
         free(temp);
         if (notify_status_emu_in.chr_conn_handle_status && notify_status_emu_in.notify_status) {
             ble_gatts_notify(chr_conn_handle_emu_in, chr_val_handle_emu_in);

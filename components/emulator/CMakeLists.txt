@@ -1,5 +1,21 @@
 idf_component_register(
-    SRCS "emulator_block_utils.c" "emulator_blocks.c" "emulator_parse.c" "emulator_loop.c" "emulator_variables.c" "emulator.c" "emulator_body.c" "emulator_blocks.c" "emu_global_access.c"
-    INCLUDE_DIRS "include"
-    REQUIRES esp_timer main
+    SRCS 
+        "blocks/emulator_blocks.c"
+        "core/emulator_interface.c"
+        "core/emulator_body.c"
+        "core/emulator_loop.c"
+        "core/emulator_parse.c"
+        "core/emulator_variables.c"
+        "utils/utils_global_access.c"
+        "utils/utils_block_in_q_access.c"
+        "blocks/block_math.c"
+
+    INCLUDE_DIRS 
+        "blocks/include"
+        "core/include"
+        "utils/include"
+
+    REQUIRES 
+        esp_timer 
+        main
 )

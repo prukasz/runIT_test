@@ -14,7 +14,7 @@ typedef struct{
 }chr_msg_buffer_t;
 
 esp_err_t chr_msg_buffer_init(chr_msg_buffer_t *buf);
-esp_err_t chr_msg_buffer_add(chr_msg_buffer_t *buf, const uint8_t *msg, uint16_t len);
-esp_err_t chr_msg_buffer_get(chr_msg_buffer_t *buf, size_t index, uint8_t **msg_out, uint16_t *len_out);
+esp_err_t chr_msg_buffer_add(chr_msg_buffer_t *buf, const uint8_t *msg, size_t len);
+esp_err_t chr_msg_buffer_get(chr_msg_buffer_t *buf, size_t index, uint8_t **msg_out, size_t *len_out);
 size_t chr_msg_buffer_size(const chr_msg_buffer_t *buf);
 void chr_msg_buffer_clear(chr_msg_buffer_t *buf);

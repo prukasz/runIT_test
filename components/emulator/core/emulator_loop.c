@@ -1,25 +1,33 @@
 #include "emulator_loop.h"
-#include "emulator.h"
+#include "emulator_interface.h"
 #include "emulator_body.h"
 #include "emulator_parse.h"
-
+#include "string.h"
 
 /***********************************************************
 In this file loop timer is created and managed
 Simple loop watchdog implemented in timer callback
 *************************************************************/
 
-static const char *TAG = "Loop_timer";
+static const char *TAG = "EMULATRO_LOOP";
+
+/*****************************************************************************/
+/*      SEMAPHOPRES TO RUN LOOP AND WTD CHECK                                */
 
 /**
-*@brief this semaphore strart loop
+*@brief This semaphore start loop
 */
-SemaphoreHandle_t loop_start_semaphore;
+SemaphoreHandle_t emu_global_loop_start_semaphore;
 /**
-*@brief this semaphore is used by watchdog to check if task finished in time
-this semaphore is given by task at end
+*@brief This semaphore is used by emu watchdog to check if loop task finished in set
+time, semaphore is given at the end of loop task
 */
-SemaphoreHandle_t loop_wtd_semaphore;
+SemaphoreHandle_t emu_global_loop_wtd_semaphore;
+
+/*****************************************************************************/
+
+
+
 /**
 *@brief loop tick speed 
 */
@@ -31,16 +39,22 @@ static TaskHandle_t emulator_loop_body_handle;
 static const uint32_t stack_depth = 10*1024;
 static const UBaseType_t task_priority = 4;
 
+/*********************************/
+/**
+ * @brief Emulator scope status
+ *  for watchdog
+ */
+emu_status_t emu_global_status;
+/*********************************/
 
-emu_status_t status;
 static void IRAM_ATTR loop_tick_intr_handler(void *parameters) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    if (loop_wtd_semaphore){
-        if(pdTRUE ==xSemaphoreTakeFromISR(loop_wtd_semaphore, &xHigherPriorityTaskWoken)){
+    if (emu_global_loop_wtd_semaphore){
+        if(pdTRUE ==xSemaphoreTakeFromISR(emu_global_loop_wtd_semaphore, &xHigherPriorityTaskWoken)){
             WTD_RESET();   //reset watchdog counter after taking back semaphore from loop
             LOOP_CNT_UP(); //mark that loop started
-            xSemaphoreGiveFromISR(loop_start_semaphore, &xHigherPriorityTaskWoken);
+            xSemaphoreGiveFromISR(emu_global_loop_start_semaphore, &xHigherPriorityTaskWoken);
         }
         else{
             WTD_CNT_UP();  //count skipped timer interrupts
@@ -57,8 +71,8 @@ static void IRAM_ATTR loop_tick_intr_handler(void *parameters) {
 
 emu_err_t emu_loop_init(){
     
-    loop_start_semaphore = xSemaphoreCreateBinary();
-    loop_wtd_semaphore   = xSemaphoreCreateBinary();
+    emu_global_loop_start_semaphore = xSemaphoreCreateBinary();
+    emu_global_loop_wtd_semaphore   = xSemaphoreCreateBinary();
     WTD_SET_LIMIT(10);
     /*create task that will execute code*/
     xTaskCreate(emu_body_loop_task, TAG, stack_depth, NULL, task_priority, &emulator_loop_body_handle);
@@ -68,7 +82,7 @@ emu_err_t emu_loop_init(){
     loop_timer_params.dispatch_method = ESP_TIMER_ISR;
     ESP_ERROR_CHECK(esp_timer_create(&loop_timer_params, &loop_timer_handle));  
     LOOP_SET_STATUS(LOOP_SET);
-    xSemaphoreGive(loop_wtd_semaphore);
+    xSemaphoreGive(emu_global_loop_wtd_semaphore);
     return EMU_OK;
 }
 

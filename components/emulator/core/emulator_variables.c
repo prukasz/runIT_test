@@ -1,9 +1,8 @@
 #include "emulator_variables.h"
 #include "emulator_parse.h"
-#include "emulator.h"
+#include "emulator_interface.h"
 #include "esp_log.h"
-#include <stdlib.h>
-#include <stdarg.h>
+
 
 static const char *TAG = "DATAHOLDER";
 #define HEADER_SIZE 2
@@ -43,10 +42,13 @@ size_t cnt = is_array ? base->arr_cnt[index] : base->single_cnt[index];\
 #define ADD_SIZE(total, count, type) ((total) += (count) * sizeof(type))
 
 
+/**
+ * @brief This function allocate space for all single variables 
+ */
 emu_err_t emu_variables_single_create(emu_mem_t *mem)
 {
     if (!mem) {
-        return EMU_ERR_INVALID_ARG;
+        return EMU_ERR_NULL_POINTER;
     }
     size_t total_size = 0;
     ADD_SIZE(total_size, mem->single_cnt[0],  int8_t);
@@ -80,14 +82,16 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem)
     return EMU_OK;
 }
 
-
-emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, uint16_t start_index)
+/**
+*@brief this function parse source buffer and allocate array space
+*/
+emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, size_t start_index)
 {
     uint8_t *data;
-    uint16_t len;
-    uint64_t buff_size = chr_msg_buffer_size(source);
+    size_t len;
+    size_t buff_size = chr_msg_buffer_size(source);
     uint8_t step;
-    uint64_t total_size = 0;
+    size_t total_size = 0;
     start_index += 1;
 
     for (size_t i = start_index; i < buff_size; ++i) {
@@ -95,15 +99,15 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
         if (_check_arr_header(data, &step) && _check_arr_packet_size(len, step)) {
             for (size_t j = HEADER_SIZE; j < len; j += step) {
                 mem->arr_cnt[(data_types_t)data[j]]++;
-                uint64_t table_cnt = data[j + 1];
+                size_t table_cnt = data[j + 1];
                 if (step >= 3) {table_cnt *= data[j + 2];}
                 if (step == 4) {table_cnt *= data[j + 3];}
                 total_size += data_size((data_types_t)data[j]) * table_cnt;
             }
         }
     }
-    ESP_LOGI(TAG, "Total array size of arrays: %lldB", total_size);
-    for (uint8_t i = 0 ; i < 9 ; i++)
+    ESP_LOGI(TAG, "Total array size of arrays: %dB", total_size);
+    for (uint8_t i = 0 ; i < TYPES_COUNT ; i++)
     {ESP_LOGI(TAG,"need %d slots for %d type table", mem->arr_cnt[i], i);}
     size_t handle_size = 0;
     ADD_SIZE(handle_size, mem->arr_cnt[0], arr_ui8_t);
@@ -123,7 +127,7 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
         return EMU_ERR_NO_MEMORY;
     }
 
-    for (uint8_t i = 0 ; i < 9 ; i++) 
+    for (uint8_t i = 0 ; i < TYPES_COUNT ; i++) 
     {ESP_LOGI(TAG,"allocated %d slots for %d type table", mem->arr_cnt[i], i);}
 
     uint8_t *current_ptr = (uint8_t*)mem->_base_arr_handle_ptr;
@@ -143,7 +147,7 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
         emu_variables_reset(mem);
         return EMU_ERR_NO_MEMORY;
     }
-    uint8_t arr_index[9] = {0};
+    uint8_t arr_index[TYPES_COUNT] = {0};
     size_t offset = 0;
 
     for (size_t i = start_index; i < buff_size; ++i) {
@@ -168,12 +172,15 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
                     HANDLE_DATA_TYPE(mem, DATA_B,    arr_b,    bool,     "bool");
                     default:
                         ESP_LOGE(TAG, "Unknown array data type");
-                        break;
+                        emu_variables_reset(mem);
+                        return EMU_ERR_MEM_INVALID_DATATYPE;
+
                 }
                 offset += bytes_needed;
             }
         }
     }
+    ESP_LOGI(TAG, "Array variables dataholder created successfully");
     return EMU_OK;
 }
 
@@ -191,7 +198,7 @@ void emu_variables_reset(emu_mem_t *mem)
 emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
                        uint8_t idx_table[3], double *out_value)
 {
-    if (!out_value) return 0x100;
+    if (!out_value) return EMU_ERR_NULL_POINTER;
 
     size_t flat_idx = SIZE_MAX;
     bool is_scalar =
@@ -212,11 +219,11 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
             case DATA_F:     flat_idx = _ARR_FLAT_IDX(mem.arr_f[var_idx].num_dims, mem.arr_f[var_idx].dims, idx_table); break;
             case DATA_D:     flat_idx = _ARR_FLAT_IDX(mem.arr_d[var_idx].num_dims, mem.arr_d[var_idx].dims, idx_table); break;
             case DATA_B:     flat_idx = _ARR_FLAT_IDX(mem.arr_b[var_idx].num_dims, mem.arr_b[var_idx].dims, idx_table); break;
-            default: return 0x100;
+            default: return EMU_ERR_MEM_INVALID_DATATYPE;
         }
-
+        //(macro returns -1 if cannot acces chosen cell)
         if (flat_idx == (size_t)-1)
-            return 0x100;
+            return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
 
     /* Extract value */
@@ -234,70 +241,8 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
 
         case DATA_B:    *out_value = is_scalar ? mem.b[var_idx]   : mem.arr_b[var_idx].data[flat_idx]; break;
 
-        default: return 0x100;
+        default: return
+        EMU_ERR_UNLIKELY;
     }
-
     return EMU_OK;
 }
-
-static const char *TAG_MEM_GET_RECURSIVE = "mem_get_global_recursive";
-emu_err_t mem_get_global_recursive(_global_val_acces_t *b, double *value_out)
-{
-    if (!value_out || !b) {
-        ESP_LOGW(TAG_MEM_GET_RECURSIVE, "NULL mem_get_global_recursive input struct or no output provided");
-        return EMU_ERR_NULL_POINTER;}
-
-    uint8_t idx_table[MAX_ARR_DIMS];
-    _global_val_acces_t *next_arr[MAX_ARR_DIMS] = {b->next0, b->next1, b->next2};
-
-    for (int i = 0; i < MAX_ARR_DIMS; i++) {
-
-        if (next_arr[i]) {
-            double tmp;
-            emu_err_t e = mem_get_global_recursive(next_arr[i], &tmp);
-            if (e != EMU_OK) return e;
-
-            if (tmp < 0.0) {idx_table[i] = 0;}
-            else if (tmp > 254.0) {idx_table[i] = 254;}
-            else {idx_table[i] = (uint8_t)round(tmp);}
-
-            //ESP_LOGI(TAG_MEM_GET_RECURSIVE, "Resolved next%d => raw=%f => idx=%d", i, tmp, idx_table[i]);
-
-        } else {
-            idx_table[i] = b->target_custom_indices[i];
-            ESP_LOGI(TAG_MEM_GET_RECURSIVE, "Using static index%d: %d", i, idx_table[i]);
-        }
-    }
-
-   //check if scalar or array access
-    bool is_scalar = (idx_table[0] == UINT8_MAX && idx_table[1] == UINT8_MAX &&idx_table[2] == UINT8_MAX);
-
-    ESP_LOGI(TAG, "Target type=%d idx=%u scalar=%d idx=[%d,%d,%d]",
-             b->target_type, (unsigned)b->target_idx, is_scalar,
-             idx_table[0], idx_table[1], idx_table[2]);
-
-    /* Bounds checking */
-    if (is_scalar) {
-        if (b->target_idx >= mem.single_cnt[b->target_type]) {
-            ESP_LOGE(TAG_MEM_GET_RECURSIVE, "Scalar index out of range");
-            return EMU_ERR_MEM_INVALID_INDEX;
-        }
-    } else {
-        if (b->target_idx >= mem.arr_cnt[b->target_type]) {
-            ESP_LOGE(TAG_MEM_GET_RECURSIVE, "Array index out of range");
-            return EMU_ERR_MEM_INVALID_INDEX;
-        }
-    }
-
-    double val;
-    emu_err_t err = mem_get_as_d(b->target_type, b->target_idx, idx_table, &val);
-    if (err != EMU_OK) {
-        return err;
-    }
-
-    //ESP_LOGI(TAG_MEM_GET_RECURSIVE,"Accessing type=%d idx=%u indices=[%d,%d,%d] => value=%f", b->target_type, (uint8_t)b->target_idx, idx_table[0], idx_table[1], idx_table[2], val);
-
-    *value_out = val;
-    return EMU_OK;
-}
-

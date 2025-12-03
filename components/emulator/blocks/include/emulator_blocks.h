@@ -1,7 +1,8 @@
 #pragma once
 #include "emulator_types.h"
-#include "emulator.h"
+#include "emulator_interface.h"
 #include "emulator_variables.h"
+#include "utils_global_access.h"
 
 /*block specific function pointer*/
 typedef emu_err_t (*emu_block_func)(void *block);
@@ -20,9 +21,11 @@ typedef struct {
 
 /**
  * @brief struct handling inputs and outputs of each block
-*/
+*/  
 typedef struct {
     void*           extras;  /*block specific data*/
+
+    uint8_t global_reference_cnt;
     _global_val_acces_t **global_reference;
 
     data_types_t*   in_data_type_table; /*array of input datatypes (in order)*/
@@ -48,16 +51,15 @@ typedef struct {
 } block_handle_t;
 
 
-/**
-*@brief compute block - handling math operations
-*/
-emu_err_t block_compute(void* src);
+
 
 
 /**
 *@brief free all structs and functions from functions table
 */
-void emu_execute_blocks_free_all(void** blocks_structs, uint16_t num_blocks); 
+void block_pass_results(block_handle_t* block);
+
+void emu_execute_blocks_free_all(void** emu_global_blocks_structs, uint16_t num_blocks); 
 
 
 

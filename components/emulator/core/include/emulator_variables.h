@@ -8,7 +8,7 @@
 #define MAX_VAR_IDX_SIZE 254
 #define MAX_ARR_DIM_SIZE 254
 #define MAX_ARR_DIMS    3
-#define TYPE_COUNT      9 //different types  
+#define TYPES_COUNT     9 //different types  
 /** 
 *@brief This macro generate arrays of chosen datatype used in emulator global memory
 */
@@ -30,7 +30,7 @@ _DEFINE_ARR_TYPE(bool,     b)
 
 
 typedef struct {
-    uint8_t single_cnt[TYPE_COUNT];
+    uint8_t single_cnt[TYPES_COUNT];
     //Common pointer for all "single varaibles"
     void     *_base_ptr;
     //pointer to an array of singe variables type: int8_t
@@ -52,7 +52,7 @@ typedef struct {
     //pointer to an array of singe variables type: bool
     bool     *b;
 
-    uint8_t arr_cnt[TYPE_COUNT];
+    uint8_t arr_cnt[TYPES_COUNT];
     void  *_base_arr_ptr;
     void  *_base_arr_handle_ptr;
     arr_ui8_t  *arr_ui8;
@@ -81,7 +81,7 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem);
  * @param mem pointer to global memory struct
  * @param start_index starting index in source buffer
  */
-emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, uint16_t start_index);
+emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, size_t start_index);
 
 /**
 * @brief reset created memory
@@ -262,17 +262,6 @@ Todo: rework so it caps value or round it
         }                                                                       \
     }                                                                           \
 })
-
-typedef struct _global_val_acces_t{
-    uint8_t target_type;
-    uint8_t target_idx;
-    uint8_t target_custom_indices[MAX_ARR_DIMS];
-    struct _global_val_acces_t* next0;
-    struct _global_val_acces_t* next1;
-    struct _global_val_acces_t* next2;
-} _global_val_acces_t;
-
-emu_err_t mem_get_global_recursive(_global_val_acces_t *b, double *value_out);
 
 /******************************************************************************************************** 
 *   VARIABLE ACCES AND USAGE 

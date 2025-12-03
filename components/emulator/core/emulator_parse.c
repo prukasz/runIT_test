@@ -1,6 +1,8 @@
 #include "emulator_parse.h"
 #include "emulator_blocks.h"
-#include "emulator_block_utils.h"
+#include "utils_block_in_q_access.h"
+#include "utils_global_access.h"
+#include "block_math.h"
 
 static const char *TAG = "EMU_PARSE";
 #define PACKET_SINGLE_VAR_SIZE 11  //2 + 9 * type cnt
@@ -48,9 +50,9 @@ bool _check_arr_packet_size(uint16_t len, uint8_t step)
 emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 {
     uint8_t *data;
-    uint16_t len;
+    size_t len;
     int start_index = -1;
-    uint16_t buff_size = chr_msg_buffer_size(source);
+    size_t buff_size = chr_msg_buffer_size(source);
 
     // parse single variables
     for (uint16_t i = 0; i < buff_size; ++i)
@@ -65,8 +67,8 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
                 {
                     ESP_LOGI(TAG, "Found sizes of variables at index %d", i+1);
                     start_index = i + 1;
-                    memcpy(mem->single_cnt, &data[HEADER_SIZE], TYPE_COUNT);
-                    for (uint8_t i = 0; i < TYPE_COUNT; ++i)
+                    memcpy(mem->single_cnt, &data[HEADER_SIZE], TYPES_COUNT);
+                    for (uint8_t i = 0; i < TYPES_COUNT; ++i)
                     {
                         ESP_LOGI(TAG, "type %d: count %d", i, mem->single_cnt[i]);
                     }
@@ -118,8 +120,8 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 #define GET_ARR_START_OFFSET(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
 emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
     uint8_t *data;
-    uint16_t len;
-    uint16_t buff_size = chr_msg_buffer_size(source);
+    size_t len;
+    size_t buff_size = chr_msg_buffer_size(source);
 
     for (uint16_t i = 0; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
@@ -169,7 +171,7 @@ static block_handle_t *_block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
     return block;
 }
 
-extern void **blocks_structs;
+extern void **emu_global_blocks_structs;
 
 #define IN_Q_STEP 3  //block id (2) + in num (1)
 #define READ_U16(DATA, IDX) \
@@ -178,8 +180,8 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
 {
     static const char* TAG  = "Block allocation";
     uint8_t *data;
-    uint16_t len;
-    uint16_t buff_size = chr_msg_buffer_size(source);
+    size_t len;
+    size_t buff_size = chr_msg_buffer_size(source);
     uint8_t search_idx = 0;
     uint16_t block_id = 0;
 
@@ -206,7 +208,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             idx++; // move to first Q type
 
             block_handle_t *block_ptr = _block_create_struct(in_cnt, q_cnt);
-            blocks_structs[block_id] = (void*)block_ptr;
+            emu_global_blocks_structs[block_id] = (void*)block_ptr;
             block_ptr->block_id = block_id;
 
             // PARSE INPUT TYPES
@@ -289,7 +291,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             
             // 2. Only assign if parsing succeeded AND store is not NULL
             if (err == EMU_OK && store != NULL) {
-                block_handle_t** blocks = (block_handle_t**)blocks_structs;
+                block_handle_t** blocks = (block_handle_t**)emu_global_blocks_structs;
                 blocks[block_id]->extras = (void*)store;
             } else {
                 ESP_LOGE(TAG, "Parsing failed or returned NULL. Error: %d", err);
@@ -362,7 +364,7 @@ static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uin
 
 emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, _global_val_acces_t **store) {
     uint8_t *data;
-    uint16_t len;
+    size_t len;
     
     // Get pointer to raw data inside the buffer
     // NOTE: Check if chr_msg_buffer_get expects a pointer (*start) or value (*start) for the index.
@@ -418,13 +420,13 @@ emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, 
     return EMU_OK;
 }
 
-extern emu_block_func *blocks_fun_table;
+extern emu_block_func *emu_global_blocks_functions;
 static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id){
     static const char* TAG = "Assign block function";
     switch (block_type)
     {
     case BLOCK_COMPUTE:
-        blocks_fun_table[block_id] = block_compute;
+        emu_global_blocks_functions[block_id] = block_math;
         ESP_LOGI(TAG, "Assigned compute function to block id %d", block_id);
         break;
     case BLOCK_INJECT:

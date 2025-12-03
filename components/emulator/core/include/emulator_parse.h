@@ -4,6 +4,7 @@
 #include "stdbool.h"
 #include "emulator_types.h"
 #include "emulator_variables.h"
+#include "utils_global_access.h"
 
 /** 
 *@brief flags struct for handling parsing status
@@ -20,9 +21,9 @@ typedef struct{
 
 extern parse_guard_flags_t _parse_guard_flags;
 
-/*is parsing and allocation of value done*/
+/*is parsing and allocation of variable done*/
 #define PARSE_DONE_ALLOCATE_VAR()        (_parse_guard_flags.can_allocate_var)
-/*set status for parsing and allocation of value*/
+/*set status for parsing and allocation of variable*/
 #define PARSE_SET_ALLOCATE_VAR(x)       (_parse_guard_flags.can_allocate_var = (x))
 
 /*is parsing finished*/
