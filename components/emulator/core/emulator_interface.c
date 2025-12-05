@@ -103,6 +103,7 @@ void emu_interface_task(void* params){
                     ESP_LOGI(TAG, "Free heap: %d bytes", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
                     break;
                 case ORD_EMU_FILL_BLOCKS_LIST:
+                    _interface_execute_parse_manager(PARSE_CREATE_BLOCKS);
                     _interface_execute_parse_manager(PARSE_FILL_BLOCKS);
                     break;
                 default:
@@ -141,7 +142,7 @@ static emu_err_t _interface_execute_loop_init(void){
             return err;
         }
     }else{
-        ESP_LOGE(TAG, "Cannot init loop, first parse code");
+        ESP_LOGE(TAG, "Can't init loop, first parse code");
         return EMU_ERR_ORD_CANNOT_EXECUTE;
     }
     return EMU_OK;
@@ -198,7 +199,7 @@ static emu_err_t _interface_execute_parse_manager(parse_cmd_t cmd){
         break;
     case PARSE_CREATE_VARIABLES:
         if(flags.can_create_variables  && !status.is_create_variables_done){
-            emu_err_t err= emu_parse_block(source);
+            emu_err_t err= emu_parse_variables(source, &mem);
             if(EMU_OK!=err){
                 ESP_LOGE(TAG, "While parsing and creating variables error: %d", err);
                 return err;
@@ -261,6 +262,7 @@ static emu_err_t _interface_execute_parse_manager(parse_cmd_t cmd){
             }
             flags.can_fill_blocks = false;
             status.is_fill_blocks_done = true;
+            flags.can_run_code = true;
             ESP_LOGI(TAG, "Succesfuly filled created blocks");
             return EMU_OK;
         }else{
@@ -269,7 +271,7 @@ static emu_err_t _interface_execute_parse_manager(parse_cmd_t cmd){
         }
         break;
     case PARSE_CHEKC_CAN_RUN:
-        if(flags.can_run_code && status.is_fill_variables_done){
+        if(flags.can_run_code && status.is_fill_blocks_done){
             return EMU_OK;
         }else{
             return EMU_ERR_DENY;
