@@ -1,5 +1,6 @@
 #include "emulator_parse.h"
 #include "emulator_blocks.h"
+#include "emulator_types.h"
 #include "utils_block_in_q_access.h"
 #include "utils_global_access.h"
 #include "block_math.h"
@@ -14,7 +15,7 @@ static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id);
 #define STEP_ARR_2D 3 // type, dim1, dim2
 #define STEP_ARR_3D 4 // type, dim1, dim2, dim3
 #define GET_HEADER(data)   ((uint16_t)(((data[0]) << 8) | (data[1])))
-bool _check_arr_header(uint8_t *data, uint8_t *step)
+bool parse_check_arr_header(uint8_t *data, uint8_t *step)
 {
     uint16_t header = GET_HEADER(data);
     if (header == EMU_H_VAR_ARR_1D)
@@ -34,11 +35,11 @@ bool _check_arr_header(uint8_t *data, uint8_t *step)
     }
     return false;
 }
-bool _check_header(uint8_t *data, emu_header_t header)
+bool parse_check_header(uint8_t *data, emu_header_t header)
 {   
     return GET_HEADER(data) == header;
 }
-bool _check_arr_packet_size(uint16_t len, uint8_t step)
+bool parse_check_arr_packet_size(uint16_t len, uint8_t step)
 {
     if (len <= HEADER_SIZE)
     {
@@ -51,44 +52,39 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 {
     uint8_t *data;
     size_t len;
-    int start_index = -1;
+    size_t start_index = -1;
     size_t buff_size = chr_msg_buffer_size(source);
 
     // parse single variables
     for (uint16_t i = 0; i < buff_size; ++i)
     {
         chr_msg_buffer_get(source, i, &data, &len);
-        if (len == 2 && _check_header(data, EMU_H_VAR_ORD))
+        /*single variables sizes detact and parse*/
+        if (parse_check_header(data, EMU_H_VAR_START) && len == PACKET_SINGLE_VAR_SIZE)
         {
-            if ((i + 1) < buff_size)
-            {
-                chr_msg_buffer_get(source, (i + 1), &data, &len);
-                if (len == PACKET_SINGLE_VAR_SIZE && _check_header(data, EMU_H_VAR_START))
-                {
-                    ESP_LOGI(TAG, "Found sizes of variables at index %d", i+1);
-                    start_index = i + 1;
-                    memcpy(mem->single_cnt, &data[HEADER_SIZE], TYPES_COUNT);
-                    for (uint8_t i = 0; i < TYPES_COUNT; ++i)
-                    {
-                        ESP_LOGI(TAG, "type %d: count %d", i, mem->single_cnt[i]);
-                    }
-                    break;
-                }
+            ESP_LOGI(TAG, "Found count of scalar variables at idx: %d", i);
+            start_index = i;
+            memcpy(mem->single_cnt, &data[HEADER_SIZE], TYPES_COUNT);
+            for (uint8_t j = 0; j < TYPES_COUNT; ++j){
+                ESP_LOGI(TAG, "type %s: count %d", DATA_TYPE_NAMES[j], mem->single_cnt[j]);
             }
+            break;  
         }
     }
     if (start_index == -1)
     {
-        ESP_LOGE(TAG, "Varaibles sizes not found");
+        ESP_LOGE(TAG, "Scalar variables sizes not found can't create memory");
         return EMU_ERR_INVALID_DATA;
     }
-    emu_err_t err = emu_variables_single_create(mem);
-    err = emu_variables_arrays_create(source, mem, start_index);
-    return err;
+    //create space for single variables and create pointers
+    EMU_RETURN_ON_ERROR(emu_variables_single_create(mem));
+    //parse and create arrays
+    EMU_RETURN_ON_ERROR(emu_variables_arrays_create(source, mem, start_index));
+    return EMU_OK;
 }
 
 #define ARR_DATA_START_IDX 5
-/*parse switch case generato for handling different types of arrays that needs to be filled*/
+/*parse switch case generator for handling different types of arrays that needs to be filled*/
 #define HANDLE_ARRAY_CASE(HEADER, TYPE, MEMBER, DATA_LEN)                                      \
     case HEADER: {                                                                   \
         arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                   \
@@ -266,7 +262,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
                     block_ptr->q_connections_table[q].target_blocks_id_list[conn] = READ_U16(data, idx);
                     block_ptr->q_connections_table[q].target_inputs_list[conn] = data[idx + 2];
 
-                    ESP_LOGI(TAG, "Q number:%d |line %d| target block block_id:%d, target block in:%d",
+                    ESP_LOGI(TAG, "Q number:%d |line %d| target block_id:%d, target in:%d",
                              q, total_lines,
                              block_ptr->q_connections_table[q].target_blocks_id_list[conn],
                              block_ptr->q_connections_table[q].target_inputs_list[conn]);
@@ -274,7 +270,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
                 }
             }
             if(total_lines == 0){
-                ESP_LOGI(TAG, "No connections detected, block: %d is terminator block", block_ptr->block_id);
+                ESP_LOGI(TAG, "No connections form block_id: %d", block_ptr->block_id);
             }
             _parse_assign_fuction(data[1],block_id);
             ESP_LOGI(TAG, "Allocated handle for block block_id %d", block_id);
@@ -305,7 +301,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
 #define ACCES_STEP 5
 #define MAX_ARR_DIMS 3
 
-static const char* TAG_PARSER = "MEM_PARSER";
+static const char* GLOBAL_ACCESS = "EMU_PARSE";
 
 static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uint16_t len, 
                                              _global_val_acces_t *pool, uint16_t *pool_idx) 
@@ -313,7 +309,7 @@ static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uin
     if (*cursor >= len) return NULL;
 
     // LOG: Trace node creation
-    // ESP_LOGD(TAG_PARSER, "Linking node at pool_idx=%d, cursor=%d", *pool_idx, *cursor);
+    // ESP_LOGD(GLOBAL_ACCESS, "Linking node at pool_idx=%d, cursor=%d", *pool_idx, *cursor);
 
     // 1. Consume a node from the pool
     _global_val_acces_t *node = &pool[*pool_idx];
@@ -327,7 +323,7 @@ static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uin
     node->target_custom_indices[2] = data[*cursor + 4];
 
     // LOG: Trace node data
-    // ESP_LOGI(TAG_PARSER, "Node parsed: Type=%d Idx=%d Static=[%d,%d,%d]", 
+    // ESP_LOGI(GLOBAL_ACCESS, "Node parsed: Type=%d Idx=%d Static=[%d,%d,%d]", 
     //          node->target_type, node->target_idx, 
     //          node->target_custom_indices[0], node->target_custom_indices[1], node->target_custom_indices[2]);
 
@@ -371,11 +367,11 @@ emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, 
     chr_msg_buffer_get(source, *start, &data, &len);
 
     // LOG: Print the header to verify what we actually received
-    ESP_LOGI(TAG_PARSER, "Parse Start. Len=%d. Header Bytes: [0]=%02X [1]=%02X [2]=%02X [3]=%02X", 
+    ESP_LOGI(GLOBAL_ACCESS, "Parse Start. Len=%d. Header Bytes: [0]=%02X [1]=%02X [2]=%02X [3]=%02X", 
              len, data[0], data[1], data[2], data[3]);
 
     if (data[2] == 0xF0) {
-        ESP_LOGI(TAG_PARSER, "Block ID match (0xF0). Starting parse...");
+        ESP_LOGI(GLOBAL_ACCESS, "Block ID match (0xF0). Starting parse...");
 
         // --- PASS 1: Count required nodes ---
         uint16_t total_struct_list = 1; 
@@ -390,12 +386,12 @@ emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, 
             }
         }
 
-        ESP_LOGI(TAG_PARSER, "Pass 1 Complete. Total nodes required: %d", total_struct_list);
+        ESP_LOGI(GLOBAL_ACCESS, "Pass 1 Complete. Total nodes required: %d", total_struct_list);
 
         // --- PASS 2: Allocate Memory ---
         _global_val_acces_t *pool = calloc(total_struct_list, sizeof(_global_val_acces_t));
         if (!pool) {
-            ESP_LOGE(TAG_PARSER, "Memory allocation failed for %d nodes", total_struct_list);
+            ESP_LOGE(GLOBAL_ACCESS, "Memory allocation failed for %d nodes", total_struct_list);
             return EMU_ERR_MEM_ALLOC; 
         }
 
@@ -407,14 +403,14 @@ emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, 
 
         // Sanity check
         if (pool_usage != total_struct_list) {
-            ESP_LOGW(TAG_PARSER, "Pool usage mismatch: calc %d vs used %d", total_struct_list, pool_usage);
+            ESP_LOGW(GLOBAL_ACCESS, "Pool usage mismatch: calc %d vs used %d", total_struct_list, pool_usage);
         } else {
-            ESP_LOGI(TAG_PARSER, "Parse success. Root created.");
+            ESP_LOGI(GLOBAL_ACCESS, "Parse success. Root created.");
         }
         *store = root;
     } else {
         // LOG: Explain why parsing was skipped
-        ESP_LOGW(TAG_PARSER, "Skipped parsing: Expected 0xF0 at data[2], but found %02X", data[2]);
+        ESP_LOGW(GLOBAL_ACCESS, "Skipped parsing: Expected 0xF0 at data[2], but found %02X", data[2]);
     }
     
     return EMU_OK;

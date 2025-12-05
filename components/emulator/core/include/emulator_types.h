@@ -11,7 +11,7 @@ Specific enums used in emulator code
 ******************************************/
 
 /**
-* @brief emulator scope errors
+* @brief Emulator scope error codes
 */
 typedef enum {
     EMU_OK = 0,
@@ -32,7 +32,9 @@ typedef enum {
     EMU_ERR_NULL_POINTER       =0xFF04,   
     EMU_ERR_DIV_BY_ZERO        =0xBB01,
     EMU_ERR_OUT_OF_RANGE       =0xBB02,
-    EMU_ERR_INVALID_PARAMETER  =0xBB03   
+    EMU_ERR_INVALID_PARAMETER  =0xBB03,
+    EMU_ERR_PARSE_INVALID_REQUEST,
+    EMU_ERR_DENY,
 }emu_err_t;
 
 /**
@@ -67,11 +69,13 @@ typedef enum{
     DATA_B    = 8
 }data_types_t;
 
+extern const char *DATA_TYPE_NAMES[9];
+
 /**
 * @brief Orders for emulator interface to execute
 */
 typedef enum {
-    ORD_STOP_BYTES        = 0x0000,
+    ORD_STOP_BYTES        = 0x0000,    
     ORD_START_BYTES       = 0xFFFF,
     ORD_PARSE_INTO_VARIABLES    = 0xDDDD,
     ORD_START_BLOCKS      = 0x00FF,

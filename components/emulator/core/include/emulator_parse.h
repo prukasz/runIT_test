@@ -6,59 +6,28 @@
 #include "emulator_variables.h"
 #include "utils_global_access.h"
 
-/** 
-*@brief flags struct for handling parsing status
-*/
-typedef struct{
-    bool can_allocate_var;
-    bool can_fill_var;
-    bool can_create_blocks;
-    bool can_fill_blocks;
-    bool can_run_code;
-    bool finished;
-}parse_guard_flags_t;
-
-
-extern parse_guard_flags_t _parse_guard_flags;
-
-/*is parsing and allocation of variable done*/
-#define PARSE_DONE_ALLOCATE_VAR()        (_parse_guard_flags.can_allocate_var)
-/*set status for parsing and allocation of variable*/
-#define PARSE_SET_ALLOCATE_VAR(x)       (_parse_guard_flags.can_allocate_var = (x))
-
-/*is parsing finished*/
-#define PARSE_FINISHED()            (_parse_guard_flags.finished)
-/*set parsing finished*/
-#define PARSE_SET_FINISHED(x)       (_parse_guard_flags.finished = (x))
-
-/*is parsing values into variables done*/
-#define PARSE_DONE_FILL_VAR()        (_parse_guard_flags.can_fill_var)
-/*set parsing values into variables*/
-#define PARSE_SET_FILL_VAR(x)       (_parse_guard_flags.can_fill_var = (x))
-
-/*is parsing and creating block structs done*/
-#define PARSE_DONE_CREATE_BLOCKS()   (_parse_guard_flags.can_create_blocks)
-/*set parsing and creating block structs*/
-#define PARSE_SET_CREATE_BLOCKS(x)  (_parse_guard_flags.can_create_blocks = (x))
-/*is parsing of blocks complete*/
-#define PARSE_DONE_FILL_BLOCKS()     (_parse_guard_flags.can_fill_blocks)
-/*set parsing of blocks*/
-#define PARSE_SET_FILL_BLOCKS(x)    (_parse_guard_flags.can_fill_blocks = (x))
-
-/*is parsing complete*/
-#define PARSE_CAN_RUN_CODE()        (_parse_guard_flags.can_run_code)
-/*set parsing complete*/
-#define PARSE_SET_RUN_CODE(x)       (_parse_guard_flags.can_run_code = (x))
+typedef enum{
+    PARSE_RESTART,
+    PARSE_CREATE_VARIABLES,
+    PARSE_FILL_VARIABLES,
+    PARSE_CREATE_BLOCKS,
+    PARSE_FILL_BLOCKS,
+    PARSE_CHEKC_CAN_RUN,
+    PARSE_IS_CREATE_VARIABLES_DONE,
+    PARSE_IS_FILL_VARIABLES_DONE,
+    PARSE_IS_CREATE_BLOCKS_DONE,
+    PARSE_IS_FILL_BLOCKS_DONE,
+}parse_cmd_t;
 
 
 /*check if header match desired*/
-bool _check_header(uint8_t *data, emu_header_t header);
+bool parse_check_header(uint8_t *data, emu_header_t header);
 /*check if packet includes all sizes for arrays*/
-bool _check_arr_packet_size(uint16_t len, uint8_t step);
+bool parse_check_arr_packet_size(uint16_t len, uint8_t step);
 /** 
 *@brief returns step for parsing, depends on arr dims
 */
-bool _check_arr_header(uint8_t *data, uint8_t *step);
+bool parse_check_arr_header(uint8_t *data, uint8_t *step);
 
 /**
  * @brief Find variables packets, allocate space, create arrays

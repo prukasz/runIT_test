@@ -5,7 +5,7 @@
 #include "math.h"
 const static char* TAG = "Global_access";
 
-emu_err_t emu_global_var_acces_recursive(_global_val_acces_t *root, double *out){
+emu_err_t utils_global_var_acces_recursive(_global_val_acces_t *root, double *out){
     if (!out){
         ESP_LOGE(TAG, "No output provided to paste result");
         return EMU_ERR_NULL_POINTER;
@@ -20,7 +20,7 @@ emu_err_t emu_global_var_acces_recursive(_global_val_acces_t *root, double *out)
 
         if (NULL!=next_arr[i]) {
             double tmp;
-            EMU_RETURN_ON_ERROR(emu_global_var_acces_recursive(next_arr[i], &tmp));
+            EMU_RETURN_ON_ERROR(utils_global_var_acces_recursive(next_arr[i], &tmp));
 
             if (tmp < 0.0) {idx_table[i] = 0;}
             else if (tmp > 0xFE) {idx_table[i] = 0xFE;}

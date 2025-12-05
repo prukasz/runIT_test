@@ -100,6 +100,7 @@ void free_block(block_handle_t* block) {
  *@brief reset all blokcs 
  */
 void emu_execute_blocks_free_all(void** blocks_structs, uint16_t num_blocks) {
+    ESP_LOGI("BLOCKS", "Blocks cleared");
     block_handle_t** data = (block_handle_t**)blocks_structs;
     if (!data) return;
 

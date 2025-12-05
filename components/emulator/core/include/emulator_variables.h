@@ -5,6 +5,8 @@
 #include "gatt_buff.h"
 #include "math.h"
 
+extern const char *DATA_TYPE_NAMES[9];
+
 #define MAX_VAR_IDX_SIZE 254
 #define MAX_ARR_DIM_SIZE 254
 #define MAX_ARR_DIMS    3

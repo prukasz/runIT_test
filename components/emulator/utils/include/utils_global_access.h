@@ -20,6 +20,6 @@ typedef struct _global_val_acces_t{
 /**
  * @brief retrive value form memory in recursive way 
  */
-emu_err_t emu_global_var_acces_recursive(_global_val_acces_t *root, double *out);
+emu_err_t utils_global_var_acces_recursive(_global_val_acces_t *root, double *out);
 
 

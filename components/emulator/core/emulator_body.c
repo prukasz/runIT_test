@@ -38,7 +38,7 @@ static emu_err_t emu_execute(){
     for (uint16_t i = 0; i < emu_global_blocks_cnt; i++) {
         emu_err_t err = emu_global_blocks_functions[i](emu_global_blocks_structs[i]);
         if (err != EMU_OK) {
-            ESP_LOGE("BLOCK", "Function %zu failed (err=%d)", i, err);
+            ESP_LOGE(TAG, "Function %d failed (err: %d)", i, err);
             return err;
         }
     }
