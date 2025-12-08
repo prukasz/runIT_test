@@ -85,7 +85,7 @@ class VariablesDump:
                 line_parts.append(self._pack_val(s.dtype, s.value))
             
             writer.write(" ".join(line_parts) + "\n")
-
+#git 
     def write(self, writer: TextIO):
         self.dump_variable_list(writer)
         self.dump_variable_content(writer)
