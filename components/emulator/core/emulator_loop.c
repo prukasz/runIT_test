@@ -1,4 +1,5 @@
 #include "emulator_loop.h"
+#include "emulator_errors.h"
 #include "emulator_interface.h"
 #include "emulator_body.h"
 #include "emulator_parse.h"
@@ -9,7 +10,7 @@ In this file loop timer is created and managed
 Simple loop watchdog implemented in timer callback
 *************************************************************/
 
-static const char *TAG = "EMULATRO_LOOP";
+static const char *TAG = "EMULATOR_LOOP";
 
 /*****************************************************************************/
 /*      SEMAPHOPRES TO RUN LOOP AND WTD CHECK                                */
@@ -69,8 +70,7 @@ static void IRAM_ATTR loop_tick_intr_handler(void *parameters) {
         portYIELD_FROM_ISR();
 }
 
-emu_err_t emu_loop_init(){
-    
+emu_err_t emu_loop_init(void){
     emu_global_loop_start_semaphore = xSemaphoreCreateBinary();
     emu_global_loop_wtd_semaphore   = xSemaphoreCreateBinary();
     WTD_SET_LIMIT(10);
@@ -82,6 +82,7 @@ emu_err_t emu_loop_init(){
     loop_timer_params.dispatch_method = ESP_TIMER_ISR;
     ESP_ERROR_CHECK(esp_timer_create(&loop_timer_params, &loop_timer_handle));  
     LOOP_SET_STATUS(LOOP_SET);
+    LOG_I(TAG, "Timer period set to %lld us", loop_period_us);
     xSemaphoreGive(emu_global_loop_wtd_semaphore);
     return EMU_OK;
 }
@@ -91,18 +92,15 @@ emu_err_t emu_loop_start(void) {
     if(LOOP_STATUS_CMP(LOOP_SET)){
         LOOP_SET_STATUS(LOOP_RUNNING);
         ESP_LOGI(TAG, "Starting loop first time");
-        ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
-        return EMU_OK;
+        return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
     }else if (LOOP_STATUS_CMP(LOOP_STOPPED)){
         LOOP_SET_STATUS(LOOP_RUNNING);
         ESP_LOGI(TAG, "Starting loop after stop");
-        ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
-        return EMU_OK;
+        return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
     }else if (LOOP_STATUS_CMP(LOOP_HALTED)){
         ESP_LOGI(TAG, "Starting loop after halt");
         LOOP_SET_STATUS(LOOP_RUNNING);
-        ESP_ERROR_CHECK(esp_timer_start_periodic(loop_timer_handle, loop_period_us));
-        return EMU_OK;
+        return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
     }else{
         ESP_LOGE(TAG, "Loop cannot be started");
         return EMU_ERR_INVALID_STATE;
@@ -127,9 +125,8 @@ emu_err_t emu_loop_stop(void) {
         return EMU_ERR_INVALID_STATE;
     }
     ESP_LOGI(TAG, "Stopping loop");
-    esp_timer_stop(loop_timer_handle);
     LOOP_SET_STATUS(LOOP_STOPPED);
-    return EMU_OK;
+    return esp_timer_stop(loop_timer_handle);
     }
 
 

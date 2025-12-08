@@ -1,6 +1,8 @@
 #include "emulator_parse.h"
 #include "emulator_blocks.h"
+#include "emulator_body.h"
 #include "emulator_types.h"
+#include "emulator_errors.h"
 #include "utils_block_in_q_access.h"
 #include "utils_global_access.h"
 #include "block_math.h"
@@ -55,6 +57,7 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     size_t start_index = -1;
     size_t buff_size = chr_msg_buffer_size(source);
 
+    LOG_I(TAG, "Now counting total count of scalars");
     // parse single variables
     for (uint16_t i = 0; i < buff_size; ++i)
     {
@@ -66,14 +69,14 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
             start_index = i;
             memcpy(mem->single_cnt, &data[HEADER_SIZE], TYPES_COUNT);
             for (uint8_t j = 0; j < TYPES_COUNT; ++j){
-                ESP_LOGI(TAG, "type %s: count %d", DATA_TYPE_NAMES[j], mem->single_cnt[j]);
+                ESP_LOGI(TAG, "type %s: count %d", DATA_TYPE_TO_STR[j], mem->single_cnt[j]);
             }
             break;  
         }
     }
     if (start_index == -1)
     {
-        ESP_LOGE(TAG, "Scalar variables sizes not found can't create memory");
+        ESP_LOGE(TAG, "Scalar variables sizes packet not found can't create memory");
         return EMU_ERR_INVALID_DATA;
     }
     //create space for single variables and create pointers
@@ -121,9 +124,9 @@ emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
 
     for (uint16_t i = 0; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
-        if (len < ARR_DATA_START_IDX) continue;
+        if (len < HEADER_SIZE) continue;
 
-        uint8_t arr_index = data[HEADER_SIZE];
+        uint8_t      arr_index = data[HEADER_SIZE];
         uint16_t offset   = GET_ARR_START_OFFSET(data);    
         uint16_t arr_bytes_to_copy = len - ARR_DATA_START_IDX;
 
@@ -174,7 +177,7 @@ extern void **emu_global_blocks_structs;
     ((uint16_t)((DATA)[(IDX)]) | ((uint16_t)((DATA)[(IDX)+1]) << 8))
 emu_err_t emu_parse_block(chr_msg_buffer_t *source)
 {
-    static const char* TAG  = "Block allocation";
+    static const char* TAG  = "BLOCK STRUCT PARSE";
     uint8_t *data;
     size_t len;
     size_t buff_size = chr_msg_buffer_size(source);
@@ -272,39 +275,42 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source)
             if(total_lines == 0){
                 ESP_LOGI(TAG, "No connections form block_id: %d", block_ptr->block_id);
             }
+            ESP_LOGI(TAG, "Parsing global access");
+            _parse_block_global_access(source,search_idx, block_id);
             _parse_assign_fuction(data[1],block_id);
             ESP_LOGI(TAG, "Allocated handle for block block_id %d", block_id);
-
-
-        }
-        if ((data[0] == 0xBB) && (data[2] >= 0xF0)) {
-            ESP_LOGI(TAG, "Detected global variable reference at block: %d", block_id);
-            
-            _global_val_acces_t *store = NULL; // Initialize to NULL
-            
-            // 1. Pass the ADDRESS of store (&store)
-            emu_err_t err = _parse_block_mem_acces_data(source, &search_idx, &store);
-            
-            // 2. Only assign if parsing succeeded AND store is not NULL
-            if (err == EMU_OK && store != NULL) {
-                block_handle_t** blocks = (block_handle_t**)emu_global_blocks_structs;
-                blocks[block_id]->extras = (void*)store;
-            } else {
-                ESP_LOGE(TAG, "Parsing failed or returned NULL. Error: %d", err);
-            }
         }
         search_idx++;
-
     }
     return EMU_OK;
 }
+
+
+emu_err_t emu_parse_block_cnt(chr_msg_buffer_t *source){
+    uint16_t cnt = 0;
+    uint8_t *data;
+    size_t len;
+    size_t buff_size = chr_msg_buffer_size(source);
+    size_t search_idx =0;
+    while (search_idx < buff_size){
+        chr_msg_buffer_get(source, search_idx, &data, &len);
+            if(parse_check_header(data, EMU_H_BLOCK_CNT)){
+                cnt = READ_U16(data, HEADER_SIZE);
+                ESP_LOGI("BLOCK_COUNT_PARSER", "Found %d block structs to allocate", cnt);
+                return emu_body_create_execution_table(cnt);
+            }
+        search_idx++;
+    }
+    return EMU_ERR_CANT_FIND;
+}
+
+//This is len of(type + idx + 3 x static indices)
 #define ACCES_STEP 5
-#define MAX_ARR_DIMS 3
 
 static const char* GLOBAL_ACCESS = "EMU_PARSE";
 
-static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uint16_t len, 
-                                             _global_val_acces_t *pool, uint16_t *pool_idx) 
+static _global_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uint16_t len, 
+                                             _global_acces_t *pool, uint16_t *pool_idx) 
 {
     if (*cursor >= len) return NULL;
 
@@ -312,7 +318,7 @@ static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uin
     // ESP_LOGD(GLOBAL_ACCESS, "Linking node at pool_idx=%d, cursor=%d", *pool_idx, *cursor);
 
     // 1. Consume a node from the pool
-    _global_val_acces_t *node = &pool[*pool_idx];
+    _global_acces_t *node = &pool[*pool_idx];
     (*pool_idx)++;
 
     // 2. Parse the 5 bytes of data for this node
@@ -358,71 +364,92 @@ static _global_val_acces_t* _link_recursive(uint8_t *data, uint16_t *cursor, uin
     return node;
 }
 
-emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, _global_val_acces_t **store) {
+
+/**
+ * @brief Assign provided global references to block list 
+ * @param source Msg buffer
+ * @param start Start msg buffer index
+ * @param block_idx Block index to search and assign global references to
+ */
+emu_err_t _parse_block_global_access(chr_msg_buffer_t *source, uint16_t start, uint16_t block_idx) {
+    static const char *_TAG = "EMU_PARSE_GLOBAL_ACCESS";
     uint8_t *data;
     size_t len;
-    
-    // Get pointer to raw data inside the buffer
-    // NOTE: Check if chr_msg_buffer_get expects a pointer (*start) or value (*start) for the index.
-    chr_msg_buffer_get(source, *start, &data, &len);
+    size_t buffer_len = chr_msg_buffer_size(source);
+    uint8_t total_references = 0;
+    uint8_t cursor = start;
 
-    // LOG: Print the header to verify what we actually received
-    ESP_LOGI(GLOBAL_ACCESS, "Parse Start. Len=%d. Header Bytes: [0]=%02X [1]=%02X [2]=%02X [3]=%02X", 
-             len, data[0], data[1], data[2], data[3]);
-
-    if (data[2] == 0xF0) {
-        ESP_LOGI(GLOBAL_ACCESS, "Block ID match (0xF0). Starting parse...");
-
-        // --- PASS 1: Count required nodes ---
-        uint16_t total_struct_list = 1; 
-        uint16_t check_idx = 10; 
-
-        while (check_idx < len) {
-            if (data[check_idx] == 0xFF) {
-                check_idx++;
-            } else {
-                total_struct_list++;
-                check_idx += ACCES_STEP;
-            }
+    //calculate total count of references in one block
+    while(cursor<buffer_len){ 
+        chr_msg_buffer_get(source, cursor, &data, &len);
+        //check if packet is block packet, and if packet part is for defining global acces for selected block
+        if(data[0]==EMU_H_BLOCK_PACKET && data[2] >= EMU_H_BLOCK_START_G_ACCES && READ_U16(data,3) == block_idx){
+            total_references++;
         }
-
-        ESP_LOGI(GLOBAL_ACCESS, "Pass 1 Complete. Total nodes required: %d", total_struct_list);
-
-        // --- PASS 2: Allocate Memory ---
-        _global_val_acces_t *pool = calloc(total_struct_list, sizeof(_global_val_acces_t));
-        if (!pool) {
-            ESP_LOGE(GLOBAL_ACCESS, "Memory allocation failed for %d nodes", total_struct_list);
-            return EMU_ERR_MEM_ALLOC; 
-        }
-
-        // --- PASS 3: Recursive Linking ---
-        uint16_t cursor = 5;      
-        uint16_t pool_usage = 0;  
-
-        _global_val_acces_t *root = _link_recursive(data, &cursor, len, pool, &pool_usage);
-
-        // Sanity check
-        if (pool_usage != total_struct_list) {
-            ESP_LOGW(GLOBAL_ACCESS, "Pool usage mismatch: calc %d vs used %d", total_struct_list, pool_usage);
-        } else {
-            ESP_LOGI(GLOBAL_ACCESS, "Parse success. Root created.");
-        }
-        *store = root;
-    } else {
-        // LOG: Explain why parsing was skipped
-        ESP_LOGW(GLOBAL_ACCESS, "Skipped parsing: Expected 0xF0 at data[2], but found %02X", data[2]);
+        cursor++;
+        
     }
+    block_handle_t** blocks = (block_handle_t**)emu_global_blocks_structs;
+    blocks[block_idx]->global_reference_cnt = total_references;
+    blocks[block_idx]->global_reference = (_global_acces_t**)calloc(total_references, sizeof(_global_acces_t*));
+    if(NULL==blocks[block_idx]){
+        ESP_LOGE(TAG, "Error while allocating list of global access");
+        return EMU_ERR_NO_MEMORY;
+    }
+    //go back to start index to now process into created space
+    cursor = start;
+    uint8_t current_reference_num = 0; 
     
+    while(cursor<buffer_len){
+        chr_msg_buffer_get(source, cursor, &data, &len);
+        if(data[0]==EMU_H_BLOCK_PACKET && data[2] >= EMU_H_BLOCK_START_G_ACCES && READ_U16(data,3) == block_idx){
+            //there must be at least one struct so we skipp it and start processing from index 10 of data (start of refence list of first one)
+            uint16_t total_struct_list = 1; 
+            uint16_t check_idx = 10; 
+            while (check_idx < len) {
+                if (data[check_idx] == 0xFF) {
+                    check_idx++;
+                } else {
+                    total_struct_list++;
+                    check_idx += ACCES_STEP;
+                }
+            }
+            ESP_LOGI(GLOBAL_ACCESS, "Pass 1 Complete. Total nodes required: %d", total_struct_list);
+            _global_acces_t *pool = calloc(total_struct_list, sizeof(_global_acces_t));
+            if (!pool) {
+                ESP_LOGE(GLOBAL_ACCESS, "Memory allocation failed for %d nodes", total_struct_list);
+                return EMU_ERR_MEM_ALLOC; 
+            }
+                // --- PASS 3: Recursive Linking ---
+            uint16_t cursor = 5;      
+            uint16_t pool_usage = 0;  
+
+            _global_acces_t *root = _link_recursive(data, &cursor, len, pool, &pool_usage);
+
+                // Sanity check
+            if (pool_usage != total_struct_list) {
+                ESP_LOGW(GLOBAL_ACCESS, "Pool usage mismatch: calc %d vs used %d", total_struct_list, pool_usage);
+            } else {
+                ESP_LOGI(GLOBAL_ACCESS, "Parse success. Root created.");
+            }
+                blocks[block_idx]->global_reference[current_reference_num] = root;
+                current_reference_num++;
+        }else{
+                ESP_LOGW(GLOBAL_ACCESS, "Skipped parsing: Expected 0xF0 at data[2], but found %02X", data[2]);
+        }
+    cursor++;
+    }
     return EMU_OK;
 }
 
-extern emu_block_func *emu_global_blocks_functions;
+
+extern emu_block_func *emu_body_functions_execution_list;
 static void _parse_assign_fuction(uint8_t block_type, uint16_t block_id){
     static const char* TAG = "Assign block function";
     switch (block_type)
     {
     case BLOCK_COMPUTE:
-        emu_global_blocks_functions[block_id] = block_math;
+        emu_body_functions_execution_list[block_id] = block_math;
         ESP_LOGI(TAG, "Assigned compute function to block id %d", block_id);
         break;
     case BLOCK_INJECT:

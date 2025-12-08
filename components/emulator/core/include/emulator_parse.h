@@ -5,6 +5,7 @@
 #include "emulator_types.h"
 #include "emulator_variables.h"
 #include "utils_global_access.h"
+#include "emulator_errors.h"
 
 typedef enum{
     PARSE_RESTART,
@@ -38,4 +39,5 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem);
  */
 emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem);
 emu_err_t emu_parse_block(chr_msg_buffer_t *source);
-emu_err_t _parse_block_mem_acces_data(chr_msg_buffer_t *source, uint8_t *start, _global_val_acces_t **store);
+emu_err_t _parse_block_global_access(chr_msg_buffer_t *source, uint16_t start, uint16_t block_idx);
+emu_err_t emu_parse_block_cnt(chr_msg_buffer_t *source);

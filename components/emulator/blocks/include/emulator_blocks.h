@@ -26,7 +26,7 @@ typedef struct {
     void*           extras;  /*block specific data*/
 
     uint8_t global_reference_cnt;
-    _global_val_acces_t **global_reference;
+    _global_acces_t **global_reference;
 
     data_types_t*   in_data_type_table; /*array of input datatypes (in order)*/
     void*           in_data;            /*array for all input data*/
@@ -49,6 +49,9 @@ typedef struct {
 
     bool is_executed;           /*has block been executed*/
 } block_handle_t;
+
+
+
 
 
 

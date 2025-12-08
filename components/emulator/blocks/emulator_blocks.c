@@ -89,9 +89,7 @@ void free_block(block_handle_t* block) {
             }
         }
         //free globall access if provided
-        for(uint8_t i = 0 ; i < block->global_reference_cnt; i++){
-            free(block->global_reference[i]);
-        }
+        free(block->global_reference);
     }
     free(block);
 }
@@ -109,5 +107,7 @@ void emu_execute_blocks_free_all(void** blocks_structs, uint16_t num_blocks) {
     }
     free(blocks_structs);
 }
+
+
 
 

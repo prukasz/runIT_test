@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "emulator_interface.h"
+#include "emulator_errors.h"
 #include "emulator_body.h"
 #include "emulator_blocks.h"
 #include "emulator_loop.h"
@@ -43,7 +44,7 @@ static emu_err_t _interface_execute_loop_start_execution(void);
 /***************************************************************************/
 
 extern void **emu_global_blocks_structs;
-extern emu_block_func *emu_global_blocks_functions;
+extern emu_block_func *emu_body_functions_execution_list;
 
 
 void emu_interface_task(void* params){
@@ -57,11 +58,9 @@ void emu_interface_task(void* params){
             switch (orders){    
                 case ORD_PARSE_VARIABLES:
                      _interface_execute_parse_manager(PARSE_CREATE_VARIABLES);
-                    ESP_LOGI(TAG, "Free heap: %d bytes", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
                     break;
                 case ORD_PARSE_INTO_VARIABLES:
                      _interface_execute_parse_manager(PARSE_FILL_VARIABLES);
-                    ESP_LOGI(TAG, "Free heap: %d bytes", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
                     break;
                 case ORD_PROCESS_CODE:
                     // Handle processing code
@@ -99,8 +98,6 @@ void emu_interface_task(void* params){
                     break;
 
                 case ORD_EMU_ALLOCATE_BLOCKS_LIST:
-                    emu_create_block_tables(5);
-                    ESP_LOGI(TAG, "Free heap: %d bytes", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
                     break;
                 case ORD_EMU_FILL_BLOCKS_LIST:
                     _interface_execute_parse_manager(PARSE_CREATE_BLOCKS);
@@ -237,7 +234,13 @@ static emu_err_t _interface_execute_parse_manager(parse_cmd_t cmd){
         break;
     case PARSE_CREATE_BLOCKS:
         if(flags.can_create_blocks && status.is_create_variables_done){
-            emu_err_t err= emu_parse_block(source);
+            //add here so can be muliple block parsing bu only one list allocation
+            emu_err_t err = emu_parse_block_cnt(source);
+            if(EMU_OK!=err){
+                ESP_LOGE(TAG, "While alocating blocks space error: %d", err);
+                return err;
+            }
+            err = emu_parse_block(source);
             if(EMU_OK!=err){
                 ESP_LOGE(TAG, "While creating blocks error: %d", err);
                 return err;

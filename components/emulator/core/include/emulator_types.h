@@ -1,41 +1,8 @@
 #pragma once
 
-
-#define EMU_RETURN_ON_ERROR(expr) ({             \
-    emu_err_t _err = (expr);         \
-    if (_err != EMU_OK) return _err; \
-})
 /******************************************
 Specific enums used in emulator code
-
 ******************************************/
-
-/**
-* @brief Emulator scope error codes
-*/
-typedef enum {
-    EMU_OK = 0,
-    EMU_ERR_INVALID_STATE,
-    EMU_ERR_INVALID_ARG,
-    EMU_ERR_NO_MEMORY,
-    EMU_ERR_ORD_START,
-    EMU_ERR_ORD_CANNOT_EXECUTE,
-    EMU_ERR_ORD_STOP,
-    EMU_ERR_ORD_START_BLOCKS,
-    EMU_ERR_INVALID_DATA,
-    EMU_ERR_MEM_INVALID_DATATYPE,
-    EMU_ERR_UNLIKELY           =0xFFFF,  
-    EMU_ERR_MEM_ALLOC          =0xFF00,
-    EMU_ERR_MEM_INVALID_INDEX  =0xFF01,
-    EMU_ERR_MEM_INVALID_ACCESS =0xFF02,
-    EMU_ERR_MEM_OUT_OF_BOUNDS  =0xFF03,
-    EMU_ERR_NULL_POINTER       =0xFF04,   
-    EMU_ERR_DIV_BY_ZERO        =0xBB01,
-    EMU_ERR_OUT_OF_RANGE       =0xBB02,
-    EMU_ERR_INVALID_PARAMETER  =0xBB03,
-    EMU_ERR_PARSE_INVALID_REQUEST,
-    EMU_ERR_DENY,
-}emu_err_t;
 
 /**
  * @brief block type identifier (what block does)
@@ -69,7 +36,7 @@ typedef enum{
     DATA_B    = 8
 }data_types_t;
 
-extern const char *DATA_TYPE_NAMES[9];
+extern const char *DATA_TYPE_TO_STR[9];
 
 /**
 * @brief Orders for emulator interface to execute
@@ -91,7 +58,6 @@ typedef enum {
     ORD_EMU_LOOP_INIT     = 0x2137,
     ORD_EMU_ALLOCATE_BLOCKS_LIST = 0xb100,
     ORD_EMU_FILL_BLOCKS_LIST = 0xb200,
-
 }emu_order_t;
 
 
@@ -123,6 +89,9 @@ typedef enum{
     EMU_H_VAR_DATA_S6 = 0xFF71,
     EMU_H_VAR_DATA_S7 = 0xFF81,
     EMU_H_VAR_DATA_S8 = 0xFF91,
+    EMU_H_BLOCK_CNT   = 0xB000,
+    EMU_H_BLOCK_PACKET= 0xBB,
+    EMU_H_BLOCK_START_G_ACCES = 0xF0,
 }emu_header_t;
 
 /**

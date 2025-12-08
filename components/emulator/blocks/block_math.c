@@ -1,11 +1,24 @@
 #include "block_math.h"
 
-
 int cnt;
 emu_err_t block_math(void* block_data){
     block_handle_t *block = (block_handle_t*)block_data;
-    utils_set_q_val_safe(block, 0, 100+utils_get_in_val_autoselect(0, block)*21.370);
-    ESP_LOGI("compute_block", "block block_id: %d executing %d, val0 %lf, val1 %lf",block->block_id, cnt++, utils_get_in_val_autoselect(0, block), utils_get_in_val_autoselect(1, block));
+    _global_acces_t *test = block->global_reference[0];
+    double val ;
+    uint8_t table[3]= {0xFF,0xFF,0xFF};
+    //ESP_LOGI("GLOBALACCES","resuld by hand %d",MEM_GET_U8(0,table));
+
+    uint8_t table2[3]= {0x01,0xFF,0xFF};
+    //ESP_LOGI("GLOBALACCES","res uld by hand2 %d",MEM_GET_U16(0,table2));
+    if(block->block_id == 0){
+        double result = 0.0;
+        utils_global_var_acces_recursive(test, &result);
+        utils_global_var_acces_recursive(test, &result);
+        utils_global_var_acces_recursive(test, &result);
+        utils_global_var_acces_recursive(test, &result);
+        utils_global_var_acces_recursive(test, &result);
+        //ESP_LOGI("GLOBALACCES","resuld %lf", result);
+    }
     block_pass_results(block);
     return EMU_OK;      
-}
+}   

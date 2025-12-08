@@ -14,9 +14,9 @@ extern SemaphoreHandle_t emu_global_loop_wtd_semaphore;
 /**********************************************************************/
 /*          LIST OF BLOCKS AND THEIR FUCNTIONS TO RUN                 */
 //To do consider hiding functions pointer in struct
-uint16_t emu_global_blocks_cnt;
+uint16_t emu_body_block_structs_execution_list;
 void** emu_global_blocks_structs=NULL;
-emu_block_func *emu_global_blocks_functions=NULL;
+emu_block_func *emu_body_functions_execution_list=NULL;
 /**********************************************************************/
 
 static emu_err_t emu_execute();
@@ -35,41 +35,49 @@ void emu_body_loop_task(void* params){
 }
 
 static emu_err_t emu_execute(){
-    for (uint16_t i = 0; i < emu_global_blocks_cnt; i++) {
-        emu_err_t err = emu_global_blocks_functions[i](emu_global_blocks_structs[i]);
+    static const char* _TAG = "EMU_BODY_EXECUTE";
+    for (uint16_t i = 0; i < emu_body_block_structs_execution_list; i++) {
+        LOG_I(_TAG, "Now will execute block %d", i);
+        emu_err_t err = emu_body_functions_execution_list[i](emu_global_blocks_structs[i]);
         if (err != EMU_OK) {
-            ESP_LOGE(TAG, "Function %d failed (err: %d)", i, err);
+            ESP_LOGE(_TAG, "Block %d failed during execution, error: %s", i, EMU_ERR_TO_STR(err));
             return err;
         }
     }
     return EMU_OK;
 }
 
-emu_err_t emu_create_block_tables(uint16_t num_blocks) {
-    if (num_blocks == 0){
+emu_err_t emu_body_create_execution_table(uint16_t total_blocks_cnt) {
+    static const char* _TAG = "EMU_CREATE_BLOCK_TABLES";
+    if (total_blocks_cnt == 0){
+        ESP_LOGE(_TAG, "Zero blocks to create provided");
         return EMU_ERR_INVALID_ARG;
     }
 
-    emu_global_blocks_cnt = num_blocks;
+    emu_body_block_structs_execution_list = total_blocks_cnt;
     // Allocate array of pointers to block_handle_t
-    emu_global_blocks_structs = (void**)calloc(emu_global_blocks_cnt, sizeof(void*));
+    emu_global_blocks_structs = (void**)calloc(emu_body_block_structs_execution_list, sizeof(void*));
     if (!emu_global_blocks_structs) {
+        ESP_LOGE(_TAG, "Failed to allocate space for block structs");
         return EMU_ERR_NO_MEMORY;
     }
 
     // Allocate array of function pointers
-    emu_global_blocks_functions = (emu_block_func*)calloc(emu_global_blocks_cnt, sizeof(emu_block_func));
-    if (!emu_global_blocks_functions) {
+    emu_body_functions_execution_list = (emu_block_func*)calloc(emu_body_block_structs_execution_list, sizeof(emu_block_func));
+    if (!emu_body_functions_execution_list) {
         free(emu_global_blocks_structs);
         emu_global_blocks_structs = NULL;
+        ESP_LOGE(_TAG, "Failed to allocate space for blocks function pointers");
         return EMU_ERR_NO_MEMORY;
     }
+    LOG_I(_TAG, "Successfully allocated space for %d block structs and functions", total_blocks_cnt);
     return EMU_OK;
 }
 
-void emu_free_block_tables() {
+void emu_block_free_all_blocks() {
+    static const char* _TAG = "EMU_BLOCKS_FREE_ALL";
     if (emu_global_blocks_structs) {
-        for (uint16_t i = 0; i < emu_global_blocks_cnt; i++) {
+        for (uint16_t i = 0; i < emu_body_block_structs_execution_list; i++) {
             if (emu_global_blocks_structs[i]) {
                 free(emu_global_blocks_structs[i]); // free individual blocks if allocated
             }
@@ -78,19 +86,11 @@ void emu_free_block_tables() {
         emu_global_blocks_structs = NULL;
     }
 
-    if (emu_global_blocks_functions) {
-        free(emu_global_blocks_functions);
-        emu_global_blocks_functions = NULL;
+    if (emu_body_functions_execution_list) {
+        free(emu_body_functions_execution_list);
+        emu_body_functions_execution_list = NULL;
     }
 
-    emu_global_blocks_cnt = 0;
-}
-
-emu_err_t emu_assign_block(uint16_t index, block_handle_t *block, emu_block_func func) {
-    if (index >= emu_global_blocks_cnt) {
-        return EMU_ERR_INVALID_ARG;
-    }
-    emu_global_blocks_structs[index] = block;
-    emu_global_blocks_functions[index] = func;
-    return EMU_OK;
+    emu_body_block_structs_execution_list = 0;
+    LOG_I(_TAG, "Succesfully cleared all created blocks");
 }

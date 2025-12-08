@@ -1,11 +1,12 @@
 #include "utils_global_access.h"
 #include "emulator_variables.h"
+#include "emulator_errors.h"
 #include "stdbool.h"
 #include "esp_log.h"
 #include "math.h"
 const static char* TAG = "Global_access";
 
-emu_err_t utils_global_var_acces_recursive(_global_val_acces_t *root, double *out){
+emu_err_t utils_global_var_acces_recursive(_global_acces_t *root, double *out){
     if (!out){
         ESP_LOGE(TAG, "No output provided to paste result");
         return EMU_ERR_NULL_POINTER;
@@ -15,7 +16,7 @@ emu_err_t utils_global_var_acces_recursive(_global_val_acces_t *root, double *ou
     }
     
     uint8_t idx_table[MAX_ARR_DIMS];
-    _global_val_acces_t *next_arr[MAX_ARR_DIMS] = {root->next0, root->next1, root->next2};
+    _global_acces_t *next_arr[MAX_ARR_DIMS] = {root->next0, root->next1, root->next2};
     for (uint8_t i = 0; i < MAX_ARR_DIMS; i++){
 
         if (NULL!=next_arr[i]) {
@@ -34,9 +35,9 @@ emu_err_t utils_global_var_acces_recursive(_global_val_acces_t *root, double *ou
 
     bool is_scalar = (idx_table[0] == UINT8_MAX && idx_table[1] == UINT8_MAX &&idx_table[2] == UINT8_MAX);
 
-    ESP_LOGI(TAG, "Target type=%d idx=%u scalar=%d idx=[%d,%d,%d]",
-            root->target_type, (unsigned)root->target_idx, is_scalar,
-            idx_table[0], idx_table[1], idx_table[2]);
+    // ESP_LOGI(TAG, "Target type=%d idx=%u scalar=%d idx=[%d,%d,%d]",
+    //         root->target_type, (unsigned)root->target_idx, is_scalar,
+    //         idx_table[0], idx_table[1], idx_table[2]);
 
     /* Bounds checking */
     if (is_scalar) {

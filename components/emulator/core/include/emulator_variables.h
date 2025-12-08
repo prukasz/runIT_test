@@ -2,10 +2,11 @@
 #include <stdbool.h>
 #include <string.h>
 #include "emulator_types.h"
+#include "emulator_errors.h"
 #include "gatt_buff.h"
 #include "math.h"
 
-extern const char *DATA_TYPE_NAMES[9];
+extern const char *DATA_TYPE_TO_STR[9];
 
 #define MAX_VAR_IDX_SIZE 254
 #define MAX_ARR_DIM_SIZE 254
@@ -89,6 +90,15 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
 * @brief reset created memory
 */
 void emu_variables_reset(emu_mem_t *mem);
+
+/**
+ * @brief Set given value to selected memory idx with auto clamping 
+ * @param type Target type 
+ * @param ixd Target idx
+ * @param idx_table Target indices
+ * @param value value to be set 
+ */
+emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR_DIMS], double value);
 
 /**
  * @brief Returns size of variables in bytes
