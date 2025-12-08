@@ -1,5 +1,5 @@
-from enum import Enum
-class DataTypes(Enum):
+from enum import IntEnum 
+class DataTypes(IntEnum):
     """Corresponds to the C enum data_types_t."""
     DATA_UI8  = 0
     DATA_UI16 = 1
@@ -11,12 +11,12 @@ class DataTypes(Enum):
     DATA_D    = 7
     DATA_B    = 8
 
-class BlockTypes(Enum):
+class BlockTypes(IntEnum):
     """Corresponds to the C enum block_type_t."""
     BLOCK_MATH = 1
     BOCK_GLOBAL_SET = 254
 
-class Order(Enum):
+class Order(IntEnum):
     ORD_STOP_BYTES           = 0x0000
     ORD_START_BYTES          = 0xFFFF
     ORD_PARSE_INTO_VARIABLES = 0xDDDD
@@ -35,7 +35,7 @@ class Order(Enum):
     ORD_EMU_FILL_BLOCKS_LIST     = 0xb200
 
 
-class Headers(Enum):
+class Headers(IntEnum):
     """Specific block headers for Scalars and Arrays."""
     # Unsigned 8-bit
     H_TABLE_UI8  = 0xFF10
@@ -64,3 +64,5 @@ class Headers(Enum):
     # Boolean
     H_TABLE_B    = 0xFF90
     H_SCALAR_B   = 0xFF91
+
+    H_START_REFERENCE = 0xF0

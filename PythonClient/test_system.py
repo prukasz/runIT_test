@@ -1,5 +1,10 @@
+<<<<<<< HEAD
 from Sender.reference_test.Variables import DataStore
 from globals import Ref, Global_reference
+=======
+from References import Ref, Global_reference
+
+>>>>>>> d9186c7 (python test code)
 
 # ==========================================
 # HELPER FUNCTIONS
