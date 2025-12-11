@@ -6,6 +6,6 @@
 /**
 *@brief compute block - handling math operations
 */
-emu_err_t block_math(void* src);
+emu_err_t block_math(block_handle_t *src);
 
 

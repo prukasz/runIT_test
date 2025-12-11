@@ -1,37 +1,47 @@
 #include "utils_block_in_q_access.h"
 #include "emulator_variables.h"
 #include "emulator_errors.h"
+#include "math.h"
 #include "esp_log.h"
 
-
-double utils_get_in_val_autoselect(uint8_t idx, block_handle_t *block){
+emu_err_t utils_get_in_val_autoselect(uint8_t idx, block_handle_t *block, double *out){
+    static const char* TAG = "GET IN AUTOSELECT";
     double result = 0.0;
+    if(!out||!block){
+        LOG_E(TAG, "No block provided or output provided");
+        return EMU_ERR_NULL_PTR;
+    }
     if(idx<block->in_cnt){
         emu_err_t err = utils_get_in_val_safe(idx, block, &result);
         if(EMU_OK!=err){
-            ESP_LOGE("BLOCK INPUT", "Can't retrive input value, error %d", err);
+            ESP_LOGE(TAG, "Can't retrive input value, error %s", EMU_ERR_TO_STR(err));
+            return err;
         }
-        return result;
     }else{
         uint8_t _idx = idx - block->in_cnt;
         if (_idx >= block->global_reference_cnt){
-            ESP_LOGE("BLOCK INPUT", "Can't retrive assgined global value out index %d out of bonds", idx);
+            ESP_LOGE(TAG, "Can't retrive assgined global value out index %d out of bonds", idx);
             return result;
         }
         emu_err_t err = utils_global_var_acces_recursive(block->global_reference[_idx], &result);
         if(EMU_OK!=err){
-            ESP_LOGE("BLOCK INPUT", "Can't retrive assgined global value, error %d", err);
+            ESP_LOGE("BLOCK INPUT", "Can't retrive assgined global value, error %s", EMU_ERR_TO_STR(err));
+            return err;
         }
     }
-    return result;
+    *out = result;
+    return EMU_OK;
 }
 
 
 emu_err_t utils_get_in_val_safe(uint8_t in_num, block_handle_t* block, double* out) {
-    if (!block){
-        return EMU_ERR_NULL_POINTER;
+    static const char* TAG = "GET IN SAFE";
+    if (!out||!block){
+        LOG_E(TAG, "No block provided or output provided");
+        return EMU_ERR_NULL_PTR;
     }else if(in_num >= block->in_cnt){
-        return EMU_ERR_MEM_OUT_OF_BOUNDS;
+        LOG_E(TAG, "Tried to acces input out of bonds %d", in_num);
+        return EMU_ERR_MEM_INVALID_IDX;
     }
     double val = 0.0;
     data_types_t type = block->in_data_type_table[in_num];
@@ -91,7 +101,7 @@ emu_err_t utils_get_in_val_safe(uint8_t in_num, block_handle_t* block, double* o
             break;
         }
         default:
-            val = 0.0;
+            LOG_E(TAG, "Invalid type");
             break;
     }
     *out = val;
@@ -99,10 +109,13 @@ emu_err_t utils_get_in_val_safe(uint8_t in_num, block_handle_t* block, double* o
 }
 
 emu_err_t utils_get_in_val(uint8_t in_num, block_handle_t* block, void* out) {
+    static const char* TAG = "GET IN ";
     if (!block || !out) {
-        return EMU_ERR_NULL_POINTER;
+        LOG_E(TAG, "No block provided or output provided");
+        return EMU_ERR_NULL_PTR;
     } else if (in_num >= block->in_cnt) {
-        return EMU_ERR_MEM_OUT_OF_BOUNDS;
+        LOG_E(TAG, "Tried to acces input out of bonds %d", in_num);
+        return EMU_ERR_MEM_INVALID_IDX;
     }
 
     void* src = (uint8_t*)block->in_data + block->in_data_offsets[in_num];
@@ -114,17 +127,20 @@ emu_err_t utils_get_in_val(uint8_t in_num, block_handle_t* block, void* out) {
     return EMU_OK;
 }
 
-emu_err_t utils_set_q_val_safe(block_handle_t* block, uint8_t q_id, double val)
+emu_err_t utils_set_q_val_safe(block_handle_t* block, uint8_t q_num, double val)
 {
+    static const char *TAG = "SET Q SAFE";
     if (!block){
-        return EMU_ERR_NULL_POINTER;
-    }else if(q_id >= block->q_cnt){
-        ESP_LOGE("SET Q VAL", "Index eut of bonds");
+        LOG_E(TAG, "No block provided");
+        return EMU_ERR_NULL_PTR;
+    }else if(q_num >= block->q_cnt){
+        LOG_E(TAG, "Tried to acces output out of bonds %d", q_num);
         return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
 
-    void* dst = (uint8_t*)block->q_data + block->q_data_offsets[q_id];
-    data_types_t type = block->q_data_type_table[q_id];
+    LOG_I(TAG, "To Q number %d of type %s will tried to be set value: %lf", q_num, DATA_TYPE_TO_STR[block->q_data_type_table[q_num]], val);
+    void* dst = (uint8_t*)block->q_data + block->q_data_offsets[q_num];
+    data_types_t type = block->q_data_type_table[q_num];
 
     switch(type) {
         case DATA_UI8:  
@@ -184,14 +200,18 @@ emu_err_t utils_set_q_val_safe(block_handle_t* block, uint8_t q_id, double val)
     return EMU_OK;
 }
 
-emu_err_t utils_set_q_val(block_handle_t* block, uint8_t q_idx, void* val) {
+emu_err_t utils_set_q_val(block_handle_t* block, uint8_t q_num, void* val) {
+    static const char *TAG = "SET Q";
     if (!block || !val) {
-        return EMU_ERR_NULL_POINTER;
-    } else if (q_idx >= block->q_cnt) {
+        LOG_E(TAG, "No block or value to set provided");
+        return EMU_ERR_NULL_PTR;
+    } else if (q_num >= block->q_cnt) {
+        LOG_E(TAG, "Tried to acces output out of bonds %d", q_num);
         return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
-    void* dst = (uint8_t*)block->q_data + block->q_data_offsets[q_idx];
-    size_t size_to_copy = data_size(block->q_data_type_table[q_idx]);
+    LOG_I(TAG, "To Q number %d of type %s will tried to be set value of unknown provided type", q_num, DATA_TYPE_TO_STR[block->q_data_type_table[q_num]]);
+    void* dst = (uint8_t*)block->q_data + block->q_data_offsets[q_num];
+    size_t size_to_copy = data_size(block->q_data_type_table[q_num]);
     if (size_to_copy > 0) {
         memcpy(dst, val, size_to_copy);
     }

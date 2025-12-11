@@ -31,7 +31,7 @@ typedef struct{
 extern emu_status_t emu_global_status;
 //Set that wtd is triggered
 #define WTD_SET()        (emu_global_status.wtd.wtd_triggered = true)
-//Is wtd is triggered?
+//Is wtd triggered?
 #define WTD_TRIGGERED()  (emu_global_status.wtd.wtd_triggered)
 //Reset wtd counter and trigger
 #define WTD_RESET()      (emu_global_status.wtd.wtd_triggered = false, emu_global_status.wtd.loops_skipped = 0)

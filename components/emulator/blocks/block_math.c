@@ -1,24 +1,24 @@
 #include "block_math.h"
 
 int cnt;
-emu_err_t block_math(void* block_data){
-    block_handle_t *block = (block_handle_t*)block_data;
-    _global_acces_t *test = block->global_reference[0];
+emu_err_t block_math(block_handle_t* block_data){
     double val ;
-    uint8_t table[3]= {0xFF,0xFF,0xFF};
-    //ESP_LOGI("GLOBALACCES","resuld by hand %d",MEM_GET_U8(0,table));
+    // uint8_t table[3]= {0xFF,0xFF,0xFF};
+    // //ESP_LOGI("GLOBALACCES","resuld by hand %d",MEM_GET_U8(0,table));
 
-    uint8_t table2[3]= {0x01,0xFF,0xFF};
-    //ESP_LOGI("GLOBALACCES","res uld by hand2 %d",MEM_GET_U16(0,table2));
-    if(block->block_id == 0){
+    // uint8_t table2[3]= {0x01,0xFF,0xFF};
+    // //ESP_LOGI("GLOBALACCES","res uld by hand2 %d",MEM_GET_U16(0,table2));
+    if(block_data->block_idx == 0){
         double result = 0.0;
-        utils_global_var_acces_recursive(test, &result);
-        utils_global_var_acces_recursive(test, &result);
-        utils_global_var_acces_recursive(test, &result);
-        utils_global_var_acces_recursive(test, &result);
-        utils_global_var_acces_recursive(test, &result);
-        //ESP_LOGI("GLOBALACCES","resuld %lf", result);
+        //utils_global_var_acces_recursive(block_data->global_reference[0], &result);
+        //ESP_LOGI("GLOBALACCES","result1 %lf", result);
+        //utils_global_var_acces_recursive(block_data->global_reference[1], &result);
+        //ESP_LOGI("GLOBALACCES","result2 %lf", result);
+        // utils_global_var_acces_recursive(test, &result);
+        // utils_global_var_acces_recursive(test, &result);
+        // utils_global_var_acces_recursive(test, &result);
+       
     }
-    block_pass_results(block);
+    block_pass_results(block_data);
     return EMU_OK;      
-}   
+    }   
