@@ -3,6 +3,7 @@
 #include "gatt_buff.h"
 #include "emulator_types.h"
 #include "emulator_errors.h"
+#include "emulator_parse.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
