@@ -1,7 +1,7 @@
 #pragma once 
 
 //comment to disable excess logging 
-//#define ENABLE_LOGGING 1
+#define ENABLE_LOGGING 1
 
 /**
  * @brief Debug logging for non essential code parts

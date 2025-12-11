@@ -47,15 +47,15 @@ __attribute__((always_inline)) static inline emu_err_t emu_execute_code(block_ha
 
     for (uint16_t i = 0; i < total_block_cnt; i++) {
         LOG_I(_TAG, "Now will execute block %d", i);
-        if(CHECK_ALL_N(block_struct_list[i]->in_set, block_struct_list[i]->in_cnt)){
+        //if(CHECK_ALL_N(block_struct_list[i]->in_set, block_struct_list[i]->in_cnt)){
             emu_err_t err = (block_struct_list[i])->block_function(block_struct_list[i]);
             if (err != EMU_OK) {
                 ESP_LOGE(TAG, "Block %d failed during execution, error: %s", i, EMU_ERR_TO_STR(err));
                 return err;
-            }
-        }else{
-            ESP_LOGW(TAG, "block %d skipped, some inputs not updated", i);
-        }
+           }
+        //}else{
+        //    ESP_LOGW(TAG, "block %d skipped, some inputs not updated", i);
+        //}
     }
     return EMU_OK;
 }

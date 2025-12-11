@@ -64,12 +64,13 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem)
         return EMU_ERR_NULL_PTR;
     }
     size_t total_size = 0;
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[0],  int8_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[1],  int16_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[2],  int32_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[3],  uint8_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[4],  uint16_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[5],  uint32_t);
+    
+    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[0],  uint8_t);
+    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[1],  uint16_t);
+    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[2],  uint32_t);
+    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[3],  int8_t);
+    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[4],  int16_t);
+    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[5],  int32_t);
     ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[6],  float);
     ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[7],  double);
     ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[8],  bool);
@@ -80,16 +81,18 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem)
         emu_variables_reset(mem);
         return EMU_ERR_NO_MEM;
     }
+    
     uint8_t* current_ptr = (uint8_t*)mem->_base_ptr;
-    SETUP_PTR(mem, i8,  0, current_ptr, false);
-    SETUP_PTR(mem, i16, 1, current_ptr, false);
-    SETUP_PTR(mem, i32, 2, current_ptr, false);
-    SETUP_PTR(mem, u8,  3, current_ptr, false);
-    SETUP_PTR(mem, u16, 4, current_ptr, false);
-    SETUP_PTR(mem, u32, 5, current_ptr, false);
-    SETUP_PTR(mem, f,   6, current_ptr, false);
-    SETUP_PTR(mem, d,   7, current_ptr, false);
-    SETUP_PTR(mem, b,   8, current_ptr, false);
+    
+    SETUP_PTR(mem, u8,  DATA_UI8, current_ptr, false);
+    SETUP_PTR(mem, u16, DATA_UI16, current_ptr, false);
+    SETUP_PTR(mem, u32, DATA_UI32, current_ptr, false); 
+    SETUP_PTR(mem, i8,  DATA_I8, current_ptr, false);
+    SETUP_PTR(mem, i16, DATA_I16, current_ptr, false);
+    SETUP_PTR(mem, i32, DATA_I32, current_ptr, false);
+    SETUP_PTR(mem, f,   DATA_F, current_ptr, false);
+    SETUP_PTR(mem, d,   DATA_D, current_ptr, false);
+    SETUP_PTR(mem, b,   DATA_B, current_ptr, false);
 
     ESP_LOGI(TAG, "Single variables dataholder created successfully");
     return EMU_OK;
