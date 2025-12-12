@@ -5,6 +5,7 @@ from References import Global_reference, Ref
 from Variables import VariablesStore
 from DumpVariables import VariablesDump
 import struct
+from MathExpressionBuilder import MathExpression
 
 @dataclass
 class QConnection:
@@ -127,10 +128,16 @@ if __name__ == "__main__":
         in_data_type_table=[DataTypes.DATA_F],
         q_data_type_table=[DataTypes.DATA_F],
         q_connections_table=[conn1],
-        global_reference=[ref1, ref2] 
+        global_reference=[ref1, ref2]
     )
     
+    
+
     print(blk)
+    expr = MathExpression("(in_1 + in_2) * 2.5", block_id=1)
+    expr2 = MathExpression("in_2 + in_3 - in_1 * 4 / sqrt(9)", block_id=2)
+    print(expr)
+    print(expr2)
 
 
 
