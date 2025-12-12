@@ -62,6 +62,7 @@ static const char *TAG_PARSE = "BLOCK ALLOCATION";
 void free_single_block(block_handle_t* block) {
     if (!block) return;
 
+    
     // Free input-related memory
     if (block->in_data_type_table) free(block->in_data_type_table);
     if (block->in_data_offsets) free(block->in_data_offsets);
@@ -73,7 +74,7 @@ void free_single_block(block_handle_t* block) {
     if (block->q_data) free(block->q_data);
 
     // Free connections table
-    if (block->q_connections_table) {
+    if (block->q_connections_table && block->q_cnt) {
         for (uint8_t q = 0; q < block->q_cnt; q++) {
             q_connection_t* conn = &block->q_connections_table[q];
             if (conn->target_blocks_id_list) free(conn->target_blocks_id_list);
@@ -127,7 +128,7 @@ void emu_blocks_free_all(block_handle_t** blocks_list, uint16_t blocks_cnt) {
         LOG_I(TAG_PARSE, "Now will free block %d", i);
         free_single_block(blocks_list[i]);
     }
-    free(blocks_list);
+    if(blocks_list){free(blocks_list);}
 }
 
 

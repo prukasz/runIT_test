@@ -438,11 +438,12 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         for (uint8_t d = 1; d < arr->num_dims; d++) total_size *= arr->dims[d]; \
         total_size *= sizeof(TYPE);                                             \
         uint32_t byte_offset = (uint32_t)idx_offset * sizeof(TYPE);             \
-        if ((byte_offset + ((DATA_LEN)-ARR_DATA_START_IDX)) <= total_size) {    \
+        if ((byte_offset + DATA_LEN) <= total_size) {    \
             uint8_t *dest = (uint8_t *)arr->data + byte_offset;                 \
             memcpy(dest, &data[ARR_DATA_START_IDX], (DATA_LEN));                \
         } else {                                                                \
-            ESP_LOGW("Parse", "Bounds: " #TYPE " idx %d", arr_index);           \
+            ESP_LOGW(TAG, "Out of bounds " #TYPE " idx %d, start idx %d, target size %d, provided size %d",\
+                 arr_index, idx_offset, total_size, DATA_LEN);\
         }                                                                       \
         break;                                                                  \
     }
@@ -461,7 +462,6 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         break;                                                              \
     }
 
-#define GET_ARR_START_OFFSET(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
 emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
     uint8_t *data;
     size_t len;
@@ -474,7 +474,7 @@ emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
         uint8_t  arr_index = data[HEADER_SIZE];
         /*offset is for when array only needs to be filled from certain point so we don't need 
         padding as we want to set only certain value */
-        uint16_t idx_offset    = GET_ARR_START_OFFSET(data);    
+        uint16_t idx_offset    = READ_U16(data,3); 
         uint16_t arr_bytes_to_copy = len - ARR_DATA_START_IDX;
 
         /*switch header type*/

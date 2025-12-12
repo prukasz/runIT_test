@@ -43,6 +43,7 @@ static emu_err_t _interface_execute_loop_start_execution(void);
 /***************************************************************************/
 
 extern block_handle_t **emu_block_struct_execution_list;
+extern uint16_t emu_block_total_cnt;
 
 void emu_interface_task(void* params){
     ESP_LOGI(TAG, "Emulator interface task created");
@@ -75,12 +76,14 @@ void emu_interface_task(void* params){
                     _interface_execute_loop_stop_execution();
                     chr_msg_buffer_clear(source);
                     emu_variables_reset(&mem);
-                    emu_blocks_free_all(emu_block_struct_execution_list,5);
+                    emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
+                    emu_block_total_cnt = 0 ;
                 
                     emu_parse_manager(PARSE_RESTART);
                     break;
                 case ORD_RESET_BLOCKS:
-                    emu_blocks_free_all(emu_block_struct_execution_list,5);
+                    emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
+                    emu_block_total_cnt = 0;
                     break;
                 case ORD_RESET_MGS_BUF:
                     ESP_LOGI(TAG, "Clearing Msg buffer");   
