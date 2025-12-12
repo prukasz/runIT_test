@@ -59,7 +59,7 @@ try:
         sys.exit(1)
 
     print("Connecting to ESP32...")
-    time.sleep(0.3)  # allow HCI to settle
+    time.sleep(0.01)  # allow HCI to settle
     esp = Peripheral(esp_mac)
     print("Connected!")
 

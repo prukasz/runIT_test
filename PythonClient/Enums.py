@@ -66,3 +66,4 @@ class Headers(IntEnum):
     H_SCALAR_B   = 0xFF91
 
     H_START_REFERENCE = 0xF0
+    H_BLOCKS_CNT = 0xB000
