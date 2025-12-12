@@ -25,7 +25,7 @@ typedef enum {
     EMU_OK = 0,
     EMU_ERR_INVALID_STATE,
     EMU_ERR_INVALID_ARG,
-    EMU_ERR_NO_MEMORY,
+    EMU_ERR_NO_MEM,
     EMU_ERR_ORD_START,
     EMU_ERR_ORD_CANNOT_EXECUTE,
     EMU_ERR_ORD_STOP,
@@ -34,16 +34,16 @@ typedef enum {
     EMU_ERR_MEM_INVALID_DATATYPE,
     EMU_ERR_UNLIKELY           =0xFFFF,  
     EMU_ERR_MEM_ALLOC          =0xFF00,
-    EMU_ERR_MEM_INVALID_INDEX  =0xFF01,
+    EMU_ERR_MEM_INVALID_IDX  =0xFF01,
     EMU_ERR_MEM_INVALID_ACCESS =0xFF02,
     EMU_ERR_MEM_OUT_OF_BOUNDS  =0xFF03,
-    EMU_ERR_NULL_POINTER       =0xFF04,   
+    EMU_ERR_NULL_PTR       =0xFF04,   
     EMU_ERR_DIV_BY_ZERO        =0xBB01,
     EMU_ERR_OUT_OF_RANGE       =0xBB02,
     EMU_ERR_INVALID_PARAMETER  =0xBB03,
     EMU_ERR_PARSE_INVALID_REQUEST,
     EMU_ERR_DENY,
-    EMU_ERR_CANT_FIND,
+    EMU_ERR_NOT_FOUND,
 }emu_err_t;
 
 const char* EMU_ERR_TO_STR(emu_err_t err_code);
@@ -54,4 +54,7 @@ const char* EMU_ERR_TO_STR(emu_err_t err_code);
     EMU_OK; \
 })
 
+
+
+extern const char *DATA_TYPE_TO_STR[9];
 

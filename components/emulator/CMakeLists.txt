@@ -9,8 +9,9 @@ idf_component_register(
         "core/emulator_errors.c"
         "utils/utils_global_access.c"
         "utils/utils_block_in_q_access.c"
+        "utils/utils_parse.c"
         "blocks/block_math.c"
-        "blocks/block_global_access.c"
+        "blocks/block_set_global.c"
 
     INCLUDE_DIRS 
         "blocks/include"

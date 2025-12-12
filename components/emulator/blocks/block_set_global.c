@@ -1,10 +1,10 @@
-#include "block_global_access.h"
+#include "block_set_global.h"
 #include "utils_block_in_q_access.h"
 
-static const char* TAG = "SET_GLOBAL_DBG";
+static const char* TAG = "B_SET_GLOBAL";
 emu_err_t block_set_global(void* block_data){
     block_handle_t *block = (block_handle_t*)block_data;
-    _global_acces_t *root = block->extras;
+    global_acces_t *root = block->extras;
     double to_set = utils_get_in_val_safe(0, block, &to_set);
     uint8_t idx[3]= {root->target_custom_indices[0], root->target_custom_indices[1], root->target_custom_indices[2]};
 
@@ -17,7 +17,6 @@ emu_err_t block_set_global(void* block_data){
         }
     }
     mem_set_safe(root->target_type, root->target_idx, idx, to_set);  
-    
     block_pass_results(block);
     return EMU_OK;
 }

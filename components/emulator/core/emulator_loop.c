@@ -89,15 +89,15 @@ emu_err_t emu_loop_init(void){
 
 
 emu_err_t emu_loop_start(void) {
-    if(LOOP_STATUS_CMP(LOOP_SET)){
+    if(LOOP_STATUS_CMP(LOOP_SET)&&(EMU_OK==emu_parse_manager(PARSE_CHEKC_CAN_RUN))){
         LOOP_SET_STATUS(LOOP_RUNNING);
         ESP_LOGI(TAG, "Starting loop first time");
         return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
-    }else if (LOOP_STATUS_CMP(LOOP_STOPPED)){
+    }else if (LOOP_STATUS_CMP(LOOP_STOPPED)&&(EMU_OK==emu_parse_manager(PARSE_CHEKC_CAN_RUN))){
         LOOP_SET_STATUS(LOOP_RUNNING);
         ESP_LOGI(TAG, "Starting loop after stop");
         return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
-    }else if (LOOP_STATUS_CMP(LOOP_HALTED)){
+    }else if (LOOP_STATUS_CMP(LOOP_HALTED)&&(EMU_OK==emu_parse_manager(PARSE_CHEKC_CAN_RUN))){
         ESP_LOGI(TAG, "Starting loop after halt");
         LOOP_SET_STATUS(LOOP_RUNNING);
         return esp_timer_start_periodic(loop_timer_handle, loop_period_us);

@@ -6,7 +6,6 @@
 #include "gatt_buff.h"
 #include "math.h"
 
-extern const char *DATA_TYPE_TO_STR[9];
 
 #define MAX_VAR_IDX_SIZE 254
 #define MAX_ARR_DIM_SIZE 254
@@ -31,7 +30,7 @@ _DEFINE_ARR_TYPE(float,    f)
 _DEFINE_ARR_TYPE(double,   d)
 _DEFINE_ARR_TYPE(bool,     b)
 
-
+typedef struct global_acces_t global_acces_t;   
 typedef struct {
     uint8_t single_cnt[TYPES_COUNT];
     //Common pointer for all "single varaibles"
@@ -274,6 +273,16 @@ Todo: rework so it caps value or round it
         }                                                                       \
     }                                                                           \
 })
+
+/**
+ * @brief Find variables packets, allocate space, create arrays and scalars
+ */
+emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem);
+/**
+ * @brief Find variables packets, fill created arrays and scalars
+ */
+emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem);
+
 
 /******************************************************************************************************** 
 *   VARIABLE ACCES AND USAGE 
