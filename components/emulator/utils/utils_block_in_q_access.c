@@ -20,7 +20,7 @@ emu_err_t utils_get_in_val_autoselect(uint8_t idx, block_handle_t *block, double
     }else{
         uint8_t _idx = idx - block->in_cnt;
         if (_idx >= block->global_reference_cnt){
-            ESP_LOGE(TAG, "Can't retrive assgined global value out index %d out of bonds", idx);
+            ESP_LOGE(TAG, "Can't retrive assgined global value out index %d out of bounds", idx);
             return result;
         }
         emu_err_t err = utils_global_var_acces_recursive(block->global_reference[_idx], &result);
@@ -40,7 +40,7 @@ emu_err_t utils_get_in_val_safe(uint8_t in_num, block_handle_t* block, double* o
         LOG_E(TAG, "No block provided or output provided");
         return EMU_ERR_NULL_PTR;
     }else if(in_num >= block->in_cnt){
-        LOG_E(TAG, "Tried to acces input out of bonds %d", in_num);
+        LOG_E(TAG, "Tried to acces input out of bounds %d", in_num);
         return EMU_ERR_MEM_INVALID_IDX;
     }
     double val = 0.0;
@@ -114,7 +114,7 @@ emu_err_t utils_get_in_val(uint8_t in_num, block_handle_t* block, void* out) {
         LOG_E(TAG, "No block provided or output provided");
         return EMU_ERR_NULL_PTR;
     } else if (in_num >= block->in_cnt) {
-        LOG_E(TAG, "Tried to acces input out of bonds %d", in_num);
+        LOG_E(TAG, "Tried to acces input out of bounds %d", in_num);
         return EMU_ERR_MEM_INVALID_IDX;
     }
 
@@ -134,7 +134,7 @@ emu_err_t utils_set_q_val_safe(block_handle_t* block, uint8_t q_num, double val)
         LOG_E(TAG, "No block provided");
         return EMU_ERR_NULL_PTR;
     }else if(q_num >= block->q_cnt){
-        LOG_E(TAG, "Tried to acces output out of bonds %d", q_num);
+        LOG_E(TAG, "Tried to acces output out of bounds %d", q_num);
         return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
 
@@ -206,7 +206,7 @@ emu_err_t utils_set_q_val(block_handle_t* block, uint8_t q_num, void* val) {
         LOG_E(TAG, "No block or value to set provided");
         return EMU_ERR_NULL_PTR;
     } else if (q_num >= block->q_cnt) {
-        LOG_E(TAG, "Tried to acces output out of bonds %d", q_num);
+        LOG_E(TAG, "Tried to acces output out of bounds %d", q_num);
         return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
     LOG_I(TAG, "To Q number %d of type %s will tried to be set value of unknown provided type", q_num, DATA_TYPE_TO_STR[block->q_data_type_table[q_num]]);

@@ -7,7 +7,7 @@
 
 
 static const char *TAG = "EMU_VARIABLES";
-
+#define HEADER_SIZE 2
 bool _parse_check_arr_header(uint8_t *data, uint8_t *step);
 
 bool _parse_check_arr_packet_size(uint16_t len, uint8_t step)
@@ -247,7 +247,7 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
         }
         //(macro returns -1 if cannot acces chosen cell)
         if (flat_idx == (size_t)-1){
-            LOG_E(TAG, "While accesing with idx [%d, %d ,%d], tried to access out of array bonds", idx_table[0], idx_table[1], idx_table[2]);
+            LOG_E(TAG, "While accesing with idx [%d, %d ,%d], tried to access out of array bounds", idx_table[0], idx_table[1], idx_table[2]);
             return EMU_ERR_MEM_OUT_OF_BOUNDS;
         }
     }else{
@@ -357,7 +357,7 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
 
         // Return error if index calculation failed
         if (flat_idx == (size_t)-1) {
-            LOG_E(TAG, "Tried to set variable not existing (out of bonds)");
+            LOG_E(TAG, "Tried to set variable not existing (out of bounds)");
             return EMU_ERR_MEM_OUT_OF_BOUNDS;
         }
         return EMU_OK;
@@ -367,7 +367,6 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
 
 
 #define PACKET_SINGLE_VAR_SIZE 11  //2 + 9 * type cnt
-#define HEADER_SIZE 2
 /*********************ARR cheks*****************/
 #define STEP_ARR_1D 2 // type, dim1
 #define STEP_ARR_2D 3 // type, dim1, dim2
@@ -439,7 +438,7 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         for (uint8_t d = 1; d < arr->num_dims; d++) total_size *= arr->dims[d]; \
         total_size *= sizeof(TYPE);                                             \
         uint32_t byte_offset = (uint32_t)idx_offset * sizeof(TYPE);             \
-        if ((byte_offset + (DATA_LEN)) <= total_size) {                         \
+        if ((byte_offset + ((DATA_LEN)-ARR_DATA_START_IDX)) <= total_size) {    \
             uint8_t *dest = (uint8_t *)arr->data + byte_offset;                 \
             memcpy(dest, &data[ARR_DATA_START_IDX], (DATA_LEN));                \
         } else {                                                                \
