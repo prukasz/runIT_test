@@ -177,6 +177,10 @@ emu_err_t emu_parse_fill_block_data(){
             {
                 case BLOCK_COMPUTE:
                 LOG_I(TAG, "Now will fill block data for block BLOCK_COMPUTE");
+                if(emu_parse_math_blocks(source)!=EMU_OK){
+                    ESP_LOGE(TAG, "While parsing math block data for block %d", i);
+                    return EMU_ERR_NO_MEM;
+                }
                 break;
 
                 default:
