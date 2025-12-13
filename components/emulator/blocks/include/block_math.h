@@ -30,12 +30,8 @@ typedef struct{
 
 typedef emu_err_t (*emu_block_func)(block_handle_t *block);
 
-emu_err_t emu_parse_math_block(chr_msg_buffer_t *source, size_t msg_index);
-emu_err_t __emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression);
-emu_err_t __emu_parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code);
-emu_err_t __emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
-emu_err_t __emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table);
-
+emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source, size_t msg_index);
+emu_err_t emu_math_block_free_expression(block_handle_t* block);
 /**
 *@brief compute block - handling math operations
 */

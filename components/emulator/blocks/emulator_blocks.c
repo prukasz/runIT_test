@@ -5,6 +5,7 @@
 #include "emulator_body.h"
 #include "utils_parse.h"
 #include <math.h>
+#include "block_math.h"
 
 #define HEADER_SIZE 2
 
@@ -84,7 +85,7 @@ void free_single_block(block_handle_t* block) {
             switch (block->block_type)
             {
             case BLOCK_COMPUTE:
-                //dummy (free content)
+                emu_math_block_free_expression(block);
                 break;
             default:
                 break;
