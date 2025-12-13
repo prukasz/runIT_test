@@ -3,6 +3,7 @@ from Variables import VariablesStore
 from DumpVariables import VariablesDump
 from BlockStorage import BlocksStore
 from Enums import Order, Headers
+import struct 
 
 class FullDump:
     def __init__(self, var_store: VariablesStore, blk_store: BlocksStore):
@@ -25,7 +26,7 @@ class FullDump:
         # Write Header: 00FF <CountHex>
         # Formatted as 4-char Hex (e.g., 0002)
         writer.write("dddd\n")
-        writer.write(f"{Headers.H_BLOCKS_CNT.value:04X} {block_cnt:04X}\n")
+        writer.write(f"{Headers.H_BLOCKS_CNT.value:04X} {struct.pack("<H", block_cnt).hex().upper()}\n")
 
         # 3. DUMP BLOCKS (BB...)
         for blk in all_blocks:

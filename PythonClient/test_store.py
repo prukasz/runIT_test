@@ -16,6 +16,7 @@ def main():
     # Create some data to reference
     var_store.add_scalar("sys_tick",   DataTypes.DATA_UI32, 1000)
     var_store.add_scalar("gain_A",     DataTypes.DATA_F,    1.5)
+    var_store.add_scalar("nie_wiem",     DataTypes.DATA_I32, -2137)
     var_store.add_scalar("gain_B",     DataTypes.DATA_F,    -0.5)
     var_store.add_array("sensor_raw",  DataTypes.DATA_UI16, [10, 20, 30, 40], [4])
     var_store.add_array("calib_map",   DataTypes.DATA_F,    [0.1]*16, [4, 4])
@@ -30,7 +31,7 @@ def main():
     # Refs: sys_tick, sensor_raw[0]
     conn_0 = QConnection(target_blocks_id_list=[3], target_inputs_list=[0])
     
-    ref0_a = Ref("sys_tick").build(var_store)
+    ref0_a = Ref("nie_wiem").build(var_store)
     ref0_b = Ref("sensor_raw")[0].build(var_store)
 
     blk_0 = BlockHandle(
