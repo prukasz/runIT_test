@@ -5,175 +5,23 @@
 #include <stdbool.h>
 
 int cnt;
-extern block_handle_t **emu_block_struct_execution_list;
-static inline bool is_greater(double a, double b);
-static inline bool is_equal(double a, double b);
-static inline bool is_zero(double a);
+emu_err_t block_math(block_handle_t* block_data){
+    double val ;
+    // uint8_t table[3]= {0xFF,0xFF,0xFF};
+    // //ESP_LOGI("GLOBALACCES","resuld by hand %d",MEM_GET_U8(0,table));
 
-emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
-emu_err_t _emu_parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code);
-emu_err_t _emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
-emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table);
-emu_err_t _clear_expression_internals(expression_t* expr);
-
-static const char* TAG = "MATH_PARSER";
-
-emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
-{
-    uint8_t *data;
-    size_t len;
-    block_handle_t *block_ptr;
-
-    size_t buff_size = chr_msg_buffer_size(source);
-    size_t search_idx = 0;
-
-    while(search_idx < buff_size)
-    {
-        chr_msg_buffer_get(source, search_idx, &data, &len);
-
-        if (data[0] == 0xbb && data[1] == 0x01 && data[2] == 0x01)
-        {
-            LOG_I(TAG, "Detected Constant Table header");
-            uint16_t block_id = READ_U16(data, 3);
-            block_ptr = emu_block_struct_execution_list[block_id];
-            block_ptr->extras = calloc(1, sizeof(expression_t));
-            if(!block_ptr->extras){
-                ESP_LOGE(TAG, "No memory to allocate math block extras for block %d", block_id);
-                return EMU_ERR_NO_MEM;
-            }
-            size_t const_msg_cnt = 1;
-            if(_emu_parse_math_const(source, search_idx, (block_ptr->extras), &const_msg_cnt) != EMU_OK){
-                ESP_LOGE(TAG, "Error while parsing constant table for block %d", block_id);
-                emu_math_block_free_expression(block_ptr);
-                return EMU_ERR_NO_MEM;
-            }
-        }
-        else
-        {
-            search_idx++;
-        }
-    }
-    
-    search_idx = 0;
-    while(search_idx < buff_size)
-    {
-        chr_msg_buffer_get(source, search_idx, &data, &len);
-
-        if (data[0] == 0xbb && data[1] == 0x01 && data[2] == 0x02)
-        {
-            LOG_I(TAG, "Detected Expression header");
-            uint16_t block_id = READ_U16(data, 3);
-            block_ptr = emu_block_struct_execution_list[block_id];
-            size_t const_msg_cnt = 1;
-            if(_emu_parse_math_expr(source, search_idx, (block_ptr->extras), &const_msg_cnt) != EMU_OK){
-                ESP_LOGE(TAG, "Error while parsing expression for block %d", block_id);
-                emu_math_block_free_expression(block_ptr);
-                return EMU_ERR_NO_MEM;
-            }
-        }
-        else
-        {
-            search_idx++;
-        }
-    }
-    
-    return EMU_OK;
-}
-
-emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt)
-{
-    uint8_t *data;
-    size_t len;
-    size_t len_total;
-    uint8_t op_count = 0;
-    uint8_t idx_start = 0;
-
-    chr_msg_buffer_get(source, msg_index, &data, &len);
-    op_count = data[5];
-    expression->count = op_count;
-    expression->code = (instruction_t*)calloc(op_count, sizeof(instruction_t));
-    if(!expression->code){
-        ESP_LOGE(TAG, "No memory to allocate math expression code");
-
-        return EMU_ERR_NO_MEM;
-    }
-    len_total = op_count * 2 + 1;
-    _emu_parse_math_expr_msg(data, len, 6, &idx_start, expression->code);
-    
-    while(len_total>(len-5)){
-        len_total = len_total - (len - 5);
-        chr_msg_buffer_get(source, msg_index++, &data, &len);
-        _emu_parse_math_expr_msg(data, len, 5, &idx_start, expression->code);
-        (*const_msg_cnt)++;
-    }
-
-    return EMU_OK;
-}
-
-emu_err_t _emu_parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code)
-{
-    for(int i = start_index; i<len; i+=2){
-        memcpy(&(code[(*idx_start)].op), &data[i], 1);
-        memcpy(&(code[(*idx_start)].input_index), &data[i+1], 1);
-        (*idx_start)++;
-    }
-    return EMU_OK;
-}
-
-emu_err_t _emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt){
-
-    uint8_t *data;
-    size_t len;
-    size_t len_total;
-    uint8_t const_cnt = 0;
-    uint8_t idx_start = 0;
-
-    chr_msg_buffer_get(source, msg_index, &data, &len);
-    const_cnt = data[5];
-    len_total = const_cnt * sizeof(double) + 1;
-    expression->constant_table = (double*)calloc(const_cnt, sizeof(double));
-    if(!expression->constant_table){
-        ESP_LOGE(TAG, "No memory to allocate math expression constant table");
-        return EMU_ERR_NO_MEM;
-    }
-    _emu_parse_math_const_msg(data, len, 6, &idx_start, expression->constant_table);
-
-    while(len_total>(len-5)){
-        len_total = len_total - (len - 5);
-        chr_msg_buffer_get(source, msg_index++, &data, &len);
-        _emu_parse_math_const_msg(data, len, 5, &idx_start, expression->constant_table);
-        (*const_msg_cnt)++;
-    }
-    return EMU_OK;
-}
-
-
-emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table){
-    for(size_t i = start_index; i<len; i=i+sizeof(double)){
-        memcpy(&(table[*idx_start]), &data[i], sizeof(double));
-        (*idx_start)++;
-    }
-    return EMU_OK;
-}
-
-
-emu_err_t block_math(block_handle_t* block){
-    // double val ;
-    // // uint8_t table[3]= {0xFF,0xFF,0xFF};
-    // // //ESP_LOGI("GLOBALACCES","resuld by hand %d",MEM_GET_U8(0,table));
-
-    // // uint8_t table2[3]= {0x01,0xFF,0xFF};
-    // // //ESP_LOGI("GLOBALACCES","res uld by hand2 %d",MEM_GET_U16(0,table2));
-    // double result = 0.0;
-    // uint8_t table[3]= {255,255,255};
-    // ESP_LOGI("normall access","result1 %ld",MEM_GET_U32(0, table));
-    // utils_global_var_acces_recursive(block_data->global_reference[0], &result);
-    // ESP_LOGI("GLOBALACCES","result1 %lf", result);
-    // utils_global_var_acces_recursive(block_data->global_reference[1], &result);
-    // ESP_LOGI("GLOBALACCES","result2 %lf", result);
-    //     // utils_global_var_acces_recursive(test, &result);
-    //     // utils_global_var_acces_recursive(test, &result);
-    //     // utils_global_var_acces_recursive(test, &result);
+    // uint8_t table2[3]= {0x01,0xFF,0xFF};
+    // //ESP_LOGI("GLOBALACCES","res uld by hand2 %d",MEM_GET_U16(0,table2));
+    double result = 0.0;
+    uint8_t table[3]= {0,0,255};
+    ESP_LOGI("normall access","result1 %lf",MEM_GET_F(0, table));
+    utils_global_var_acces_recursive(block_data->global_reference[0], &result);
+    ESP_LOGI("GLOBALACCES","result1 %lf", result);
+    utils_global_var_acces_recursive(block_data->global_reference[1], &result);
+    ESP_LOGI("GLOBALACCES","result2 %lf", result);
+        // utils_global_var_acces_recursive(test, &result);
+        // utils_global_var_acces_recursive(test, &result);
+        // utils_global_var_acces_recursive(test, &result);
        
     expression_t* eval = (expression_t*)block->extras;
     double stack[16];

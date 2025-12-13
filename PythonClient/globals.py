@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
-from Sender.reference_test.Variables import DataStore, ScalarItem, ArrayItem 
+from Variables import DataStore, ScalarItem, ArrayItem 
 
 @dataclass
 class Global_reference:

@@ -265,5 +265,5 @@ class MathExpression:
 # ==========================================
 
 if __name__ == "__main__":
-    expr = MathExpression("pow(in_1, 2)", block_id=10)
+    expr = MathExpression("cos(sin(pow(in_1, 2)))", block_id=10)
     print(expr)

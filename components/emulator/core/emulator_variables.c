@@ -7,7 +7,7 @@
 
 
 static const char *TAG = "EMU_VARIABLES";
-
+#define HEADER_SIZE 2
 bool _parse_check_arr_header(uint8_t *data, uint8_t *step);
 
 bool _parse_check_arr_packet_size(uint16_t len, uint8_t step)
@@ -59,6 +59,7 @@ size_t cnt = is_array ? base->arr_cnt[index] : base->single_cnt[index];\
  */
 emu_err_t emu_variables_single_create(emu_mem_t *mem)
 {
+    //TO DO MEMORY ALIGNMENT
     if (!mem) {
         LOG_E(TAG, "No mem struct provided");
         return EMU_ERR_NULL_PTR;
@@ -246,7 +247,7 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
         }
         //(macro returns -1 if cannot acces chosen cell)
         if (flat_idx == (size_t)-1){
-            LOG_E(TAG, "While accesing with idx [%d, %d ,%d], tried to access out of array bonds", idx_table[0], idx_table[1], idx_table[2]);
+            LOG_E(TAG, "While accesing with idx [%d, %d ,%d], tried to access out of array bounds", idx_table[0], idx_table[1], idx_table[2]);
             return EMU_ERR_MEM_OUT_OF_BOUNDS;
         }
     }else{
@@ -356,7 +357,7 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
 
         // Return error if index calculation failed
         if (flat_idx == (size_t)-1) {
-            LOG_E(TAG, "Tried to set variable not existing (out of bonds)");
+            LOG_E(TAG, "Tried to set variable not existing (out of bounds)");
             return EMU_ERR_MEM_OUT_OF_BOUNDS;
         }
         return EMU_OK;
@@ -366,7 +367,6 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
 
 
 #define PACKET_SINGLE_VAR_SIZE 11  //2 + 9 * type cnt
-#define HEADER_SIZE 2
 /*********************ARR cheks*****************/
 #define STEP_ARR_1D 2 // type, dim1
 #define STEP_ARR_2D 3 // type, dim1, dim2
@@ -430,18 +430,22 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 
 #define ARR_DATA_START_IDX 5
 /*parse switch case generator for handling different types of arrays that needs to be filled*/
-#define HANDLE_ARRAY_CASE(HEADER, TYPE, MEMBER, DATA_LEN)                                      \
-    case HEADER: {                                                                   \
-        arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                   \
-        uint16_t total_size = arr->dims[0];                                        \
-        for (uint8_t d = 1; d < arr->num_dims; d++) total_size *= arr->dims[d];  \
-        total_size *= sizeof(TYPE);                                              \
-        if ((offset +(DATA_LEN)) <= total_size) {                            \
-            memcpy(&arr->data[offset], &data[ARR_DATA_START_IDX], (DATA_LEN));                 \
-        } else {                                                                 \
-            ESP_LOGW("Parse into variables", "Write out of bounds (" #TYPE " table %d)", arr_index); \
-        }                                                                        \
-        break;                                                                   \
+/**/
+#define HANDLE_ARRAY_CASE(HEADER, TYPE, MEMBER, DATA_LEN)                       \
+    case HEADER: {                                                              \
+        arr_##MEMBER##_t *arr = &mem->arr_##MEMBER[arr_index];                  \
+        uint16_t total_size = arr->dims[0];                                     \
+        for (uint8_t d = 1; d < arr->num_dims; d++) total_size *= arr->dims[d]; \
+        total_size *= sizeof(TYPE);                                             \
+        uint32_t byte_offset = (uint32_t)idx_offset * sizeof(TYPE);             \
+        if ((byte_offset + DATA_LEN) <= total_size) {    \
+            uint8_t *dest = (uint8_t *)arr->data + byte_offset;                 \
+            memcpy(dest, &data[ARR_DATA_START_IDX], (DATA_LEN));                \
+        } else {                                                                \
+            ESP_LOGW(TAG, "Out of bounds " #TYPE " idx %d, start idx %d, target size %d, provided size %d",\
+                 arr_index, idx_offset, total_size, DATA_LEN);\
+        }                                                                       \
+        break;                                                                  \
     }
 
 /*parse switch case generatoer for handling different types of single variables
@@ -458,7 +462,6 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         break;                                                              \
     }
 
-#define GET_ARR_START_OFFSET(data)   ((uint16_t)(((data[3]) << 8) | (data[4])))
 emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
     uint8_t *data;
     size_t len;
@@ -467,32 +470,35 @@ emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
     for (uint16_t i = 0; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
         if (len < HEADER_SIZE) continue;
-
-        uint8_t      arr_index = data[HEADER_SIZE];
-        uint16_t offset   = GET_ARR_START_OFFSET(data);    
+        //at idx is arr idx as we know the type
+        uint8_t  arr_index = data[HEADER_SIZE];
+        /*offset is for when array only needs to be filled from certain point so we don't need 
+        padding as we want to set only certain value */
+        uint16_t idx_offset    = READ_U16(data,3); 
         uint16_t arr_bytes_to_copy = len - ARR_DATA_START_IDX;
 
         /*switch header type*/
-        switch ((emu_header_t)(GET_HEADER(data))) {
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_0, uint8_t,  ui8,  arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_1, uint16_t, ui16, arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_2, uint32_t, ui32, arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_3, int8_t,   i8,   arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_4, int16_t,  i16,  arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_5, int32_t,  i32,  arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_6, float,    f,    arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_7, double,   d,    arr_bytes_to_copy)
-            HANDLE_ARRAY_CASE(EMU_H_VAR_DATA_8, bool,     b,    arr_bytes_to_copy)
+        emu_header_t header= (emu_header_t)(GET_HEADER(data));
+        switch (header) {
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_UI8,  uint8_t,  ui8,  arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_UI16, uint16_t, ui16, arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_UI32, uint32_t, ui32, arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_I8,   int8_t,   i8,   arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_I16,  int16_t,  i16,  arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_I32,  int32_t,  i32,  arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_F,    float,    f,    arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_D,    double,   d,    arr_bytes_to_copy)
+            HANDLE_ARRAY_CASE(EMU_H_VAR_ARR_B,    bool,     b,    arr_bytes_to_copy)
 
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S0, uint8_t,  u8,  len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S1, uint16_t, u16, len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S2, uint32_t, u32, len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S3, int8_t,   i8,  len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S4, int16_t,  i16, len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S5, int32_t,  i32, len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S6, float,    f,   len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S7, double,   d,   len)
-            HANDLE_SINGLE_CASE(EMU_H_VAR_DATA_S8, bool,     b,   len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_UI8,  uint8_t,  u8,  len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_UI16, uint16_t, u16, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_UI32, uint32_t, u32, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_I8,   int8_t,   i8,  len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_I16,  int16_t,  i16, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_I32,  int32_t,  i32, len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_F,    float,    f,   len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_D,    double,   d,   len)
+            HANDLE_SINGLE_CASE(EMU_H_VAR_SCAL_B,    bool,     b,   len)
             default:
                 break;
         }
