@@ -156,26 +156,10 @@ emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_in
     return EMU_OK;
 }
 
-
-// int cnt;
 emu_err_t block_math(block_handle_t* block){
-    // double val ;
-    // // uint8_t table[3]= {0xFF,0xFF,0xFF};
-    // // //ESP_LOGI("GLOBALACCES","resuld by hand %d",MEM_GET_U8(0,table));
-
-    // // uint8_t table2[3]= {0x01,0xFF,0xFF};
-    // // //ESP_LOGI("GLOBALACCES","res uld by hand2 %d",MEM_GET_U16(0,table2));
-    // double result = 0.0;
-    // uint8_t table[3]= {0,0,255};
-    // ESP_LOGI("normall access","result1 %lf",MEM_GET_F(0, table));
-    // utils_global_var_acces_recursive(block_data->global_reference[0], &result);
-    // ESP_LOGI("GLOBALACCES","result1 %lf", result);
-    // utils_global_var_acces_recursive(block_data->global_reference[1], &result);
-    // ESP_LOGI("GLOBALACCES","result2 %lf", result);
-    //     // utils_global_var_acces_recursive(test, &result);
-    //     // utils_global_var_acces_recursive(test, &result);
-    //     // utils_global_var_acces_recursive(test, &result);
-       
+    if(!block->extras){
+        return EMU_ERR_INVALID_DATA;
+    }
     expression_t* eval = (expression_t*)block->extras;
     double stack[16];
     int over_top = 0;
@@ -186,7 +170,7 @@ emu_err_t block_math(block_handle_t* block){
         switch(ins->op){
             case OP_VAR:
                 utils_get_in_val_autoselect(ins->input_index, block, &stack[over_top++]);
-                LOG_I("BLOCK_MATH", "Pushed variable value: %lf", stack[over_top-1]);
+                LOG_I(TAG, "Pushed variable value: %lf", stack[over_top-1]);
                 break;
 
             case OP_CONST:

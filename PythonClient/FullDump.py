@@ -1,50 +1,58 @@
 from typing import TextIO
-from Variables import VariablesStore
-from DumpVariables import VariablesDump
-from BlockStorage import BlocksStore
+from VariablesStorage import VariablesStorage
+from BlocksStorage import BlocksStorage
 from Enums import Order, Headers
 import struct 
 
 class FullDump:
-    def __init__(self, var_store: VariablesStore, blk_store: BlocksStore):
+    def __init__(self, var_store: VariablesStorage, blk_store: BlocksStorage):
         self.var_store = var_store
         self.blk_store = blk_store
 
     def write(self, writer: TextIO):
-        # 1. DUMP VARIABLES (FFFF ... EEEE)
-        # We reuse the existing logic which handles the FFFF header,
-        # variable counts, table definitions, and EEEE content.
-        var_dumper = VariablesDump(self.var_store)
-        var_dumper.write(writer)
+        # ==========================================
+        # 1. VARIABLE DEFINITIONS (FFFF ... EEEE)
+        # ==========================================
+        # Retrieve the header strings directly from storage
+        writer.write(self.var_store.get_dump_list_string() + "\n")
 
-        # 2. DUMP BLOCK HEADER (00FF + Count)
-        # Logic: 00FF is ORD_START_BLOCKS
-        # Format: 00FF XXXX (where XXXX is hex count)
+        # ==========================================
+        # 2. VARIABLE CONTENT VALUES
+        # ==========================================
+        # Retrieve the value strings directly from storage
+        content_str = self.var_store.get_dump_content_string()
+        if content_str:
+            writer.write(content_str + "\n")
+
+        # ==========================================
+        # 3. BLOCKS HEADER
+        # ==========================================
         all_blocks = self.blk_store.get_all_blocks()
         block_cnt = len(all_blocks)
         
-        # Write Header: 00FF <CountHex>
-        # Formatted as 4-char Hex (e.g., 0002)
-        writer.write("dddd\n")
-        writer.write(f"{Headers.H_BLOCKS_CNT.value:04X} {struct.pack("<H", block_cnt).hex().upper()}\n")
+        # Write Divider (DDDD)
+        writer.write("DDDD\n")
 
-        # 3. DUMP BLOCKS (BB...)
+        # Write Count Header: H_BLOCKS_CNT (00FF) + Count (Hex Little Endian)
+        # struct.pack("<H", block_cnt) handles the unsigned short conversion
+        cnt_hex = struct.pack("<H", block_cnt).hex().upper()
+        writer.write(f"{Headers.H_BLOCKS_CNT.value:04X} {cnt_hex}\n")
+
+        # ==========================================
+        # 4. BLOCKS CONTENT
+        # ==========================================
+        # Iterates over blocks in insertion order (guaranteed by BlocksStorage logic)
         for blk in all_blocks:
             writer.write(str(blk) + "\n")
 
-        # 4. DUMP TAIL MARKERS
-        # Fixed lines as requested: B100, B200, 2137, 1000
-        # Corresponds to Enums:
-        # B100 -> ORD_EMU_ALLOCATE_BLOCKS_LIST
-        # B200 -> ORD_EMU_FILL_BLOCKS_LIST    
-        # 2137 -> ORD_EMU_LOOP_INIT           
-        # 1000 -> ORD_EMU_LOOP_START          
-        
+        # ==========================================
+        # 5. TAIL MARKERS / EXECUTION ORDER
+        # ==========================================
         tail_markers = [
-            Order.ORD_EMU_ALLOCATE_BLOCKS_LIST,
-            Order.ORD_EMU_FILL_BLOCKS_LIST,
-            Order.ORD_EMU_LOOP_INIT,
-            Order.ORD_EMU_LOOP_START
+            Order.ORD_EMU_ALLOCATE_BLOCKS_LIST, # B100
+            Order.ORD_EMU_FILL_BLOCKS_LIST,     # B200
+            Order.ORD_EMU_LOOP_INIT,            # 2137
+            Order.ORD_EMU_LOOP_START            # 1000
         ]
 
         for marker in tail_markers:

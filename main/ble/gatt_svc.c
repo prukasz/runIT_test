@@ -112,10 +112,10 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             chr_msg_buffer_add(emu_in_buffer, temp, len); 
         }else{chr_msg_buffer_add(emu_in_buffer, temp, len);}// do not fill buff with commands(add to queue)
         free(temp);
-        if (notify_status_emu_in.chr_conn_handle_status && notify_status_emu_in.notify_status) {
-            ble_gatts_notify(chr_conn_handle_emu_in, chr_val_handle_emu_in);
-            ESP_LOGI(TAG, "sent confirmation");
-            }
+        // if (notify_status_emu_in.chr_conn_handle_status && notify_status_emu_in.notify_status) {
+        //     ble_gatts_notify(chr_conn_handle_emu_in, chr_val_handle_emu_in);
+        //     ESP_LOGI(TAG, "sent confirmation");
+        //     }
         }//end if op    
 
         return 0;

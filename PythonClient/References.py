@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Union
-from Variables import VariablesStore, ScalarItem, ArrayItem
+from VariablesStorage import VariablesStorage, ScalarItem, ArrayItem
 
 @dataclass
 class Global_reference:
@@ -43,6 +43,14 @@ class Global_reference:
         return " ".join(parts)
 
 class Ref:
+    # 1. Class-level variable to hold the storage
+    _store: Optional[VariablesStorage] = None
+
+    @classmethod
+    def set_store(cls, store: VariablesStorage):
+        """Call this ONCE at the start of your program to link the storage."""
+        cls._store = store
+
     def __init__(self, alias: str):
         self.alias = alias
         self._args: List[Union[int, 'Ref']] = []
@@ -55,7 +63,13 @@ class Ref:
             else: raise ValueError(f"Unknown item type: {type(item)}")
         return self
 
-    def build(self, store: VariablesStore) -> Global_reference:
+    # 2. build() now takes NO arguments
+    def build(self) -> Global_reference:
+        if Ref._store is None:
+            raise RuntimeError("You must call Ref.set_store(store) before building references!")
+        
+        # Use the global store
+        store = Ref._store
         target_item = store.get_item(self.alias)
         
         # Defaults
@@ -71,33 +85,23 @@ class Ref:
             t_id = target_item.dtype.value
             t_idx = target_item.index
 
-            # Determine how many dimensions actually exist
             num_valid_dims = 0
             if isinstance(target_item, ArrayItem):
                 num_valid_dims = len(target_item.dims)
             
-            # Iterate strictly over the 3 available slots (X, Y, Z)
             for i in range(3):
-                # 1. User provided a custom argument for this slot
                 if i < len(self._args):
                     arg = self._args[i]
-                    
                     if isinstance(arg, int):
-                        # Custom Static Index
                         final_static[i] = arg
-                        
                     elif isinstance(arg, Ref):
-                        # Dynamic Reference
-                        final_static[i] = 0 # Placeholder for dynamic logic
-                        child_refs[i] = arg.build(store)
-                
-                # 2. No user input -> Apply defaults based on variable type
+                        final_static[i] = 0 
+                        # Recursive call: Child .build() also uses global store
+                        child_refs[i] = arg.build() 
                 else:
                     if i < num_valid_dims:
-                        # Slot is a valid array dimension -> Default to 0
                         final_static[i] = 0
                     else:
-                        # Slot is unused (Scalar, or beyond array dims) -> Default to 255 (FF)
                         final_static[i] = 255
 
         return Global_reference(

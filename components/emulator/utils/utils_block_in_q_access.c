@@ -138,7 +138,7 @@ emu_err_t utils_set_q_val_safe(block_handle_t* block, uint8_t q_num, double val)
         return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
 
-    LOG_I(TAG, "To Q number %d of type %s will tried to be set value: %lf", q_num, DATA_TYPE_TO_STR[block->q_data_type_table[q_num]], val);
+    LOG_I(TAG, "To Q number %d type %s try to set: %lf", q_num, DATA_TYPE_TO_STR[block->q_data_type_table[q_num]], val);
     void* dst = (uint8_t*)block->q_data + block->q_data_offsets[q_num];
     data_types_t type = block->q_data_type_table[q_num];
 
@@ -209,7 +209,7 @@ emu_err_t utils_set_q_val(block_handle_t* block, uint8_t q_num, void* val) {
         LOG_E(TAG, "Tried to acces output out of bounds %d", q_num);
         return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
-    LOG_I(TAG, "To Q number %d of type %s will tried to be set value of unknown provided type", q_num, DATA_TYPE_TO_STR[block->q_data_type_table[q_num]]);
+    LOG_I(TAG, "To Q number %d type %s try to set val of unknown type", q_num, DATA_TYPE_TO_STR[block->q_data_type_table[q_num]]);
     void* dst = (uint8_t*)block->q_data + block->q_data_offsets[q_num];
     size_t size_to_copy = data_size(block->q_data_type_table[q_num]);
     if (size_to_copy > 0) {
