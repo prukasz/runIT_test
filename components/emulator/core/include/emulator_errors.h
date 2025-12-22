@@ -44,6 +44,7 @@ typedef enum {
     EMU_ERR_PARSE_INVALID_REQUEST,
     EMU_ERR_DENY,
     EMU_ERR_NOT_FOUND,
+    EMU_ERR_BLOCK_COMPUTE_INVALID_INDEX,
 }emu_err_t;
 
 const char* EMU_ERR_TO_STR(emu_err_t err_code);

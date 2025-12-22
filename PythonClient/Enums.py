@@ -14,7 +14,7 @@ class DataTypes(IntEnum):
 class BlockTypes(IntEnum):
     """Corresponds to the C enum block_type_t."""
     BLOCK_MATH = 1
-    BOCK_GLOBAL_SET = 254
+    BOCK_GLOBAL_SET = 2
 
 class Order(IntEnum):
     ORD_STOP_BYTES           = 0x0000
@@ -67,3 +67,15 @@ class Headers(IntEnum):
 
     H_START_REFERENCE = 0xF0
     H_BLOCKS_CNT = 0xB000
+
+DataTypesSizes = {
+    DataTypes.DATA_UI8:  1,
+    DataTypes.DATA_UI16: 2,
+    DataTypes.DATA_UI32: 4,
+    DataTypes.DATA_I8:   1,
+    DataTypes.DATA_I16:  2,
+    DataTypes.DATA_I32:  4,
+    DataTypes.DATA_F:    4,
+    DataTypes.DATA_D:    8,
+    DataTypes.DATA_B:    1,
+}

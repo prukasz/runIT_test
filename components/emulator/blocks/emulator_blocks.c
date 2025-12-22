@@ -5,7 +5,7 @@
 #include "emulator_body.h"
 #include "utils_parse.h"
 #include <math.h>
-#include "block_math.h"
+#include "blocks_all_list.h"
 
 #define HEADER_SIZE 2
 
@@ -13,6 +13,7 @@ extern void **emu_block_struct_execution_list;
 
 void block_pass_results(block_handle_t* block)
 {
+    static const char* TAG = "BLOCK_PASS_RESULTS";
     if (!block || !block->q_connections_table) return;
 
     for (uint8_t q_idx = 0; q_idx < block->q_cnt; q_idx++) {
@@ -38,8 +39,8 @@ void block_pass_results(block_handle_t* block)
                 case DATA_F:    { float tmp; memcpy(&tmp, src, sizeof(tmp)); val = tmp; } break;
                 case DATA_D:    { memcpy(&val, src, sizeof(double)); } break;
                 case DATA_B:    { uint8_t tmp; memcpy(&tmp, src, sizeof(tmp)); val = tmp != 0; } break;
-                default: ESP_LOGE("COPY_DBG","unknown src type %d", src_type); continue;
-            }
+                default: ESP_LOGE(TAG,"unknown src type %d", src_type); continue;
+            }   
 
             if (!(dst_type == DATA_F || dst_type == DATA_D)) val = round(val);
 
@@ -53,13 +54,13 @@ void block_pass_results(block_handle_t* block)
                 case DATA_F:    { *(float*)dst = (float)val; } break;
                 case DATA_D:    { memcpy(dst, &val, sizeof(double)); } break;
                 case DATA_B:    { *(uint8_t*)dst = (val != 0.0) ? 1 : 0; } break;
-                default: ESP_LOGE("COPY_DBG","unknown dst type %d", dst_type); break;
+                default: ESP_LOGE(TAG,"unknown dst type %d", dst_type); break;
             }
         }
     }
 }
 
-static const char *TAG_PARSE = "BLOCK ALLOCATION";
+static const char *TAG_PARSE = "BLOCK_PARSE";
 void free_single_block(block_handle_t* block) {
     if (!block) return;
 
@@ -104,25 +105,30 @@ static block_handle_t *_block_create_struct(uint8_t in_cnt, uint8_t q_cnt){
     if(!block){return NULL;}
     block -> in_cnt = in_cnt;
     block -> q_cnt  = q_cnt;
-    block -> in_data_offsets     = calloc(in_cnt, sizeof(uint16_t));
-    block -> q_data_offsets      = calloc(q_cnt,  sizeof(uint16_t));
-    block->in_data_type_table    = calloc(in_cnt, sizeof(data_types_t));
-    block->q_data_type_table     = calloc(q_cnt,  sizeof(data_types_t));
-    block->q_connections_table   = calloc(q_cnt,  sizeof(q_connection_t));
-    if(! block -> in_data_offsets||!block -> q_data_offsets||!block->in_data_type_table||
-        !block->q_data_type_table||!block->q_connections_table){
-            ESP_LOGE(TAG_PARSE, "Block allocation failed");
-            free_single_block(block);
-            return NULL;
-        }
+    /* if inputs or outputs provided alocate space for them */
+    if (in_cnt > 0 ){
+        block -> in_data_offsets    = calloc(in_cnt, sizeof(uint8_t));
+        block -> in_data_type_table = calloc(in_cnt, sizeof(data_types_t));
+        if(!block ->in_data_offsets || !block -> in_data_type_table)goto error;
+    }
+    if (q_cnt > 0 ){
+        block -> q_data_offsets    = calloc(in_cnt, sizeof(uint8_t));
+        block -> q_data_type_table = calloc(in_cnt, sizeof(data_types_t));
+        block -> q_connections_table = calloc(q_cnt,  sizeof(q_connection_t));
+        if(!block ->in_data_offsets || !block -> in_data_type_table || !block->q_connections_table )goto error;
+    }
     return block;
+    /*if any failed, clear block*/
+    error: 
+    LOG_E(TAG_PARSE, "(_block_create_struct), stuct allocation failed");
+    free_single_block(block);
+    return NULL;
 }
 
 void emu_blocks_free_all(block_handle_t** blocks_list, uint16_t blocks_cnt) {
-    ESP_LOGI("BLOCKS", "Blocks cleared");
+    ESP_LOGI(TAG_PARSE, "%d blocks cleared", blocks_cnt);
     if (!blocks_list) {
-
-        LOG_E(TAG_PARSE, "No block list provided to free");
+        LOG_E(TAG_PARSE, "No block list provided to clear");
         return;
     }
     for (size_t i = 0; i < blocks_cnt; i++) {
@@ -143,7 +149,7 @@ emu_err_t emu_parse_total_block_cnt(chr_msg_buffer_t *source){
         chr_msg_buffer_get(source, search_idx, &data, &len);
             if(parse_check_header(data, EMU_H_BLOCK_CNT)){
                 cnt = READ_U16(data, HEADER_SIZE);
-                ESP_LOGI("BLOCK_COUNT_PARSER", "Found %d block structs to allocate", cnt);
+                ESP_LOGI(TAG_PARSE, "Found %d block structs to allocate", cnt);
                 return emu_body_create_execution_table(cnt);
             }
         search_idx++;
@@ -153,102 +159,103 @@ emu_err_t emu_parse_total_block_cnt(chr_msg_buffer_t *source){
 
 
 #define IN_Q_STEP 3  //block id (2) + in num (1)
+#define DATA_START 5
 emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt)
 {
-    static const char* TAG  = "BLOCK STRUCT PARSE";
     uint8_t *data;
     size_t len;
     size_t buff_size = chr_msg_buffer_size(source);
     uint8_t search_idx = 0;
     uint16_t block_idx = 0;
-
+    block_handle_t * block_new = NULL;
+    emu_err_t err = EMU_OK;
     while (search_idx < buff_size)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
         if (data[0] == 0xbb && data[2] == 0x00)
         {
-            LOG_I(TAG, "Dected start header of block type: %d", data[1]);
+            LOG_I(TAG_PARSE, "Dected header of block type: %d", data[1]);
 
             block_idx = READ_U16(data, 3);
-            // --- PARSE INPUT COUNT ---
-            uint16_t idx = 5;  // points at in_cnt
-            uint8_t in_cnt = data[idx];
 
-            // Move idx past: in_cnt (1) + input type table (in_cnt)
-            idx++; // to first input type
-            uint16_t in_types_start = idx;  
-            idx += in_cnt;   // skip input types
-
-            // --- PARSE Q COUNT ---
-            uint8_t q_cnt = data[idx];
-            idx++; // move to first Q type
-
-            block_handle_t *block_new = _block_create_struct(in_cnt, q_cnt);
-            if(!block_new){
-                ESP_LOGE(TAG, "Memory error during allocation of block");
-                return EMU_ERR_NO_MEM;
-            }
-            block_new->block_idx = block_idx;
-            block_new->block_type = data[1];
-            blocks_list[block_idx]=  block_new;
-            
-
-            // PARSE INPUT TYPES
-
-            uint16_t total_in_size = 0;
-            for (uint8_t i = 0; i < in_cnt; i++)
-            {
-                block_new->in_data_offsets[i] = total_in_size;
-                data_types_t type = data[in_types_start + i]; 
-                block_new->in_data_type_table[i] = type;
-                total_in_size += data_size(type);
-            }
-
-            block_new->in_data = calloc(total_in_size, sizeof(uint8_t));
-            if(!block_new->in_data && (block_new-> in_cnt > 0)){
-                ESP_LOGE(TAG, "No memory to allocate inputs of block %d", block_idx);
-                emu_blocks_free_all(blocks_list, blocks_total_cnt);
-                return EMU_ERR_NO_MEM;
-            }
-            // PARSE Q TYPES
-
-            uint16_t q_types_start = idx;
-
-            uint16_t total_q_size = 0;
-            for (uint8_t i = 0; i < q_cnt; i++)
-            {
-                block_new->q_data_offsets[i] = total_q_size;
-                data_types_t type = data[q_types_start + i];
-                block_new->q_data_type_table[i] = type;
-                total_q_size += data_size(type);
-            }
-            idx += q_cnt;    // move idx to q_used
-            block_new->q_data = calloc(total_q_size, sizeof(uint8_t));
-            if(!block_new->q_data && (block_new-> q_cnt > 0)){
-                ESP_LOGE(TAG, "No memory to allocate outputs of block %d", block_idx);
-                emu_blocks_free_all(blocks_list, blocks_total_cnt);
-                return EMU_ERR_NO_MEM;
-            }
-
-            ESP_LOGI(TAG, "block block_idx:%d  has: %d inputs and %d outputs", block_idx, in_cnt, q_cnt);
-
-            // PARSE Q -> CONNECTIONS
-
-            uint8_t q_used = data[idx];
+            uint16_t idx = DATA_START;
+            uint16_t in_used = READ_U16(data, idx); //used inputs bitmask
+            idx+=sizeof(uint16_t);
+            uint8_t in_cnt = data[idx];             //input count
             idx++;
+            uint8_t in_size = data[idx];            //input size (bytes)
+            idx++; 
+            uint16_t idx_in_list = idx;             
+            idx += in_cnt;
+            uint8_t q_cnt  = data[idx];             //output count
+            idx++;
+            uint8_t q_size = data[idx];             //output size (bytes)
+            idx++;
+            uint16_t idx_q_list = idx;
+            idx += q_cnt;
+
+            block_new = _block_create_struct(in_cnt, q_cnt);
+            if(!block_new){
+                err = EMU_ERR_NO_MEM;
+                goto error;
+            }
+
+            blocks_list[block_idx] = block_new;
+            block_new->block_idx   = block_idx;
+            block_new->block_type  = data[1];
+            block_new->in_used     = in_used;
+            
+            ESP_LOGI(TAG_PARSE, "block block_idx:%d  has: %d inputs and %d outputs", block_idx, in_cnt, q_cnt);
+            if (in_size > 0){
+                block_new->in_data = calloc(in_size, sizeof(uint8_t));
+                if(!block_new->in_data){
+                    LOG_E(TAG_PARSE, "Error when allocating space for in data (%d)B", in_size);
+                    err = EMU_ERR_NO_MEM;
+                    goto error;
+                }
+            }
+            if (q_size > 0){
+                block_new->q_data = calloc(in_size, sizeof(uint8_t));
+                if(!block_new->q_data){
+                    LOG_E(TAG_PARSE, "Error when allocating space for in data (%d)B", q_size);
+                    err = EMU_ERR_NO_MEM;
+                    goto error;
+                }
+            }
+
+            /*setup inputs and inputs offsets*/
+            memcpy(block_new->in_data_type_table, &data[idx_in_list], in_cnt);
+            uint16_t current_in_offset = 0;
+            for (uint8_t in = 0; in < in_cnt; in++) {
+                LOG_I(TAG_PARSE, "In %d: %s", in, DATA_TYPE_TO_STR[block_new->in_data_type_table[in]]);
+                block_new->in_data_offsets[in] = current_in_offset;
+                current_in_offset += data_size(block_new->in_data_type_table[in]);
+            }
+            /*setup outputs and outputs offsets*/
+            memcpy(block_new->q_data_type_table, &data[idx_q_list], q_cnt);
+            uint16_t current_q_offset = 0;
+            for (uint8_t q = 0; q < q_cnt; q++) {
+                LOG_I(TAG_PARSE, "Q %d: %s", q, DATA_TYPE_TO_STR[block_new->q_data_type_table[q]]);
+                block_new->q_data_offsets[q] = current_q_offset;
+                current_q_offset += data_size(block_new->q_data_type_table[q]);
+            }
+ 
+            uint8_t q_conn_provided = data[idx]; //check how many provided
+            idx++;
+
             uint8_t total_lines = 0;
-            for (uint8_t q = 0; q < q_used; q++)
+            for (uint8_t q = 0; q < q_conn_provided; q++)
             {
                 uint8_t conn_cnt = data[idx];
     
                 block_new->q_connections_table[q].conn_cnt = conn_cnt;
                 block_new->q_connections_table[q].target_blocks_id_list = (uint16_t *)calloc(conn_cnt, sizeof(uint16_t));
                 block_new->q_connections_table[q].target_inputs_list = (uint8_t *)calloc(conn_cnt, sizeof(uint8_t));
-                if((!block_new->q_connections_table[q].target_blocks_id_list ||!block_new->q_connections_table[q].target_inputs_list)&&conn_cnt !=0){
-                    ESP_LOGE(TAG, "No memory to allocate output connections for block %d", block_idx);
-                    emu_blocks_free_all(blocks_list, blocks_total_cnt);
-                    return EMU_ERR_NO_MEM;
+                if((!block_new->q_connections_table[q].target_blocks_id_list ||!block_new->q_connections_table[q].target_inputs_list)&&conn_cnt > 0){
+                    ESP_LOGE(TAG_PARSE, "No memory to allocate output connections for block %d", block_idx);
+                    err = EMU_ERR_NO_MEM;
+                    goto error;
                 }
                 idx++; 
                 for (uint8_t conn = 0; conn < conn_cnt; conn++)
@@ -257,28 +264,35 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
                     block_new->q_connections_table[q].target_blocks_id_list[conn] = READ_U16(data, idx);
                     block_new->q_connections_table[q].target_inputs_list[conn] = data[idx + 2];
 
-                    ESP_LOGI(TAG, "Q number:%d |line %d| target block_idx:%d, target in:%d",
+                    ESP_LOGI(TAG_PARSE, "Q number:%d |line %d| target block_idx -> %d, target in [%d]",
                              q, total_lines,
                              block_new->q_connections_table[q].target_blocks_id_list[conn],
                              block_new->q_connections_table[q].target_inputs_list[conn]);
-                    idx += IN_Q_STEP;// move to next line 
+                    idx += IN_Q_STEP;// move to next 'line'
                 }
             }
             if(total_lines == 0){
-                LOG_I(TAG, "No connections form block_idx: %d", block_new->block_idx);
+                LOG_I(TAG_PARSE, "No connections form block_idx: %d", block_new->block_idx);
             }
-            LOG_I(TAG, "Parsing global access");
-            utils_parse_global_access_for_block(source, search_idx, block_new);
-            utils_parse_fuction_assign_to_block(block_new);
-            LOG_I(TAG, "Allocated handle for block block_idx %d", block_new->block_idx);
+            err = utils_parse_global_access_for_block(source, search_idx, block_new);
+            if(EMU_OK != err){
+                LOG_E(TAG_PARSE, "When creating global references error: %s", EMU_ERR_TO_STR(err));
+                err = EMU_ERR_NO_MEM;
+                goto error;
+            }
+            err = utils_parse_fuction_assign_to_block(block_new);
+            if(EMU_OK != err){
+                LOG_E(TAG_PARSE, "When assigning function to block error: %s", EMU_ERR_TO_STR(err));
+                err = EMU_ERR_NO_MEM;
+                goto error;
+            }
         }
         search_idx++;
     }
+    
     return EMU_OK;
+    error:
+        ESP_LOGE(TAG_PARSE, "Error during block creation: %s, block %d won't be created", EMU_ERR_TO_STR(err), data[1]);
+        free(block_new);
+    return err;
 }
-
-
-
-
-
-

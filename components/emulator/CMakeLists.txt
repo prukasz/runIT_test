@@ -12,6 +12,7 @@ idf_component_register(
         "utils/utils_parse.c"
         "blocks/block_math.c"
         "blocks/block_set_global.c"
+        "blocks/block_cmp"
 
     INCLUDE_DIRS 
         "blocks/include"

@@ -111,6 +111,6 @@ typedef enum {
 */
 typedef enum{
     BLOCK_COMPUTE = 0x01,
-    BLOCK_INJECT  = 0xFF
+    BLOCK_SET_GLOBAL = 0x02,
 }block_type_t;
 

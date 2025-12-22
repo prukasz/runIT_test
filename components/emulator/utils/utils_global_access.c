@@ -99,7 +99,7 @@ emu_err_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t
     uint8_t cursor = start;
 
     if (!block || ! source){
-        LOG_E(TAG, "Null block ptr or NULLsource ptr");
+        LOG_E(TAG, "Null block ptr or NULL source ptr");
         return EMU_ERR_NULL_PTR;
     }
     //check total count of global access

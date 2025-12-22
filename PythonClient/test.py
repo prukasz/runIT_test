@@ -11,64 +11,58 @@ def main():
     blk_store = BlocksStorage()
     Ref.set_store(var_store)
     
-    var_store.add_scalar("sys_tick",   DataTypes.DATA_UI32, 1000)
-    var_store.add_scalar("gain_A",     DataTypes.DATA_F,    1.5)
-    var_store.add_scalar("nie_wiem",     DataTypes.DATA_I32, -2137)
-    var_store.add_scalar("gain_B",     DataTypes.DATA_F,    -0.5)
-    var_store.add_array("sensor_raw",  DataTypes.DATA_UI16, [10, 20, 30, 40], [4])
-    var_store.add_array("calib_map",   DataTypes.DATA_F,    [0.1]*16, [4, 4])
+    # Define the 3x3 matrix
+    var_store.add_scalar("dupa", DataTypes.DATA_D, 2)
+    var_store.add_array("matrix_3x3",  DataTypes.DATA_F,    [0.0]*9,  [3, 3])
 
-    conn_0 = QConnection(target_blocks_idx_list=[1,3], target_inputs_num_list=[0,1])
-    expr = MathExpression("100", block_id=0x0000)
-    ref1 = Ref("gain_B").build()
-    blk_0 = BlockHandle(
+    # 1. Block to provide the value (99.9)
+    expr_val = MathExpression("99.9", block_id=0)
+    blk_val = BlockHandle(
         block_idx=0,
         block_type=BlockTypes.BLOCK_MATH,
-        in_data_type_table=[DataTypes.DATA_UI8],
-        q_data_type_table=[DataTypes.DATA_F],
-        q_connections_table=[conn_0],
-        global_reference=[ref1],
-        block_data = expr
+        in_data_type_table=[DataTypes.DATA_D],
+        q_data_type_table=[DataTypes.DATA_D],
+        q_connections_table=[QConnection(target_blocks_idx_list=[3], target_inputs_num_list=[0])],
+        block_data=expr_val
     )
 
-    conn_1 = QConnection(target_blocks_idx_list=[2], target_inputs_num_list=[0])
-    expr1 = MathExpression("in_1+2", block_id=0x0001)
-    blk_1 = BlockHandle(
+    # 2. Block to provide Row Index (1)
+    expr_row = MathExpression("1", block_id=1)
+    blk_row = BlockHandle(
         block_idx=1,
         block_type=BlockTypes.BLOCK_MATH,
-        in_data_type_table=[DataTypes.DATA_F],
-        q_data_type_table=[DataTypes.DATA_F],
-        q_connections_table=[conn_1],
-        global_reference=[],
-        block_data=expr1
+        in_data_type_table=[DataTypes.DATA_D],
+        q_data_type_table=[DataTypes.DATA_UI8],
+        q_connections_table=[QConnection(target_blocks_idx_list=[3], target_inputs_num_list=[1])],
+        block_data=expr_row
     )
 
-    conn_2 = QConnection(target_blocks_idx_list=[3], target_inputs_num_list=[0])
-    expr2 = MathExpression("in_1+2", block_id=0x0002)
-    blk_2 = BlockHandle(
+    # 3. Block to provide Column Index (2)
+    expr_col = MathExpression("2", block_id=2)
+    blk_3 = BlockHandle(
         block_idx=2,
         block_type=BlockTypes.BLOCK_MATH,
-        in_data_type_table=[DataTypes.DATA_F],
-        q_data_type_table=[DataTypes.DATA_F],
-        q_connections_table=[conn_2],
-        global_reference=[],
-        block_data= expr2
-    )
-    expr3 = MathExpression("in_1+in_2", block_id=0x0003)
-    blk_3 = BlockHandle(
-        block_idx=3,
-        block_type=BlockTypes.BLOCK_MATH,
-        in_data_type_table=[DataTypes.DATA_D, DataTypes.DATA_D],
-        q_data_type_table=[DataTypes.DATA_F],
-        q_connections_table=[None],
-        global_reference=[],
-        block_data=expr3
+        in_data_type_table=[DataTypes.DATA_D],
+        q_data_type_table=[DataTypes.DATA_UI8],
+        q_connections_table=[QConnection(target_blocks_idx_list=[3], target_inputs_num_list=[1])],
+        block_data=expr_col
     )
 
-    blk_store.add_block(blk_0)
-    blk_store.add_block(blk_1)
-    blk_store.add_block(blk_2)
+    # 4. Global Set Block to write matrix_3x3[row][col] = value
+    ref_matrix = Ref("matrix_3x3")[1][Ref("dupa")].build()
+    blk_set = BlockHandle(
+        block_idx=3,
+        block_type=BlockTypes.BOCK_GLOBAL_SET,
+        in_data_type_table=[DataTypes.DATA_D, DataTypes.DATA_UI8],
+        q_data_type_table=[],
+        q_connections_table=[],
+        global_reference=[ref_matrix]
+    )
+
+    blk_store.add_block(blk_val)
+    blk_store.add_block(blk_row)
     blk_store.add_block(blk_3)
+    blk_store.add_block(blk_set)
 
     filename = "test.txt"
     dumper = FullDump(var_store, blk_store)

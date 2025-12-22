@@ -33,8 +33,7 @@ _DEFINE_ARR_TYPE(bool,     b)
 typedef struct global_acces_t global_acces_t;   
 typedef struct {
     uint8_t single_cnt[TYPES_COUNT];
-    //Common pointer for all "single varaibles"
-    void     *_base_ptr;
+    
     //pointer to an array of singe variables type: int8_t
     int8_t   *i8;
     //pointer to an array of singe variables type: int16_t

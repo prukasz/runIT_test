@@ -32,25 +32,26 @@ typedef struct {
 
 struct _block_handle_s{
     void*           extras;  /*block specific data*/
-    emu_block_func block_function;
     uint8_t global_reference_cnt;
     global_acces_t   **global_reference;
-
-    data_types_t*   in_data_type_table; /*array of input datatypes (in order)*/
+    /*we do not use datatype t as it is int16*/
+    uint8_t*   in_data_type_table; /*array of input datatypes (in order)*/
     void*           in_data;            /*array for all input data*/
     uint8_t*        in_data_offsets;    /*offsets relative to in_data in bytes*/
-
-    data_types_t*   q_data_type_table;  /*array of outputs datatypes (in order)*/
+    /*we do not use datatype t as it is int16*/
+    uint8_t*   q_data_type_table;  /*array of outputs datatypes (in order)*/ 
     void*           q_data;             /*array for all output data*/
     uint8_t*        q_data_offsets;     /*offsets relative to q_data in bytes*/
 
     q_connection_t* q_connections_table; /*reference to all block connections*/
+    emu_block_func block_function; /*block function assignent*/
 
     uint16_t block_idx;          /*id of block (struct)*/
     block_type_t block_type;    /*type of block (function)*/
 
     uint8_t in_cnt;             /*count of inputs*/
     uint16_t in_set;             /*count of outputs*/
+    uint16_t in_used;
 
     uint8_t q_cnt;              /*flags (for debug)*/
     uint16_t q_set;              /*flags (for debug)*/

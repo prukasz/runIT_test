@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from Enums import DataTypes, BlockTypes
+from Enums import DataTypes, BlockTypes, DataTypesSizes
 from typing import List, Optional, Any
 from References import Global_reference
 import struct
@@ -32,6 +32,7 @@ class BlockHandle:
     block_idx: int
     block_type: BlockTypes
     #list of all inputs 
+    in_used: int = 0
     in_data_type_table: List[DataTypes] = field(default_factory=list)
     in_cnt: int = field(init=False)
     #list of all outputs
@@ -47,7 +48,8 @@ class BlockHandle:
     def __post_init__(self):
         self.in_cnt = len(self.in_data_type_table)
         self.q_cnt = len(self.q_data_type_table)
-        
+        self.in_used = 0
+        self.in_used = (1 << self.in_cnt) - 1 if self.in_cnt > 0 else 0
         #add empty Qconnections
         while len(self.q_connections_table) < self.q_cnt:
             self.q_connections_table.append(QConnection())
@@ -58,16 +60,16 @@ class BlockHandle:
         header = struct.pack('<BBBH', 0xBB, int(self.block_type), 0x00, self.block_idx)
 
         # Inputs
-        inputs_data = struct.pack('<B', self.in_cnt) + b''.join([struct.pack('<B', int(dt)) for dt in self.in_data_type_table])
-        
+        in_used = struct.pack('<H', self.in_used)
+        inputs_data = struct.pack('<B', self.in_cnt) + struct.pack('<B', sum(DataTypesSizes[dt] for dt in self.in_data_type_table))+ b''.join([struct.pack('<B', int(dt)) for dt in self.in_data_type_table])
+
         # Outputs
-        outputs_data = struct.pack('<B', self.q_cnt) + b''.join([struct.pack('<B', int(dt)) for dt in self.q_data_type_table])
-        
+        outputs_data = struct.pack('<B', self.q_cnt) + struct.pack('<B', sum(DataTypesSizes[dt] for dt in self.q_data_type_table))+ b''.join([struct.pack('<B', int(dt)) for dt in self.q_data_type_table])
         # Connections Header
         conn_len_header = struct.pack('<B', len(self.q_connections_table))
         
         # Block struct representation
-        main_hex = (header + inputs_data + outputs_data + conn_len_header).hex().upper()
+        main_hex = (header + in_used + inputs_data + outputs_data + conn_len_header).hex().upper()
 
         # Add Qconnectins 
         for conn in self.q_connections_table:
@@ -93,5 +95,3 @@ class BlockHandle:
              lines.append(str(self.block_data))
              
         return "\n".join(lines)
-
-

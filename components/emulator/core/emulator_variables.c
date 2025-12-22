@@ -28,12 +28,6 @@ size_t cnt = is_array ? base->arr_cnt[index] : base->single_cnt[index];\
 (base)->field;\
 })\
 
-/*This macro set up pointers for single variables*/
-#define SETUP_SINGLE_VAR_PTR(mem, field, idx) ({ \
-        typeof((mem)->field) _p = (typeof(_p))current_ptr; \
-        (mem)->field = _p; \
-        current_ptr += sizes[idx] * sizeof(*_p); \
-})
 
 /*This macro set up pointers for arrays*/
 #define HANDLE_ARR_DATA_TYPE(mem, ENUM, FIELD, CTYPE)                        \
@@ -59,44 +53,54 @@ size_t cnt = is_array ? base->arr_cnt[index] : base->single_cnt[index];\
  */
 emu_err_t emu_variables_single_create(emu_mem_t *mem)
 {
-    //TO DO MEMORY ALIGNMENT
     if (!mem) {
         LOG_E(TAG, "No mem struct provided");
         return EMU_ERR_NULL_PTR;
     }
     size_t total_size = 0;
     
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[0],  uint8_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[1],  uint16_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[2],  uint32_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[3],  int8_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[4],  int16_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[5],  int32_t);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[6],  float);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[7],  double);
-    ADD_TO_TOTAL_SIZE(total_size, mem->single_cnt[8],  bool);
-
-    mem->_base_ptr = calloc(1, total_size);
-    if (!mem->_base_ptr) {
-        ESP_LOGE(TAG, "Failed to allocate memory for dataholder (%d bytes)", total_size);
-        emu_variables_reset(mem);
-        return EMU_ERR_NO_MEM;
+    if(mem->single_cnt[0] > 0 ){
+        mem->u8 = calloc(mem->single_cnt[0], data_size(0));
+        if(!mem->u8){goto error;}
     }
-    
-    uint8_t* current_ptr = (uint8_t*)mem->_base_ptr;
-    
-    SETUP_PTR(mem, u8,  DATA_UI8, current_ptr, false);
-    SETUP_PTR(mem, u16, DATA_UI16, current_ptr, false);
-    SETUP_PTR(mem, u32, DATA_UI32, current_ptr, false); 
-    SETUP_PTR(mem, i8,  DATA_I8, current_ptr, false);
-    SETUP_PTR(mem, i16, DATA_I16, current_ptr, false);
-    SETUP_PTR(mem, i32, DATA_I32, current_ptr, false);
-    SETUP_PTR(mem, f,   DATA_F, current_ptr, false);
-    SETUP_PTR(mem, d,   DATA_D, current_ptr, false);
-    SETUP_PTR(mem, b,   DATA_B, current_ptr, false);
-
+    if(mem->single_cnt[1] > 0 ){
+        mem->u16 = calloc(mem->single_cnt[1], data_size(1));
+        if(!mem->u16){goto error;}
+    }
+    if(mem->single_cnt[2] > 0 ){
+        mem->u32 = calloc(mem->single_cnt[2], data_size(2));
+        if(!mem->u32){goto error;}
+    }   
+    if(mem->single_cnt[3] > 0 ){
+        mem->i8 = calloc(mem->single_cnt[3], data_size(3));
+        if(!mem->i8){goto error;}
+    }
+    if(mem->single_cnt[4] > 0 ){
+        mem->i16 = calloc(mem->single_cnt[4], data_size(4));
+        if(!mem->i16){goto error;}
+    }
+    if(mem->single_cnt[5] > 0 ){
+        mem->i32 = calloc(mem->single_cnt[5], data_size(5));
+        if(!mem->i32){goto error;}
+    }
+    if(mem->single_cnt[6] > 0 ){
+        mem->f = calloc(mem->single_cnt[6], data_size(6));
+        if(!mem->f){goto error;}
+    }
+    if(mem->single_cnt[7] > 0 ){
+        mem->d = calloc(mem->single_cnt[7], data_size(7));
+        if(!mem->d){goto error;}
+    }
+    if(mem->single_cnt[8] > 0 ){
+        mem->b = calloc(mem->single_cnt[8], data_size(8));
+        if(!mem->b){goto error;}
+    }
     ESP_LOGI(TAG, "Single variables dataholder created successfully");
     return EMU_OK;
+    error:
+        LOG_E(TAG, "Failed to create memory for single variables");
+        emu_variables_reset(mem);
+        return EMU_ERR_NO_MEM;
 }
 
 /**
@@ -209,7 +213,16 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
 void emu_variables_reset(emu_mem_t *mem)
 {
     if (!mem) return;
-    free(mem->_base_ptr);
+    if(mem->u8) free(mem->u8);
+    if(mem->u16) free(mem->u16);
+    if(mem->u32) free(mem->u32);
+    if(mem->i8) free(mem->i8);
+    if(mem->i16) free(mem->i16);
+    if(mem->i32) free(mem->i32);
+    if(mem->f) free(mem->f);
+    if(mem->d) free(mem->d);
+    if(mem->b) free(mem->b);
+    
     free(mem->_base_arr_ptr);
     free(mem->_base_arr_handle_ptr);
     *mem = (emu_mem_t){0};
@@ -313,7 +326,7 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
         return EMU_OK; // Return success for scalar set
     }else {
         size_t flat_idx = (size_t)-1;
-        LOG_I(TAG, "Setting up array now for value %lf", value);
+        LOG_I(TAG, "Setting up array value for %lf at [%d, %d, %d]", value, idx_table[0], idx_table[1], idx_table[2]);
         switch(type) {
             case DATA_UI8:
                 flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[idx].num_dims, mem.arr_ui8[idx].dims, idx_table);

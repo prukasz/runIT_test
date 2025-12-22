@@ -1,6 +1,6 @@
 #include "utils_parse.h"
 #include "emulator_blocks.h"
-#include "block_math.h"
+#include "blocks_all_list.h"
 
 bool parse_check_header(uint8_t *data, emu_header_t header)
 {   
@@ -15,7 +15,9 @@ emu_err_t utils_parse_fuction_assign_to_block(block_handle_t *block){
         block->block_function = block_math;
         ESP_LOGI(TAG, "Assigned [block_math] to block idx %d", block->block_idx);
         break;
-    case BLOCK_INJECT:
+    case BLOCK_SET_GLOBAL:
+        block->block_function = block_set_global;
+        ESP_LOGI(TAG, "Assigned [block_set_global] to block idx %d", block->block_idx);
         break;
     default:
         ESP_LOGE(TAG, "Unknown block type %d for block id %d", block->block_type, block->block_idx);
