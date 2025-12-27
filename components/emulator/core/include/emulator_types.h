@@ -110,7 +110,9 @@ typedef enum {
 * @brief Block type identification code
 */
 typedef enum{
-    BLOCK_COMPUTE = 0x01,
+    BLOCK_MATH = 0x01,
     BLOCK_SET_GLOBAL = 0x02,
+    BLOCK_CMP = 0x03,
+    BLOCK_FOR = 0x08,
 }block_type_t;
 

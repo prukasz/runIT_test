@@ -37,20 +37,20 @@ void emu_body_loop_task(void* params){
     }
 }
 
-
+uint16_t emu_loop_iterator = 0;
 static inline emu_err_t emu_execute_code(block_handle_t **block_struct_list, uint16_t total_block_cnt){
     static const char* _TAG = "EMU_BODY_EXECUTE";
-
-    for (uint16_t i = 0; i < total_block_cnt; i++) {
-        LOG_I(_TAG, "Now will execute block %d", i);
-        if((block_struct_list[i]->in_set&block_struct_list[i]->in_used) == block_struct_list[i]->in_used){
-            emu_err_t err = (block_struct_list[i])->block_function(block_struct_list[i]);
+    
+    for (emu_loop_iterator = 0; emu_loop_iterator < total_block_cnt; emu_loop_iterator++) {
+        LOG_I(_TAG, "Now will execute block %d", emu_loop_iterator);
+        if((block_struct_list[emu_loop_iterator]->in_set&block_struct_list[emu_loop_iterator]->in_used) == block_struct_list[emu_loop_iterator]->in_used){
+            emu_err_t err = (block_struct_list[emu_loop_iterator])->block_function(block_struct_list[emu_loop_iterator]);
              if (err != EMU_OK) {
-                ESP_LOGE(TAG, "Block %d failed during execution, error: %s", i, EMU_ERR_TO_STR(err));
+                ESP_LOGE(TAG, "Block %d failed during execution, error: %s", emu_loop_iterator, EMU_ERR_TO_STR(err));
                 return err;
             }
         }else{
-            ESP_LOGW(TAG, "block %d skipped, some inputs not updated", i);
+            LOG_W(TAG, "block %d skipped, some inputs not updated", emu_loop_iterator);
         }
     }
     for (uint16_t i = 0; i < total_block_cnt; i++) {

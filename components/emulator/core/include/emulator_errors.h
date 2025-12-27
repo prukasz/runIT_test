@@ -45,6 +45,8 @@ typedef enum {
     EMU_ERR_DENY,
     EMU_ERR_NOT_FOUND,
     EMU_ERR_BLOCK_COMPUTE_INVALID_INDEX,
+    EMU_ERR_BLOCK_FOR_TIMEOUT,
+    EMU_ERR_BLOCK_INVALID_CONNECTION
 }emu_err_t;
 
 const char* EMU_ERR_TO_STR(emu_err_t err_code);

@@ -20,28 +20,36 @@ bool _parse_check_arr_packet_size(uint16_t len, uint8_t step)
 }
 
 /*This macro setup pointers for tables of single varaibles different types*/
-#define SETUP_PTR(base, field, index, ptr, is_array) \
-({\
-size_t cnt = is_array ? base->arr_cnt[index] : base->single_cnt[index];\
-(base)->field = (typeof((base)->field))(ptr);\
-(ptr) += cnt * sizeof(*(base)->field);\
-(base)->field;\
-})\
+#define SETUP_PTR(base, field, index, ptr)                \
+    ({                                                   \
+        size_t cnt = (base)->arr_cnt[index];              \
+        (base)->field = (typeof((base)->field))(ptr);     \
+        (ptr) += cnt * sizeof(*(base)->field);            \
+    })
 
 
 /*This macro set up pointers for arrays*/
-#define HANDLE_ARR_DATA_TYPE(mem, ENUM, FIELD, CTYPE)                        \
-    case ENUM: {                                                                 \
-        typeof((mem)->FIELD[0]) *arr = &(mem)->FIELD[arr_index[ENUM]];           \
-        arr->num_dims = step - 1;                                                \
-        memcpy(arr->dims, &data[j + 1], step - 1);                               \
-        arr->data = (CTYPE *)((mem)->_base_arr_ptr + offset);                    \
-        ESP_LOGI(TAG,                                                            \
-                 "created at: %d type: %s table dims: %d, size_x: %d, size_y: %d, size_z: %d", \
-                 arr_index[ENUM], DATA_TYPE_TO_STR[ENUM],                                               \
-                 arr->num_dims, arr->dims[0], arr->dims[1], arr->dims[2]);       \
-        arr_index[ENUM]++;                                                       \
-        break;                                                                   \
+#define HANDLE_ARR_DATA_TYPE(mem, ENUM, FIELD, CTYPE, DATA_PTR)               \
+    case ENUM: {                                                             \
+        typeof((mem)->FIELD[0]) *arr =                                       \
+            &((mem)->FIELD[arr_index[ENUM]]);                                \
+                                                                             \
+        arr->num_dims = step - 1;                                             \
+        memcpy(arr->dims, &data[j + 1], step - 1);                            \
+                                                                             \
+        arr->data = (CTYPE *)((uint8_t *)(DATA_PTR) +                        \
+                              arr_data_offset[ENUM]);                       \
+                                                                             \
+        ESP_LOGI(TAG,                                                        \
+                 "created at: %d type: %s dims: %d [%d,%d,%d]",              \
+                 arr_index[ENUM],                                            \
+                 DATA_TYPE_TO_STR[ENUM],                                     \
+                 arr->num_dims,                                              \
+                 arr->dims[0], arr->dims[1], arr->dims[2]);                  \
+                                                                             \
+        arr_data_offset[ENUM] += bytes_needed;                               \
+        arr_index[ENUM]++;                                                   \
+        break;                                                               \
     }
 
 
@@ -56,9 +64,7 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem)
     if (!mem) {
         LOG_E(TAG, "No mem struct provided");
         return EMU_ERR_NULL_PTR;
-    }
-    size_t total_size = 0;
-    
+    }   
     if(mem->single_cnt[0] > 0 ){
         mem->u8 = calloc(mem->single_cnt[0], data_size(0));
         if(!mem->u8){goto error;}
@@ -95,7 +101,7 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem)
         mem->b = calloc(mem->single_cnt[8], data_size(8));
         if(!mem->b){goto error;}
     }
-    ESP_LOGI(TAG, "Single variables dataholder created successfully");
+    LOG_I(TAG, "Single variables dataholder created successfully");
     return EMU_OK;
     error:
         LOG_E(TAG, "Failed to create memory for single variables");
@@ -112,9 +118,10 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
     size_t len;
     size_t buff_size = chr_msg_buffer_size(source);
     uint8_t step;
-    size_t total_size = 0;
+    emu_err_t err = EMU_OK;
     start_index += 1;
-    LOG_I(TAG, "Now calculating size needed");
+    LOG_I(TAG, "Now calculating total arrays count of each type");
+    size_t total_sizes_table[TYPES_COUNT] = {0};
     for (size_t i = start_index; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
         if (_parse_check_arr_header(data, &step) && _parse_check_arr_packet_size(len, step)) {
@@ -123,57 +130,87 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
                 size_t table_cnt = data[j + 1];
                 if (step >= 3) {table_cnt *= data[j + 2];}
                 if (step == 4) {table_cnt *= data[j + 3];}
-                total_size += data_size((data_types_t)data[j]) * table_cnt;
+                total_sizes_table[(data_types_t)data[j]] += data_size((data_types_t)data[j]) * table_cnt;
             }
         }
     }
-    LOG_I(TAG, "Total array size of arrays: %dB", total_size);
-    for (uint8_t i = 0 ; i < TYPES_COUNT ; i++)
-    {LOG_I(TAG,"need %d slots for type: %s table", mem->arr_cnt[i], DATA_TYPE_TO_STR[i]);}
-    size_t handle_size = 0;
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[0], arr_ui8_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[1], arr_ui16_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[2], arr_ui32_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[3], arr_i8_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[4], arr_i16_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[5], arr_i32_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[6], arr_f_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[7], arr_d_t);
-    ADD_TO_TOTAL_SIZE(handle_size, mem->arr_cnt[8], arr_b_t);
+    for (uint8_t i = 0 ; i < TYPES_COUNT ; i++){
+        LOG_I(TAG,"need %d slots for type: %s table", mem->arr_cnt[i], DATA_TYPE_TO_STR[i]);
+        LOG_I(TAG,"Total arrays size of %s = %dB",DATA_TYPE_TO_STR[i], total_sizes_table[i]);
+    }
+    size_t arrays_descriptors_size = 0;
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[0], arr_ui8_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[1], arr_ui16_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[2], arr_ui32_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[3], arr_i8_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[4], arr_i16_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[5], arr_i32_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[6], arr_f_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[7], arr_d_t);
+    ADD_TO_TOTAL_SIZE(arrays_descriptors_size, mem->arr_cnt[8], arr_b_t);
 
-    mem->_base_arr_handle_ptr = calloc(1, handle_size);
-    if (!mem->_base_arr_handle_ptr){
-        ESP_LOGE(TAG, "Arrays handle allocation failed");
-        LOG_I(TAG, "Resetting after fail");
-        emu_variables_reset(mem);
-        return EMU_ERR_NO_MEM;
+    if(arrays_descriptors_size > 0){
+        mem->_base_arr_handle_ptr = calloc(1, arrays_descriptors_size);
+        if (!mem->_base_arr_handle_ptr){
+            LOG_E(TAG, "Arrays descriptors (handles) allocation failed");
+            goto error;
+        }
     }
 
-    for (uint8_t i = 0 ; i < TYPES_COUNT ; i++) 
-    {ESP_LOGI(TAG,"allocated %d slots for type : %s table",mem->arr_cnt[i], DATA_TYPE_TO_STR[i]);}
+    for (uint8_t i = 0 ; i < TYPES_COUNT ; i++){
+        ESP_LOGI(TAG,"allocated %d slots for type : %s table",mem->arr_cnt[i], DATA_TYPE_TO_STR[i]);
+    }
 
     LOG_I(TAG, "Now setting up poiters to arrays");
     uint8_t *current_ptr = (uint8_t*)mem->_base_arr_handle_ptr;
-    SETUP_PTR(mem, arr_ui8,  0, current_ptr, true);
-    SETUP_PTR(mem, arr_ui16, 1, current_ptr, true);
-    SETUP_PTR(mem, arr_ui32, 2, current_ptr, true);
-    SETUP_PTR(mem, arr_i8,   3, current_ptr, true);
-    SETUP_PTR(mem, arr_i16,  4, current_ptr, true);
-    SETUP_PTR(mem, arr_i32,  5, current_ptr, true);
-    SETUP_PTR(mem, arr_f,    6, current_ptr, true);
-    SETUP_PTR(mem, arr_d,    7, current_ptr, true);
-    SETUP_PTR(mem, arr_b,    8, current_ptr, true);
+    SETUP_PTR(mem, arr_ui8,  0, current_ptr);
+    SETUP_PTR(mem, arr_ui16, 1, current_ptr);
+    SETUP_PTR(mem, arr_ui32, 2, current_ptr);
+    SETUP_PTR(mem, arr_i8,   3, current_ptr);
+    SETUP_PTR(mem, arr_i16,  4, current_ptr);
+    SETUP_PTR(mem, arr_i32,  5, current_ptr);
+    SETUP_PTR(mem, arr_f,    6, current_ptr);
+    SETUP_PTR(mem, arr_d,    7, current_ptr);
+    SETUP_PTR(mem, arr_b,    8, current_ptr);
 
-    mem->_base_arr_ptr = calloc(1, total_size);
-    if (!mem->_base_arr_ptr){
-        ESP_LOGW(TAG, "Arrays allocation failed");
-        LOG_I(TAG, "Resetting after fail");
-        emu_variables_reset(mem);
-        return EMU_ERR_NO_MEM;
+    if(mem->arr_cnt[0] > 0){
+        mem->arr_data_ui8 = calloc(total_sizes_table[0], data_size(0));
+        if(!mem->arr_data_ui8){goto error;}
     }
-
-    uint8_t arr_index[TYPES_COUNT] = {0};
-    size_t offset = 0;
+    if(mem->arr_cnt[1] > 0){
+        mem->arr_data_ui16 = calloc(total_sizes_table[1], data_size(1));
+        if(!mem->arr_data_ui16){goto error;}
+    }
+    if(mem->arr_cnt[2] > 0){
+        mem->arr_data_ui32 = calloc(total_sizes_table[2], data_size(2));
+        if(!mem->arr_data_ui32){goto error;}
+    }
+    if(mem->arr_cnt[3] > 0){
+        mem->arr_data_i8 = calloc(total_sizes_table[3], data_size(3));
+        if(!mem->arr_data_i8){goto error;}
+    }
+    if(mem->arr_cnt[4] > 0){
+        mem->arr_data_i16 = calloc(total_sizes_table[4], data_size(4));
+        if(!mem->arr_data_i16){goto error;}
+    }
+    if(mem->arr_cnt[5] > 0){
+        mem->arr_data_i32 = calloc(total_sizes_table[5], data_size(5));
+        if(!mem->arr_data_i32){goto error;}
+    }
+    if(mem->arr_cnt[6] > 0){
+        mem->arr_data_f = calloc(total_sizes_table[6], data_size(6));
+        if(!mem->arr_data_f){goto error;}
+    }
+    if(mem->arr_cnt[7] > 0){
+        mem->arr_data_d = calloc(total_sizes_table[7], data_size(7));
+        if(!mem->arr_data_d){goto error;}
+    }
+    if(mem->arr_cnt[8] > 0){
+        mem->arr_data_b = calloc(total_sizes_table[8], data_size(8));
+        if(!mem->arr_data_b){goto error;}
+    }
+    size_t arr_data_offset[TYPES_COUNT] = {0};
+    size_t arr_index[TYPES_COUNT] = {0};
     LOG_I(TAG, "Now setting up arrays");
     for (size_t i = start_index; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
@@ -186,27 +223,35 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
                 size_t bytes_needed = elem_count * data_size(type);
 
                 switch (type) {
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_UI8,  arr_ui8,  uint8_t  );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_UI16, arr_ui16, uint16_t );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_UI32, arr_ui32, uint32_t );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_I8,   arr_i8,   int8_t   );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_I16,  arr_i16,  int16_t  );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_I32,  arr_i32,  int32_t  );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_F,    arr_f,    float    );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_D,    arr_d,    double   );
-                    HANDLE_ARR_DATA_TYPE(mem, DATA_B,    arr_b,    bool     );
+                    //setup pointer for each array start [0] in given base array table 
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_UI8,  arr_ui8,  uint8_t,  mem->arr_data_ui8);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_UI16, arr_ui16, uint16_t, mem->arr_data_ui16);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_UI32, arr_ui32, uint32_t, mem->arr_data_ui32);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_I8,   arr_i8,   int8_t,   mem->arr_data_i8);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_I16,  arr_i16,  int16_t,  mem->arr_data_i16);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_I32,  arr_i32,  int32_t,  mem->arr_data_i32);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_F,    arr_f,    float,    mem->arr_data_f);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_D,    arr_d,    double,   mem->arr_data_d);
+                    HANDLE_ARR_DATA_TYPE(mem, DATA_B,    arr_b,    bool,     mem->arr_data_b);
                     default:
                         ESP_LOGE(TAG, "Unknown array data type");
-                        emu_variables_reset(mem);
-                        return EMU_ERR_MEM_INVALID_DATATYPE;
+                        err = EMU_ERR_MEM_INVALID_DATATYPE;
+                        goto error;
 
                 }
-                offset += bytes_needed;
             }
         }
     }
-    ESP_LOGI(TAG, "Array variables dataholder created successfully");
+    LOG_I(TAG, "Array variables dataholder created successfully");
     return EMU_OK;
+
+    error: 
+        if (err == EMU_OK){
+            err = EMU_ERR_NO_MEM;  //so we do not need to set error everywhere where mem error
+        }
+        LOG_E(TAG, "Failed to create memory for arrays error: %s", EMU_ERR_TO_STR(err));
+        emu_variables_reset(mem);
+        return err;
 }
 
 
@@ -222,20 +267,30 @@ void emu_variables_reset(emu_mem_t *mem)
     if(mem->f) free(mem->f);
     if(mem->d) free(mem->d);
     if(mem->b) free(mem->b);
-    
-    free(mem->_base_arr_ptr);
-    free(mem->_base_arr_handle_ptr);
+    if(mem->arr_data_ui8) free(mem->arr_data_ui8);
+    if(mem->arr_data_ui16) free(mem->arr_data_ui16);
+    if(mem->arr_data_ui32) free(mem->arr_data_ui32);
+    if(mem->arr_data_i8) free(mem->arr_data_i8);
+    if(mem->arr_data_i16) free(mem->arr_data_i16);
+    if(mem->arr_data_i32) free(mem->arr_data_i32);
+    if(mem->arr_data_f) free(mem->arr_data_f);
+    if(mem->arr_data_d) free(mem->arr_data_d);
+    if(mem->arr_data_b) free(mem->arr_data_b);
+    if(mem->_base_arr_handle_ptr) free(mem->_base_arr_handle_ptr);
     *mem = (emu_mem_t){0};
-    ESP_LOGI(TAG, "Dataholder memory freed");
+    LOG_I(TAG, "Dataholder memory freed");
 }
 
-emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
-                       uint8_t idx_table[MAX_ARR_DIMS], double *out_value)
+emu_err_t mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[MAX_ARR_DIMS], double *out_value)
 {
-    static const char* TAG = "MEM GET";
+    static const char* TAG = "(mem_get_as_d)";
+    emu_err_t err = EMU_OK;
     if (!out_value){
         LOG_W(TAG, "No output value provided");
-        return EMU_ERR_NULL_PTR;}
+        err = EMU_ERR_NULL_PTR;
+        goto error;
+    }
+
 
     size_t flat_idx = SIZE_MAX;
     bool is_scalar =
@@ -245,7 +300,7 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
 
     /* Compute flat index if array */
     if (!is_scalar) {
-        LOG_I(TAG, "Searched variable: type %s, at idx %d is array", DATA_TYPE_TO_STR[type], var_idx);
+        LOG_I(TAG, "Looking for variable: type %s, at idx %d is array", DATA_TYPE_TO_STR[type], var_idx);
         switch (type) {
             case DATA_UI8:   flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[var_idx].num_dims, mem.arr_ui8[var_idx].dims, idx_table); break;
             case DATA_UI16:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui16[var_idx].num_dims, mem.arr_ui16[var_idx].dims, idx_table); break;
@@ -256,15 +311,19 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
             case DATA_F:     flat_idx = _ARR_FLAT_IDX(mem.arr_f[var_idx].num_dims, mem.arr_f[var_idx].dims, idx_table); break;
             case DATA_D:     flat_idx = _ARR_FLAT_IDX(mem.arr_d[var_idx].num_dims, mem.arr_d[var_idx].dims, idx_table); break;
             case DATA_B:     flat_idx = _ARR_FLAT_IDX(mem.arr_b[var_idx].num_dims, mem.arr_b[var_idx].dims, idx_table); break;
-            default: return EMU_ERR_MEM_INVALID_DATATYPE;
+            default: 
+                LOG_E(TAG, "Unknown array data type: %d", type);
+                err = EMU_ERR_MEM_INVALID_DATATYPE;
+                goto error;
         }
         //(macro returns -1 if cannot acces chosen cell)
         if (flat_idx == (size_t)-1){
             LOG_E(TAG, "While accesing with idx [%d, %d ,%d], tried to access out of array bounds", idx_table[0], idx_table[1], idx_table[2]);
-            return EMU_ERR_MEM_OUT_OF_BOUNDS;
+            err = EMU_ERR_MEM_OUT_OF_BOUNDS;
+            goto error;
         }
     }else{
-        LOG_I(TAG, "provided type %s, at idx %d is scalar", DATA_TYPE_TO_STR[type], var_idx);
+        LOG_I(TAG, "Provided type %s, at idx %d is scalar", DATA_TYPE_TO_STR[type], var_idx);
     }
 
     /* Extract value */
@@ -282,10 +341,15 @@ emu_err_t mem_get_as_d(data_types_t type, size_t var_idx,
 
         case DATA_B:    *out_value = is_scalar ? mem.b[var_idx]   : mem.arr_b[var_idx].data[flat_idx]; break;
 
-        default: return
-        EMU_ERR_UNLIKELY;
+        default: 
+            err = EMU_ERR_UNLIKELY;
+            goto error;
     }
     return EMU_OK;
+
+    error:
+        ESP_LOGE(TAG, "Error during variable access: %s", EMU_ERR_TO_STR(err));
+        return err;
 }
 
 emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR_DIMS], double value) {
@@ -295,6 +359,7 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
         LOG_I(TAG, "Value after rounding %lf", value);
     }
 
+    /*Clam value to match type sizes*/
     switch (type) {
         case DATA_UI8:  { if (value < 0) value = 0; if (value > UINT8_MAX) value = UINT8_MAX; } break;
         case DATA_UI16: { if (value < 0) value = 0; if (value > UINT16_MAX) value = UINT16_MAX; } break;
@@ -307,8 +372,8 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
         case DATA_B:    { value = (double)(bool)value; } break;
     }
 
-    // 2. Check for Scalar Access (Special index signature)
-    // Assuming 3 dimensions being UINT8_MAX implies a scalar variable access
+
+    /*Scalar set [FF,FF,FF]*/
     if ((idx_table[0] == UINT8_MAX) && (idx_table[1] == UINT8_MAX) && (idx_table[2] == UINT8_MAX)) {
         LOG_I(TAG, "Setting up scalar now for value %lf", value);
         switch(type) {
@@ -370,7 +435,7 @@ emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR
 
         // Return error if index calculation failed
         if (flat_idx == (size_t)-1) {
-            LOG_E(TAG, "Tried to set variable not existing (out of bounds)");
+            LOG_E(TAG, "Tried to set variable with invalid index (check if variable exist)");
             return EMU_ERR_MEM_OUT_OF_BOUNDS;
         }
         return EMU_OK;
@@ -411,8 +476,9 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     size_t len;
     size_t start_index = -1;
     size_t buff_size = chr_msg_buffer_size(source);
-
-    LOG_I(TAG, "Now counting total count of scalars");
+    emu_err_t err = EMU_OK;
+    
+    LOG_I(TAG, "Counting total count of scalars");
     // parse single variables
     for (uint16_t i = 0; i < buff_size; ++i)
     {
@@ -431,14 +497,22 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     }
     if (start_index == -1)
     {
-        ESP_LOGE(TAG, "Scalar variables sizes packet not found can't create memory");
-        return EMU_ERR_INVALID_DATA;
+        ESP_LOGE(TAG, "Scalar variables packet not found can't create memory");
+        err = EMU_ERR_INVALID_DATA;
+        return err;
     }
     //create space for single variables and create pointers
-    EMU_RETURN_ON_ERROR(emu_variables_single_create(mem));
-    //parse and create arrays
-    EMU_RETURN_ON_ERROR(emu_variables_arrays_create(source, mem, start_index));
-    return EMU_OK;
+    err = emu_variables_single_create(mem);
+    if (err != EMU_OK){
+        ESP_LOGE(TAG, "When creating single variables error: %s", EMU_ERR_TO_STR(err));
+        return err;
+    }
+    err = emu_variables_arrays_create(source, mem, start_index);
+    if (err != EMU_OK){
+        ESP_LOGE(TAG, "When creating arrays error: %s", EMU_ERR_TO_STR(err));
+        return err;
+    }
+    return err;
 }
 
 #define ARR_DATA_START_IDX 5

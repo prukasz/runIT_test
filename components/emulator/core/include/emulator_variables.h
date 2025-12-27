@@ -33,7 +33,6 @@ _DEFINE_ARR_TYPE(bool,     b)
 typedef struct global_acces_t global_acces_t;   
 typedef struct {
     uint8_t single_cnt[TYPES_COUNT];
-    
     //pointer to an array of singe variables type: int8_t
     int8_t   *i8;
     //pointer to an array of singe variables type: int16_t
@@ -54,8 +53,16 @@ typedef struct {
     bool     *b;
 
     uint8_t arr_cnt[TYPES_COUNT];
-    void  *_base_arr_ptr;
     void  *_base_arr_handle_ptr;
+    uint8_t *arr_data_ui8;
+    uint16_t *arr_data_ui16;
+    uint32_t *arr_data_ui32;
+    int8_t   *arr_data_i8;
+    int16_t  *arr_data_i16;
+    int32_t  *arr_data_i32;
+    float    *arr_data_f;
+    double   *arr_data_d;
+    bool     *arr_data_b;
     arr_ui8_t  *arr_ui8;
     arr_ui16_t *arr_ui16;
     arr_ui32_t *arr_ui32;

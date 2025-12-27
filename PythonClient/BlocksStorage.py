@@ -38,3 +38,25 @@ class BlocksStorage:
             return True
         print(f"[BlockStorage] Cannot remove Block {block_id}: Not found")
         return False
+
+    def set_used_inputs(self):
+        """
+        Iterates through all block connections and sets the 'in_used' bitmask
+        on target blocks for each input that is connected.
+        """
+        # Reset all in_used fields first to handle potential removals/changes
+        for block in self.blocks_map.values():
+            block.in_used = 0
+
+        # Go through each block and its connections
+        for source_block in self.blocks_map.values():
+            for q_connection in source_block.q_connections_table:
+                if q_connection is None:
+                    continue
+
+                for target_block_idx, target_input_num in zip(q_connection.target_blocks_idx_list, q_connection.target_inputs_num_list):
+                    target_block = self.get_block(target_block_idx)
+                    if target_block:
+                        target_block.in_used |= (1 << target_input_num)
+                    else:
+                        print(f"[WARNING] Block {source_block.block_idx} has a connection to non-existent block ID {target_block_idx}.")

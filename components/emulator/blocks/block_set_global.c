@@ -9,7 +9,8 @@ emu_err_t block_set_global(block_handle_t* block_data){
 
     global_acces_t *root = (global_acces_t*)block_data->global_reference[0];
     uint8_t idx_target[3];
-    double to_set = IN_GET_D(block_data, 0);
+    double to_set = 0.0; 
+    utils_get_in_val_safe(0, block_data, &to_set);
 
     global_acces_t* next_ptrs[3] = {root->next0, root->next1, root->next2};
 

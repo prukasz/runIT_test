@@ -86,7 +86,7 @@ void free_single_block(block_handle_t* block) {
         if(block->extras){
             switch (block->block_type)
             {
-            case BLOCK_COMPUTE:
+            case BLOCK_MATH:
                 emu_math_block_free_expression(block);
                 break;
             default:
@@ -295,4 +295,90 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
         ESP_LOGE(TAG_PARSE, "Error during block creation: %s, block %d won't be created", EMU_ERR_TO_STR(err), data[1]);
         free(block_new);
     return err;
+}
+
+#include "emulator_blocks.h"
+#include "emulator_errors.h"
+#include <stddef.h>
+
+// Prototypes for specific block verification functions (defined in their respective .c files)
+extern emu_err_t emu_parse_verify_block_math(void* extras);
+extern emu_err_t emu_parse_verify_block_logic(void* extras);
+extern emu_err_t emu_parse_verify_block_for(void* extras);
+// ... other prototypes ...
+
+emu_err_t emu_parse_verify_blocks(block_handle_t **blocks_list, uint16_t total_blocks_cnt) {
+    static const char * TAG = "BLOCK VERIFY";
+    if (!blocks_list){
+        LOG_I(TAG, "No block list provided");
+        return EMU_ERR_NULL_PTR;
+    }
+
+    for (uint16_t i = 0; i < total_blocks_cnt; i++) {
+        block_handle_t* block = blocks_list[i];
+       
+        if (!block){
+            LOG_E(TAG, "Block %d isn't created", i);
+            return EMU_ERR_NULL_PTR;
+        }
+        // Iterate through all outputs of this block
+        for (uint8_t q_idx = 0; q_idx < block->q_cnt; q_idx++) {
+            
+            q_connection_t* conn_info = &block->q_connections_table[q_idx];
+
+            for (uint8_t wire_idx = 0; wire_idx < conn_info->conn_cnt; wire_idx++) {
+                
+                uint16_t target_id = conn_info->target_blocks_id_list[wire_idx];
+                uint8_t  target_in = conn_info->target_inputs_list[wire_idx];
+
+                if (target_id >= total_blocks_cnt || blocks_list[target_id] == NULL) {
+                    return EMU_ERR_BLOCK_INVALID_CONNECTION;
+                }
+
+                block_handle_t* target_block = blocks_list[target_id];
+                if (target_in >= target_block->in_cnt) {
+                    LOG_I(TAG, "Target in of block %d, index %d doesn't exist in block %d", block->block_idx, target_in, target_id);
+                    return EMU_ERR_BLOCK_INVALID_CONNECTION; // Error: Target block doesn't have this input
+                }
+            }
+        }
+    }
+
+    // for (uint16_t i = 0; i < total_blocks_cnt; i++) {
+    //     block_handle_t* block = blocks_list[i];
+
+    //     if (block->extras != NULL) {
+    //         emu_err_t extras_res = EMU_OK;
+
+    //         switch (block->block_type) {
+    //             case BLOCK_MATH:
+    //                 extras_res = emu_parse_verify_block_math(block->extras);
+    //                 break;
+                
+    //             case BLOCK_CMP: 
+    //                 extras_res = emu_parse_verify_block_logic(block->extras);
+    //                 break;
+
+    //             case BLOCK_FOR:
+    //                 extras_res = emu_parse_verify_block_for(block->extras);
+    //                 break;
+
+    //             case BLOCK_SET_GLOBAL:
+    //                 // Example: check if global ref exists
+    //                 // extras_res = emu_parse_verify_block_global_set(block->extras);
+    //                 break;
+
+    //             default:
+    //                 // If a block has extras but no case here, is it an error?
+    //                 // Usually OK to ignore if no deep verification needed.
+    //                 break;
+    //         }
+
+    //         if (extras_res != EMU_OK) {
+    //             return extras_res;
+    //         }
+    //     }
+    // }
+
+    return EMU_OK;
 }

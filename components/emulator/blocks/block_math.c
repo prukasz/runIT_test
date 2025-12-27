@@ -4,7 +4,7 @@
 #include <float.h>
 #include <stdbool.h>
 
-int cnt;
+
 extern block_handle_t **emu_block_struct_execution_list;
 static inline bool is_greater(double a, double b);
 static inline bool is_equal(double a, double b);
@@ -32,7 +32,7 @@ emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == 0x01 && data[2] == 0x02)
+        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x02)
         {
             LOG_I(TAG, "Detected Expression header");
             uint16_t block_id = READ_U16(data, 3);
@@ -60,7 +60,7 @@ emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == 0x01 && data[2] == 0x01)
+        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x01)
         {
             LOG_I(TAG, "Detected Constant Table header");
             uint16_t block_id = READ_U16(data, 3);
@@ -165,7 +165,7 @@ emu_err_t block_math(block_handle_t* block){
     int over_top = 0;
     double result = 0;
 
-    for(int i = 0; i<eval->count; i++){
+    for(uint16_t i = 0; i<eval->count; i++){
         instruction_t *ins = &(eval->code[i]);
         switch(ins->op){
             case OP_VAR:
@@ -221,7 +221,8 @@ emu_err_t block_math(block_handle_t* block){
 
     result = stack[0];
     LOG_I("BLOCK_MATH", "Computed result: %lf", result);
-    utils_set_q_val_safe(block, 0, result);
+    utils_set_q_val_safe(block, 0, 1);
+    utils_set_q_val_safe(block, 1, result);
     block_pass_results(block);
     return EMU_OK;      
 } 

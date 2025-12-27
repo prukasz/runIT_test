@@ -13,7 +13,7 @@ class QConnection:
     target_blocks_idx_list: List[int] = field(default_factory=list)
     target_inputs_num_list: List[int] = field(default_factory=list)
     def __post_init__(self):
-        #Automatically count connections from oone output
+        #Automatically count connections from one output
         self.conn_cnt = len(self.target_blocks_idx_list)
     def __str__(self)-> str:
         #Packing to Hex 
@@ -49,7 +49,6 @@ class BlockHandle:
         self.in_cnt = len(self.in_data_type_table)
         self.q_cnt = len(self.q_data_type_table)
         self.in_used = 0
-        self.in_used = (1 << self.in_cnt) - 1 if self.in_cnt > 0 else 0
         #add empty Qconnections
         while len(self.q_connections_table) < self.q_cnt:
             self.q_connections_table.append(QConnection())

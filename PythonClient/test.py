@@ -5,6 +5,7 @@ from BlocksStorage import BlocksStorage
 from VariablesStorage import VariablesStorage
 from FullDump import FullDump
 from MathExpressionBuilder import MathExpression
+from BlockLogic import LogicExpression
 
 def main():
     var_store = VariablesStorage()
@@ -22,7 +23,7 @@ def main():
         block_type=BlockTypes.BLOCK_MATH,
         in_data_type_table=[DataTypes.DATA_D],
         q_data_type_table=[DataTypes.DATA_D],
-        q_connections_table=[QConnection(target_blocks_idx_list=[3], target_inputs_num_list=[0])],
+        q_connections_table=[QConnection(target_blocks_idx_list=[1], target_inputs_num_list=[0])],
         block_data=expr_val
     )
 
@@ -33,13 +34,13 @@ def main():
         block_type=BlockTypes.BLOCK_MATH,
         in_data_type_table=[DataTypes.DATA_D],
         q_data_type_table=[DataTypes.DATA_UI8],
-        q_connections_table=[QConnection(target_blocks_idx_list=[3], target_inputs_num_list=[1])],
+        q_connections_table=[QConnection(target_blocks_idx_list=[3], target_inputs_num_list=[0])],
         block_data=expr_row
     )
 
     # 3. Block to provide Column Index (2)
     expr_col = MathExpression("2", block_id=2)
-    blk_3 = BlockHandle(
+    blk_col = BlockHandle(
         block_idx=2,
         block_type=BlockTypes.BLOCK_MATH,
         in_data_type_table=[DataTypes.DATA_D],
@@ -50,19 +51,46 @@ def main():
 
     # 4. Global Set Block to write matrix_3x3[row][col] = value
     ref_matrix = Ref("matrix_3x3")[1][Ref("dupa")].build()
+    parser = CmpExpression("in_0>in_1", block_id=3)
     blk_set = BlockHandle(
         block_idx=3,
-        block_type=BlockTypes.BOCK_GLOBAL_SET,
-        in_data_type_table=[DataTypes.DATA_D, DataTypes.DATA_UI8],
-        q_data_type_table=[],
+        block_type=BlockTypes.BLOCK_CMP,
+        in_data_type_table=[DataTypes.DATA_UI8, DataTypes.DATA_UI8],
+        q_data_type_table=[DataTypes.DATA_B],
+        q_connections_table=[QConnection(target_blocks_idx_list=[4], target_inputs_num_list=[0])],
+        global_reference=[ref_matrix],
+        block_data=parser
+    )
+
+    expr_col2 = MathExpression("2", block_id=4)
+    blk_set2 = BlockHandle(
+        block_idx=4,
+        block_type=BlockTypes.BLOCK_MATH,
+        in_data_type_table=[DataTypes.DATA_UI8],
+        q_data_type_table=[DataTypes.DATA_D],
+        q_connections_table=[QConnection(target_blocks_idx_list=[5], target_inputs_num_list=[0])],
+        global_reference=[ref_matrix],
+        block_data=expr_col2
+    )
+
+    expr_col3 = MathExpression("2", block_id=5)
+    blk_set3 = BlockHandle(
+        block_idx=5,
+        block_type=BlockTypes.BLOCK_MATH,
+        in_data_type_table=[DataTypes.DATA_UI8],
+        q_data_type_table=[DataTypes.DATA_D],
         q_connections_table=[],
-        global_reference=[ref_matrix]
+        global_reference=[ref_matrix],
+        block_data= expr_col3
     )
 
     blk_store.add_block(blk_val)
     blk_store.add_block(blk_row)
-    blk_store.add_block(blk_3)
+    blk_store.add_block(blk_col)
     blk_store.add_block(blk_set)
+    blk_store.add_block(blk_set2)
+    blk_store.add_block(blk_set3)
+    blk_store.set_used_inputs()
 
     filename = "test.txt"
     dumper = FullDump(var_store, blk_store)
