@@ -5,7 +5,7 @@ from enum import IntEnum
 import struct
 
 # ==========================================
-# 1. ENUMY DLA TIMERA
+# TIMER OPTIONS
 # ==========================================
 
 class TimerType(IntEnum):
@@ -14,23 +14,20 @@ class TimerType(IntEnum):
     TP  = 0x03 # Pulse
 
 # ==========================================
-# 2. KONFIGURACJA (PAYLOAD)
+# TIMER CONFIG
 # ==========================================
-
 @dataclass
 class TimerBlockConfig:
     block_id: int
-    timer_type: TimerType
-    default_pt: int  # Czas w ms (uint32)
-
-    # ID typu bloku (musi pasować do C, np. 9)
-    BLOCK_TIMER_TYPE_ID: int = 0x09 
+    block_type: BlockTypes = BlockTypes.BLOCK_TIMER
     MSG_TIMER_CONFIG: int = 0x01
+    timer_type: TimerType
+    default_pt: int  #(ms)
 
     def __str__(self) -> str:
         # --- HEADER ---
         # [BB] [BlockType] [MsgType]
-        h_prefix = val_to_hex(struct.pack('<BBB', 0xBB, self.BLOCK_TIMER_TYPE_ID, self.MSG_TIMER_CONFIG), 1)
+        h_prefix = val_to_hex(struct.pack('<BBB', 0xBB, self.block_type, self.MSG_TIMER_CONFIG), 1)
         # [BlockID_L] [BlockID_H]
         h_id     = val_to_hex(struct.pack('<H', self.block_id), 2)
 
@@ -43,46 +40,20 @@ class TimerBlockConfig:
         return f"# TIMER CONFIG # {h_prefix} {h_id} {payload_type} {payload_pt}"
 
 # ==========================================
-# 3. GŁÓWNA KLASA BLOKU TIMER
+# BlockTimer
 # ==========================================
-
 class BlockTimer(BlockBase):
-    def __init__(self, block_idx: int, timer_type: TimerType, default_pt: int = 1000):
-        """
-        :param block_idx: ID bloku
-        :param timer_type: TON / TOF / TP
-        :param default_pt: Domyślny czas (ms), używany jeśli wejście PT (Index 1) wisi w powietrzu.
-        """
-        # Zakładamy, że ID 9 to Timer. Jeśli w Enums.py nie ma BLOCK_TIMER, używamy int(9)
-        try:
-            b_type = BlockTypes.BLOCK_TIMER
-        except AttributeError:
-            b_type = BlockTypes(9) # Fallback jeśli enum nie zaktualizowany
+    def __init__(self, block_idx: int, timer_type: TimerType = TimerType.TON, default_pt: int = 1000):
+        super().__init__(block_idx, block_type=BlockTypes.BLOCK_TIMER)
 
-        super().__init__(block_idx, b_type)
+        self.in_data_type_table.append(DataTypes.DATA_B)# [0] EN (Enable)
+        self.in_data_type_table.append(DataTypes.DATA_UI32)# [1] PT (Preset Time) 
+        self.in_data_type_table.append(DataTypes.DATA_B)# [2] RST (Reset)
 
-        # --- INPUTS ---
-        # [0] EN (Enable) - BOOL
-        self.in_data_type_table.append(DataTypes.DATA_B)
-        
-        # [1] PT (Preset Time) - DOUBLE
-        # Kod C: IN_GET_D(src, 1) -> oczekuje double
-        self.in_data_type_table.append(DataTypes.DATA_D)
-        
-        # [2] RST (Reset) - BOOL
-        self.in_data_type_table.append(DataTypes.DATA_B)
+        self.q_data_type_table.append(DataTypes.DATA_B)# [0] Q (Output enable) 
+        self.q_data_type_table.append(DataTypes.DATA_UI32)# [1] ET (elapsed time)
 
-        # --- OUTPUTS ---
-        # [0] Q (Output) - BOOL
-        self.q_data_type_table.append(DataTypes.DATA_B)
-        
-        # [1] ET (Elapsed Time) - DOUBLE
-        # Kod C: utils_set_q_val(..., &elapsed_double) -> zwraca double
-        self.q_data_type_table.append(DataTypes.DATA_D)
-
-        # --- CONFIG OBJECT ---
         self.config = TimerBlockConfig(
-            block_id=block_idx,
             timer_type=timer_type,
             default_pt=default_pt
         )
@@ -90,7 +61,7 @@ class BlockTimer(BlockBase):
         self.__post_init__()
 
     def get_extra_data(self) -> str:
-        """Zwraca sformatowany string HEX z konfiguracją timera"""
+        """Hex string of timer block"""
         return str(self.config)
 
 # ==========================================
@@ -98,22 +69,13 @@ class BlockTimer(BlockBase):
 # ==========================================
 
 if __name__ == "__main__":
-    try:
-        print("--- Tworzenie Bloku Timer (TON) ---")
-        
-        # Timer TON, domyślny czas 2500ms (jeśli nie podłączymy wejścia PT)
+    try:   
         blk = BlockTimer(
-            block_idx=5,
+            block_idx=0,
             timer_type=TimerType.TON,
             default_pt=2500
         )
 
         print(blk)
-        # Oczekiwany wynik HEX configu:
-        # BB 09 01 (Header)
-        # 05 00    (ID)
-        # 01       (Type TON)
-        # C4 09 00 00 (2500 DEC = 0x09C4 LE)
-
     except Exception as e:
         print(f"ERROR: {e}")

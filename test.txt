@@ -4,23 +4,22 @@ EEEE
 FF81 00 0000000000004E40 01 0000000000004940
 DDDD
 B000 0400
-BB 03 00 #B_idx# 0000 #in_used# 0000 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 02 #q_types# 08 08 #conn_cnt# 02 #qconn0# #conn_cnt# 01 0100 00 #qconn1# #conn_cnt# 00
-#G_ACC# BB 03 EF 0000 0600
-#REF PRESSURE# BB 03 F0 0000 07 00 FF FF FF FF FF FF
-#REF LIMIT_VAL# BB 03 F1 0000 07 01 FF FF FF FF FF FF
-#LOGIC CODE# BB 03 02 0000 03 0001 0002 1000
-BB 08 00 #B_idx# 0100 #in_used# 0100 #in_cnt/size# 04 19 #in_types# 08 07 07 07 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 01 0200 00 #qconn1# #conn_cnt# 00
-#G_ACC# BB 08 EF 0100 0000
-# FOR LIMITS # BB 08 01 0100 0000000000000000 0000000000005940 000000000000F03F
-# FOR CONFIG # BB 08 02 0100 # chain # 0200 # cond # 02 # op # 01
-BB 01 00 #B_idx# 0200 #in_used# 0100 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 00 #qconn1# #conn_cnt# 01 0300 00
-#G_ACC# BB 01 EF 0200 0600
-#REF PRESSURE# BB 01 F0 0200 07 00 FF FF FF FF FF FF
-#REF LIMIT_VAL# BB 01 F1 0200 07 01 FF FF FF FF FF FF
-#MATH CODE# BB 01 02 0200 03 0001 0002 0100
-BB 02 00 #B_idx# 0300 #in_used# 0100 #in_cnt/size# 01 08 #in_types# 07 #q_cnt/size# 01 01 #q_types# 08 #conn_cnt# 01 #qconn0# #conn_cnt# 00
-#G_ACC# BB 02 EF 0300 0100
-#REF ALARM_LEVEL# BB 02 F0 0300 07 02 FF FF FF FF FF FF
+BB 02 00 #B_idx# 0000 #in_used# 0000 #in_cnt/size# 01 08 #in_types# 07 #q_cnt/size# 01 01 #q_types# 08 #conn_cnt# 01 #qconn0# #conn_cnt# 01 0100 00
+#G_ACC# BB 02 EF 0000 0300
+#REF PRESSURE# BB 02 F0 0000 07 00 FF FF FF FF FF FF
+#REF ALARM_LEVEL# BB 02 F1 0000 07 02 FF FF FF FF FF FF
+BB 03 00 #B_idx# 0100 #in_used# 0100 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 02 #q_types# 08 08 #conn_cnt# 02 #qconn0# #conn_cnt# 01 0200 00 #qconn1# #conn_cnt# 00
+#G_ACC# BB 03 EF 0100 0000
+#LOGIC CONST# BB 03 01 0100 02 0000000000005940 0000000000002440
+#LOGIC CODE# BB 03 02 0100 03 0900 0901 1000
+BB 08 00 #B_idx# 0200 #in_used# 0100 #in_cnt/size# 04 19 #in_types# 08 07 07 07 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 01 0300 00 #qconn1# #conn_cnt# 00
+#G_ACC# BB 08 EF 0200 0000
+# FOR LIMITS # BB 08 01 0200 0000000000000000 0000000000005940 000000000000F03F
+# FOR CONFIG # BB 08 02 0200 # chain # 0100 # cond # 02 # op # 01
+BB 01 00 #B_idx# 0300 #in_used# 0100 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 00 #qconn1# #conn_cnt# 00
+#G_ACC# BB 01 EF 0300 0000
+#MATH CONST# BB 01 01 0300 02 0000000000005940 0000000000002440
+#MATH CODE# BB 01 02 0300 03 0900 0901 0100
 B100
 B200
 B300

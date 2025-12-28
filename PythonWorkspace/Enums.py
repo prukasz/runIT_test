@@ -73,6 +73,7 @@ class Headers(IntEnum):
     H_START_REFERENCE = 0xF0
     H_BLOCK_START_G_ACCES_MASK = 0xEF
     H_BLOCKS_CNT = 0xB000
+   
 
 DataTypesSizes = {
     DataTypes.DATA_UI8:  1,

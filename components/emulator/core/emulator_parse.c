@@ -253,7 +253,7 @@ emu_result_t emu_parse_fill_block_data(){
                     break;
                 case BLOCK_TIMER:
                     LOG_I(TAG, "Now will fill block data for block BLOCK_TIMER idx: %d", i);
-                    res = emu_parse_block_timer(source, i);
+                    res = emu_parse_block_timer(source, block);
                     if(res.code!=EMU_OK){
                         ESP_LOGE(TAG, "While parsing timer block data for block %d error: %s", i, EMU_ERR_TO_STR(res.code));
                         res.restart = true;

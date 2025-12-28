@@ -4,16 +4,17 @@
 static const char* TAG = "BLOCK_SET_GLOBAL";
 emu_result_t block_set_global(block_handle_t* block_data){
     emu_result_t res = {.code = EMU_OK};
-    if (!block_data || !block_data->global_reference || !block_data->global_reference[0]) {
+    if (!block_data || !block_data->global_reference || !(block_data->global_reference_cnt >= 1)) {
         res.code = EMU_ERR_NULL_PTR;
         res.restart = true; 
         return res;
     }
-
-    global_acces_t *root = (global_acces_t*)block_data->global_reference[0];
+    global_acces_t *root = block_data->global_reference[0];
+    if(block_data->global_reference_cnt == 2){root = (global_acces_t*)block_data->global_reference[1];}
     uint8_t idx_target[3];
     double to_set = 0.0; 
-    utils_get_in_val_safe(0, block_data, &to_set);
+    utils_get_in_val_auto(block_data, 0,&to_set);
+    
 
     global_acces_t* next_ptrs[3] = {root->next0, root->next1, root->next2};
 
@@ -47,6 +48,7 @@ emu_result_t block_set_global(block_handle_t* block_data){
         res.block_idx = block_data->block_idx;
         return res;
     } 
+    block_pass_results(block_data);
     return res;
 
     index_error:

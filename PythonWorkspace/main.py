@@ -20,15 +20,23 @@ def main():
     glob_store.add_scalar("PRESSURE", DataTypes.DATA_D, 60.0)
     glob_store.add_scalar("LIMIT_VAL", DataTypes.DATA_D, 50.0)
     glob_store.add_scalar("ALARM_LEVEL", DataTypes.DATA_D, 0)
-    b_logic = BlockLogic(
+
+    b_set_1 = BlockSetGlobal(
         block_idx=0,
-        expression="in_1 > in_2",
+        target_ref=G("ALARM_LEVEL").build(),
+        source_ref=G("PRESSURE").build()
+    )
+    blk_store.add_block(b_set_1)
+
+
+    b_logic = BlockLogic(
+        block_idx=1,
+        expression="100 > 10",
         in_list=[], 
-        global_refs={1: G("PRESSURE").build(), 2: G("LIMIT_VAL").build()}
     )
     blk_store.add_block(b_logic)
     b_for = BlockFor(
-        block_idx=1,
+        block_idx=2,
         chain_len=2,
         start=0,
         limit=100,
@@ -39,18 +47,18 @@ def main():
     blk_store.add_block(b_for)
 
     b_math = BlockMath(
-        block_idx=2,
-        expression="in_1 + in_2",
-        global_refs={1: G("PRESSURE").build(), 2: G("LIMIT_VAL").build()}
+        block_idx=3,
+        expression="100 + 10",
     )
     blk_store.add_block(b_math)
 
     b_set = BlockSetGlobal(
-        block_idx=3,
+        block_idx=4,
         target_ref=G("ALARM_LEVEL").build()
     )
     blk_store.add_block(b_set)
 
+    b_set_1.connect(0, b_logic, 0)
     b_logic.connect(0, b_for, 0)
     b_for.connect(0, b_math, 0)
     b_math.connect(1, b_set, 0)
