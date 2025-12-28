@@ -112,7 +112,7 @@ emu_result_t block_logic(block_handle_t* block){
           
         switch(ins->op){
             case CMP_OP_VAR:
-                utils_get_in_val_autoselect(ins->input_index, block, &stack[over_top++]);
+                utils_get_in_val_auto(block, ins->input_index, &stack[over_top++]);
                 break;
 
             case CMP_OP_CONST:

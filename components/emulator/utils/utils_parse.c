@@ -28,6 +28,10 @@ emu_result_t utils_parse_fuction_assign_to_block(block_handle_t *block){
         block->block_function = block_for;
         ESP_LOGI(TAG, "Assigned [block_for] to block idx %d", block->block_idx);
         break;
+    case BLOCK_TIMER:
+        block->block_function = block_timer;
+        ESP_LOGI(TAG, "Assigned [block_timer] to block idx %d", block->block_idx);
+        break;
     default:
         ESP_LOGE(TAG, "Unknown block type %d for block id %d", block->block_type, block->block_idx);
         break;

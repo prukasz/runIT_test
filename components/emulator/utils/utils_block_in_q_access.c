@@ -4,34 +4,23 @@
 #include "math.h"
 #include "esp_log.h"
 
-emu_err_t utils_get_in_val_autoselect(uint8_t idx, block_handle_t *block, double *out){
-    static const char* TAG = "GET IN AUTOSELECT";
-    double result = 0.0;
-    if(!out||!block){
-        LOG_E(TAG, "No block provided or output provided");
+emu_err_t utils_get_in_val_auto(block_handle_t *block, uint8_t in_idx, double *out){
+    if(!block || !out){
         return EMU_ERR_NULL_PTR;
     }
-    if(idx<block->in_cnt){
-        emu_err_t err = utils_get_in_val_safe(idx, block, &result);
-        if(EMU_OK!=err){
-            ESP_LOGE(TAG, "Can't retrive input value, error %s", EMU_ERR_TO_STR(err));
-            return err;
-        }
-    }else{
-        uint8_t _idx = idx - block->in_cnt;
-        if (_idx >= block->global_reference_cnt){
-            ESP_LOGE(TAG, "Can't retrive assgined global value out index %d out of bounds", idx);
-            return result;
-        }
-        emu_err_t err = utils_global_var_acces_recursive(block->global_reference[_idx], &result);
-        if(EMU_OK!=err){
-            ESP_LOGE("BLOCK INPUT", "Can't retrive assgined global value, error %s", EMU_ERR_TO_STR(err));
-            return err;
-        }
+    if(block->in_used & (1 << in_idx)){
+        return utils_get_in_val_safe(in_idx, block, out);
     }
-    *out = result;
-    return EMU_OK;
+
+    if (!((block->in_global_used) & (1 << in_idx))) {
+        return EMU_ERR_MEM_INVALID_IDX;
+    }
+    uint16_t lower_bits_mask = (1 << in_idx) - 1;
+    uint16_t bits_to_count = block->in_global_used & lower_bits_mask;
+    uint8_t idx = (uint8_t)__builtin_popcount(bits_to_count);
+    return utils_global_var_acces_recursive(block->global_reference[idx], out);
 }
+    
 
 
 emu_err_t utils_get_in_val_safe(uint8_t in_num, block_handle_t* block, double* out) {

@@ -14,6 +14,7 @@ idf_component_register(
         "blocks/block_set_global.c"
         "blocks/block_logic"
         "blocks/block_for"
+        "blocks/block_timer"
 
     INCLUDE_DIRS 
         "blocks/include"

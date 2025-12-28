@@ -52,6 +52,7 @@ struct _block_handle_s{
     uint8_t in_cnt;             /*count of inputs*/
     uint16_t in_set;             /*count of outputs*/
     uint16_t in_used;
+    uint16_t in_global_used;
 
     uint8_t q_cnt;              /*flags (for debug)*/
     uint16_t q_set;              /*flags (for debug)*/
@@ -60,20 +61,14 @@ struct _block_handle_s{
 };
 
 
-
-
-
-
-
+/**
+ * @brief Pass results from outputs of block to all connected inputs
+ */
+void block_pass_results(block_handle_t*  block);
 
 /**
 *@brief free all structs and functions from functions table
 */
-void block_pass_results(block_handle_t*  block);
-
-/**
- *@brief reset all blokcs 
- */
 void emu_blocks_free_all(block_handle_t ** block_structs, uint16_t num_blocks); 
 
 
@@ -82,4 +77,7 @@ void emu_blocks_free_all(block_handle_t ** block_structs, uint16_t num_blocks);
  */
 emu_result_t emu_parse_total_block_cnt(chr_msg_buffer_t *source);
 
+/**
+ *@brief Parse universal blocks structs (in cnt q cnt, global conncetionns.... )
+ */
 emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt);

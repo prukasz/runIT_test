@@ -178,7 +178,7 @@ emu_result_t block_math(block_handle_t* block){
         instruction_t *ins = &(eval->code[i]);
         switch(ins->op){
             case OP_VAR:
-                utils_get_in_val_autoselect(ins->input_index, block, &stack[over_top++]);
+                utils_get_in_val_auto(block, ins->input_index, &stack[over_top++]);
                 LOG_I(TAG, "Pushed variable value: %lf", stack[over_top-1]);
                 break;
 

@@ -13,125 +13,85 @@ static const char* TAG = "BLOCK_FOR";
 #define STOP_SETTING_MASK  0b00000010
 #define STEP_SETTING_MASK   0b00000100
 
-
 // Zmienne globalne emulatora
 extern block_handle_t **emu_block_struct_execution_list; 
 extern uint16_t emu_loop_iterator;
 
-
 emu_result_t block_for(block_handle_t *src) {
-    emu_result_t res = {.code = EMU_OK};
-    bool EN = IN_GET_B(src, 0);
-    uint8_t offset = 0;
-    if(EN || src->in_used == 0){
+    emu_result_t res = EMU_RESULT_OK();
+    bool EN = false;
+    double en_val = 0;
 
-
-        block_for_handle_t* config = (block_for_handle_t*)src->extras;
-        double iterator = config->start_val;
-        if (((config->what_to_use_mask & START_SETTING_MASK)>>1) == START_SETTING_MASK){
-            if(((src->in_set & START_SETTING_MASK)>>1) == START_SETTING_MASK){
-                iterator = IN_GET_D(src, BLOCK_FOR_IN_START);
-            }else{
-                utils_global_var_acces_recursive(src->global_reference[offset], &iterator);
-                offset++;
-            }
-        }
-        double limit = config->end_val;
-        if (!((config->what_to_use_mask & STOP_SETTING_MASK) == STOP_SETTING_MASK)){
-            if(((src->in_set & STOP_SETTING_MASK)>>1) == STOP_SETTING_MASK){
-                iterator = IN_GET_D(src, BLOCK_FOR_IN_STOP);
-            }else{
-                utils_global_var_acces_recursive(src->global_reference[offset], &limit);
-                offset++;
-            }
-        }
-        double step = config->op_step;
-        if (!((config->what_to_use_mask & STEP_SETTING_MASK) == STEP_SETTING_MASK)){
-            if(((src->in_set & STEP_SETTING_MASK)>>1) == STEP_SETTING_MASK){
-                iterator = IN_GET_D(src, BLOCK_FOR_IN_STEP);
-            }else{
-                utils_global_var_acces_recursive(src->global_reference[offset], &iterator);
-                offset++;
-            }
-        }
-        LOG_I(TAG, "iterator = %lf, limit = %lf, step = %lf", iterator, limit, step);
-        uint16_t watchdog = 0;
-
-        while(1) {
-            bool condition_met = false;
-            LOG_I(TAG, "condition %d", config->condition);
-            switch (config->condition) {
-                case FOR_COND_GT:
-                    if (iterator > (limit + DBL_EPSILON)) condition_met = true;
-                    break;
-                case FOR_COND_LT:
-                    if (iterator < (limit - DBL_EPSILON)) condition_met = true;
-                    break;
-                case FOR_COND_GTE:
-                    if (iterator >= (limit - DBL_EPSILON)) condition_met = true;
-                    break;
-                case FOR_COND_LTE:
-                    if (iterator <= (limit + DBL_EPSILON)) condition_met = true;
-                    break;
-                default:
-                    condition_met = false;
-                    break;
-            }
-            
-            watchdog ++;
-            LOG_I(TAG, "watchdog = %d", watchdog);
-            if (!condition_met) break;
-            if (watchdog > BLOCK_FOR_MAX_CYCLES) {
-                LOG_W(TAG, "Max for loop iterations exceeding block: %d", src->block_idx);
-                res.code = EMU_ERR_BLOCK_FOR_TIMEOUT;
-                res.warning = true;
-                res.block_idx = src->block_idx;
-                return res;
-            }
-
-            for (uint16_t b = 1; b <= config->chain_len; b++) {
-                block_handle_t* child = emu_block_struct_execution_list[src->block_idx + b];
-                if (child) {
-                    child->in_set = 0;
-                }
-            }
-            utils_set_q_val(src, 0, &EN);
-            utils_set_q_val(src, 1, &iterator);
-            block_pass_results(src);
-            for (uint16_t b = 1; b <= config->chain_len; b++) {
-                block_handle_t* child = emu_block_struct_execution_list[src->block_idx + b];
-                if (child && child->block_function) {
-                    res = child->block_function(child);
-                    if (res.code != EMU_OK) {
-                        LOG_I(TAG, "During execution of block %d error %s", src->block_idx + b, EMU_ERR_TO_STR(res.code));
-                        return res;
-                    }
-                }
-            }
-            switch(config->op) {
-                case FOR_OP_ADD:
-                    iterator += step;
-                    break;
-                case FOR_OP_SUB:
-                    iterator -= step;
-                    break;
-                case FOR_OP_MUL:
-                    iterator *= step;
-                    break;
-                case FOR_OP_DIV:
-                    if (fabs(step) > DBL_EPSILON) {
-                        iterator /= step;
-                    }
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        emu_loop_iterator += config->chain_len;
-
-        return res;
+    if (utils_get_in_val_auto(src, 0, &en_val) == EMU_OK) {
+        EN = (bool)en_val;
+    } else {
+        EN = true; 
     }
+    if (!EN) {
+        return res; 
+    }
+    block_for_handle_t* config = (block_for_handle_t*)src->extras;
+    if (!config) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, src->block_idx); //do we leave it here?
+    double temp_val = 0;
+    double iterator_start = config->start_val;
+    if(utils_get_in_val_auto(src, BLOCK_FOR_IN_START, &temp_val) == EMU_OK) {
+        iterator_start = temp_val;
+    }
+    double limit = config->end_val;
+    if (utils_get_in_val_auto(src, BLOCK_FOR_IN_STOP, &temp_val) == EMU_OK) {
+        limit = temp_val;
+    }
+    double step = config->op_step;
+    if (utils_get_in_val_auto(src, BLOCK_FOR_IN_STEP, &temp_val) == EMU_OK) {
+        step = temp_val;
+    }
+    LOG_I(TAG, "[%d] For Loop: Start=%.2f, Limit=%.2f, Step=%.2f", src->block_idx, iterator_start, limit, step);
+    double current_val = iterator_start;
+    uint16_t watchdog = 0;
+    while(1) {
+        bool condition_met = false;
+        
+        // Sprawdzenie warunku
+        switch (config->condition) {
+            case FOR_COND_GT:  condition_met = (current_val > (limit + DBL_EPSILON)); break;
+            case FOR_COND_LT:  condition_met = (current_val < (limit - DBL_EPSILON)); break;
+            case FOR_COND_GTE: condition_met = (current_val >= (limit - DBL_EPSILON)); break;
+            case FOR_COND_LTE: condition_met = (current_val <= (limit + DBL_EPSILON)); break;
+            default: condition_met = false; break;
+        }
+
+        if (!condition_met) break;
+
+        // Watchdog
+        watchdog++;
+        if (watchdog > BLOCK_FOR_MAX_CYCLES) {
+            LOG_W(TAG, "[%d] Max cycles exceeded!", src->block_idx);
+            return EMU_RESULT_WARN(EMU_ERR_BLOCK_FOR_TIMEOUT, src->block_idx);
+        }
+        utils_set_q_val(src, 0, &EN); 
+        utils_set_q_val(src, 1, &current_val); 
+        block_pass_results(src); 
+
+        for (uint16_t b = 1; b <= config->chain_len; b++) {
+            emu_block_struct_execution_list[src->block_idx + b]->in_set = 0;
+        }
+
+        for (uint16_t b = 1; b <= config->chain_len; b++) {
+            block_handle_t* child = emu_block_struct_execution_list[src->block_idx + b];
+                res = child->block_function(child);
+                if (res.code != EMU_OK) {return res;}
+        }
+
+        switch(config->op) {
+            case FOR_OP_ADD: current_val += step; break;
+            case FOR_OP_SUB: current_val -= step; break;
+            case FOR_OP_MUL: current_val *= step; break;
+            case FOR_OP_DIV: 
+                if (fabs(step) > DBL_EPSILON) {current_val /= step;} 
+                break;
+        }
+    }
+    emu_loop_iterator += config->chain_len;
     return res;
 }
 
@@ -221,7 +181,5 @@ static emu_err_t _emu_parse_for_config(uint8_t *data, uint16_t len, block_for_ha
     offset += 2;
     handle->condition = (block_for_condition_t)data[offset++];
     handle->op = (block_for_operator_t)data[offset++];
-    handle->what_to_use_mask = data[offset++];
-
     return EMU_OK;
 }

@@ -28,15 +28,15 @@ static inline emu_result_t emu_execute_code(block_handle_t** block_struct_list, 
 
 
 void emu_body_loop_task(void* params){
-    emu_loop_ctx_t *ctx = (emu_loop_ctx_t*)params;
+    emu_loop_ctx_t *loop_ctx = (emu_loop_ctx_t*)params;
     
     while(1){
-        if(xSemaphoreTake(ctx->sem_loop_start, portMAX_DELAY) == pdTRUE) {
+        if(xSemaphoreTake(loop_ctx->sem_loop_start, portMAX_DELAY) == pdTRUE) {
             int64_t start_time = esp_timer_get_time();
-            emu_execute_code(emu_block_struct_execution_list, emu_block_total_cnt, ctx);
+            emu_execute_code(emu_block_struct_execution_list, emu_block_total_cnt, loop_ctx);
             int64_t end_time = esp_timer_get_time();
             ESP_LOGI(TAG, "loop completed in %lld us", (end_time - start_time));
-            xSemaphoreGive(ctx->sem_loop_wtd);
+            xSemaphoreGive(loop_ctx->sem_loop_wtd);
             taskYIELD();
         }
     }

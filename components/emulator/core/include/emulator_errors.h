@@ -1,7 +1,7 @@
 #pragma once 
 #include "stdint.h"
 //comment to disable excess logging 
-//#define ENABLE_LOGGING 1
+#define ENABLE_LOGGING 1
 
 /**
  * @brief Debug logging for non essential code parts
@@ -64,6 +64,8 @@ typedef enum {
     EMU_ERR_BLOCK_INVALID_CONN      = 0xB006,
     EMU_ERR_BLOCK_ALREADY_FILLED    = 0xB007,
     EMU_ERR_BLOCK_WTD_TRIGGERED     = 0xB008,
+    EMU_ERR_BLOCK_USE_INTERNAL_VAR  = 0xB009,
+
 
 } emu_err_t;
 

@@ -17,6 +17,8 @@ class BlockTypes(IntEnum):
     BLOCK_SET_GLOBAL = 2
     BLOCK_CMP = 3 
     BLOCK_FOR = 8 
+    BLOCK_TIMER = 9
+
 
 class Order(IntEnum):
     ORD_STOP_BYTES           = 0x0000
@@ -33,8 +35,9 @@ class Order(IntEnum):
     ORD_EMU_LOOP_START       = 0x1000
     ORD_EMU_LOOP_STOP        = 0x2000
     ORD_EMU_LOOP_INIT        = 0x2137
-    ORD_EMU_ALLOCATE_BLOCKS_LIST = 0xb100
-    ORD_EMU_FILL_BLOCKS_LIST     = 0xb200
+    ORD_EMU_CREATE_BLOCK_LIST = 0xb100
+    ORD_EMU_CREATE_BLOCKS     = 0xb200
+    ORD_EMU_FILL_BLOCKS       = 0xb300
 
 
 class Headers(IntEnum):
@@ -68,6 +71,7 @@ class Headers(IntEnum):
     H_SCALAR_B   = 0xFF91
 
     H_START_REFERENCE = 0xF0
+    H_BLOCK_START_G_ACCES_MASK = 0xEF
     H_BLOCKS_CNT = 0xB000
 
 DataTypesSizes = {
