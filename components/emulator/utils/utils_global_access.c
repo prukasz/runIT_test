@@ -67,8 +67,6 @@ emu_err_t utils_global_var_acces_recursive(global_acces_t *root, double *out){
             DATA_TYPE_TO_STR[root->target_type], root->target_idx, idx_table[0], idx_table[1], idx_table[3], EMU_ERR_TO_STR(err));
             return err;
     }
-
-
     *out = val;
     return EMU_OK;
 }
@@ -91,16 +89,20 @@ void utils_global_var_access_free(global_acces_t** access_list, uint8_t cnt){
     free(access_list);
 }
 
-emu_err_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t start, block_handle_t *block) {
+emu_result_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t start, block_handle_t *block) 
+{
     uint8_t *data;
     size_t len;
     size_t buffer_len = chr_msg_buffer_size(source);
     uint8_t total_references = 0;
     uint8_t cursor = start;
+    emu_result_t res = {.code = EMU_OK};
 
     if (!block || ! source){
         LOG_E(TAG, "Null block ptr or NULL source ptr");
-        return EMU_ERR_NULL_PTR;
+        res.code = EMU_ERR_NULL_PTR;
+        res.restart = true;
+        return res;
     }
     //check total count of global access
     while(cursor < buffer_len){ 
@@ -118,7 +120,9 @@ emu_err_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t
     block->global_reference = (global_acces_t**)calloc(total_references, sizeof(global_acces_t*));
     if(NULL == block->global_reference && total_references !=0 ){
         LOG_E(TAG, "Array allocation failed");
-        return EMU_ERR_NO_MEM;
+        res.code = EMU_ERR_NO_MEM;
+        res.restart = true;
+        return res;
     }
 
     //Now allocate pool and link all nodes
@@ -145,7 +149,9 @@ emu_err_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t
             global_acces_t *pool = calloc(total_nodes, sizeof(global_acces_t));
             if (!pool) {
                 LOG_E(TAG, "Poll allocation failed for global access");
-                return EMU_ERR_NO_MEM;
+                res.code = EMU_ERR_NO_MEM;
+                res.restart = true;
+                return res;
             }
 
             uint16_t packet_idx = 5;      
@@ -161,7 +167,7 @@ emu_err_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t
     }
 
     ESP_LOGI(TAG, "Created %d global references for block %d", current_ref_idx, block->block_idx);
-    return EMU_OK;
+    return res;
 }
 
 /**

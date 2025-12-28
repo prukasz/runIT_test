@@ -34,8 +34,8 @@ typedef enum{
  * @param cmd 
  */ 
 
-emu_err_t emu_parse_manager(parse_cmd_t cmd);
+emu_result_t emu_parse_manager(parse_cmd_t cmd);
 
-emu_err_t emu_parse_fill_block_data();
+emu_result_t emu_parse_fill_block_data();
 
 

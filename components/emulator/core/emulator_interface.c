@@ -36,7 +36,7 @@ QueueHandle_t emu_interface_orders_queue;
 /***************************************************************************/
 /*             Functions that are executed when order comes in             */
 
-static emu_err_t _interface_execute_loop_init(void);
+static emu_result_t _interface_execute_loop_init(void);
 static emu_err_t _interface_execute_loop_stop_execution(void);
 static emu_err_t _interface_execute_loop_start_execution(void);
 
@@ -46,19 +46,20 @@ extern block_handle_t **emu_block_struct_execution_list;
 extern uint16_t emu_block_total_cnt;
 
 void emu_interface_task(void* params){
+    emu_result_t res = {.code = EMU_OK};
     ESP_LOGI(TAG, "Emulator interface task created");
     emu_interface_orders_queue  = xQueueCreate(5, sizeof(emu_order_t));
     static emu_order_t orders;
-    emu_parse_manager(PARSE_RESTART);
+    res = emu_parse_manager(PARSE_RESTART);
     while(1){
         if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &orders, portMAX_DELAY)){
             ESP_LOGI(TAG, "Received order: 0x%04X" , orders);
             switch (orders){    
                 case ORD_PARSE_VARIABLES:
-                     emu_parse_manager(PARSE_CREATE_VARIABLES);
+                    res = emu_parse_manager(PARSE_CREATE_VARIABLES);
                     break;
                 case ORD_PARSE_INTO_VARIABLES:
-                     emu_parse_manager(PARSE_FILL_VARIABLES);
+                    res = emu_parse_manager(PARSE_FILL_VARIABLES);
                     break;             
                 case ORD_EMU_LOOP_START:
                     _interface_execute_loop_start_execution();
@@ -79,7 +80,7 @@ void emu_interface_task(void* params){
                     emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
                     emu_block_total_cnt = 0 ;
                 
-                    emu_parse_manager(PARSE_RESTART);
+                    res = emu_parse_manager(PARSE_RESTART);
                     break;
                 case ORD_RESET_BLOCKS:
                     emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
@@ -90,9 +91,9 @@ void emu_interface_task(void* params){
                     chr_msg_buffer_clear(source);
                     break;
                 case ORD_EMU_FILL_BLOCKS_LIST:
-                    emu_parse_manager(PARSE_CREATE_BLOCKS_LIST);
-                    emu_parse_manager(PARSE_CREATE_BLOCKS);
-                    emu_parse_manager(PARSE_FILL_BLOCKS);
+                    res = emu_parse_manager(PARSE_CREATE_BLOCKS_LIST);
+                    res =emu_parse_manager(PARSE_CREATE_BLOCKS);
+                    res =emu_parse_manager(PARSE_FILL_BLOCKS);
                     break;
                 default:
                     // Unknown order
@@ -124,30 +125,36 @@ static emu_err_t _interface_execute_loop_stop_execution(void){
 /**
 *@brief Execute order from user: Create loop timer and emulator body 
 */
-static emu_err_t _interface_execute_loop_init(void){
-    if(EMU_OK==emu_parse_manager(PARSE_CHEKC_CAN_RUN)){
-        emu_err_t err = emu_loop_init();
-        if (EMU_OK!= err){
-            ESP_LOGE(TAG, "While creating loop error: %d", err);
-            return err;
+static emu_result_t _interface_execute_loop_init(void){
+    emu_result_t res = emu_parse_manager(PARSE_CHEKC_CAN_RUN);
+    if(res.code==EMU_OK){
+        res = emu_loop_init();
+        if (res.code!=EMU_OK){
+            ESP_LOGE(TAG, "While creating loop error: %s", EMU_ERR_TO_STR(res.code));
+            return res;
         }
     }else{
         ESP_LOGE(TAG, "Can't init loop, first parse code");
-        return EMU_ERR_ORD_CANNOT_EXECUTE;
+        res.code = EMU_ERR_PARSE_INVALID_REQUEST;
+        res.warning = true;
+        return res;
     }
-    return EMU_OK;
+    return res;
 }   
 
 
 /** 
 * @brief Add source of data for parser
 */
-emu_err_t emu_parse_source_add(chr_msg_buffer_t * msg){
+emu_result_t emu_parse_source_add(chr_msg_buffer_t * msg){
+    emu_result_t res = {.code = EMU_OK};
     if (NULL==msg){
         ESP_LOGW(TAG, "No buffer provided to assign");
-        return EMU_ERR_NULL_PTR;   
+        res.code = EMU_ERR_NULL_PTR;
+        res.warning = true;
+        return res;   
     }
     source = msg;
-    return EMU_OK;
+    return res;
 }
 

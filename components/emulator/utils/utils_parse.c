@@ -7,7 +7,8 @@ bool parse_check_header(uint8_t *data, emu_header_t header)
     return (bool)(GET_HEADER(data) == (emu_header_t)header);
 }
 
-emu_err_t utils_parse_fuction_assign_to_block(block_handle_t *block){
+emu_result_t utils_parse_fuction_assign_to_block(block_handle_t *block){
+    emu_result_t res = {.code = EMU_OK};
     static const char* TAG = "FUNCTION ASSIGN";
     switch (block->block_type)
     {
@@ -31,6 +32,6 @@ emu_err_t utils_parse_fuction_assign_to_block(block_handle_t *block){
         ESP_LOGE(TAG, "Unknown block type %d for block id %d", block->block_type, block->block_idx);
         break;
     }
-    return EMU_OK;
+    return res;
 }
 

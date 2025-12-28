@@ -14,7 +14,8 @@ static const char *TAG = "EMU_PARSE";
 extern chr_msg_buffer_t *source;
 extern block_handle_t **emu_block_struct_execution_list;
 extern uint16_t emu_block_total_cnt;
-emu_err_t emu_parse_manager(parse_cmd_t cmd){
+emu_result_t emu_parse_manager(parse_cmd_t cmd){
+    emu_result_t res = {.code = EMU_OK};
     static struct {
         bool can_create_variables;
         bool can_fill_variables;
@@ -44,133 +45,172 @@ emu_err_t emu_parse_manager(parse_cmd_t cmd){
         break;
     case PARSE_CREATE_VARIABLES:
         if(flags.can_create_variables  && !status.is_create_variables_done){
-            emu_err_t err= emu_parse_variables(source, &mem);
-            if(EMU_OK!=err){
-                ESP_LOGE(TAG, "While parsing and creating variables error: %s", EMU_ERR_TO_STR(err));
-                return err;
+            res = emu_parse_variables(source, &mem);
+            if(EMU_OK!=res.code){
+                ESP_LOGE(TAG, "While parsing and creating variables error: %s", EMU_ERR_TO_STR(res.code));
+                res.restart = true;
+                return res;
             }
             flags.can_fill_variables = true; 
             flags.can_create_variables = false;
             status.is_create_variables_done = true;
             ESP_LOGI(TAG, "Succesfuly parsed variables");
-            return EMU_OK;
+            return res;
         }else{
             ESP_LOGE(TAG, "Can't create variables");
-            return EMU_ERR_PARSE_INVALID_REQUEST;
+            res.code = EMU_ERR_PARSE_INVALID_REQUEST;
+            res.warning = true;
+            return res;
         }
         break;
     case PARSE_FILL_VARIABLES:
         if(flags.can_fill_variables && status.is_create_variables_done){
-            emu_err_t err= emu_parse_variables_into(source, &mem);
-            if(EMU_OK!=err){
-                ESP_LOGE(TAG, "While parsing into variables error: %s", EMU_ERR_TO_STR(err));
-                return err;
+            res = emu_parse_variables_into(source, &mem);
+            if(EMU_OK!=res.code){
+                ESP_LOGE(TAG, "While parsing into variables error: %s", EMU_ERR_TO_STR(res.code));
+                res.restart = true;
+                return res;
             }
             if(status.is_fill_variables_done){
                 ESP_LOGW(TAG, "Parsing already done reparsing now, some values can be overwritten");
-                return EMU_OK;
+                res.code = EMU_OK;
+                res.notice = true;  ///ad here some more about notice?
             }
             flags.can_fill_variables = true;
             status.is_fill_variables_done = true;
             flags.can_create_blocks_list = true;
             ESP_LOGI(TAG, "Succesfuly filled variables");
-            return EMU_OK;
+            return res;
         }else{
             ESP_LOGE(TAG, "Can't fill variables rigth now");
-            return EMU_ERR_PARSE_INVALID_REQUEST;
+            res.code = EMU_ERR_PARSE_INVALID_REQUEST;
+            res.warning = true;
+            return res;
         }
         break;
     case PARSE_CREATE_BLOCKS_LIST:
         if (flags.can_create_blocks_list){
-            emu_err_t err = emu_parse_total_block_cnt(source);
-            if(EMU_OK!=err){
-                ESP_LOGE(TAG, "While alocating blocks list error: %s", EMU_ERR_TO_STR(err));
-                return err;
+            res = emu_parse_total_block_cnt(source);
+            if(EMU_OK!=res.code){
+                ESP_LOGE(TAG, "While alocating blocks list error: %s", EMU_ERR_TO_STR(res.code));
+                res.restart = true;
+                return res;
             }
             flags.can_create_blocks = true;
             flags.can_create_blocks_list = false;
             status.is_create_blocks_list_done = true;
         }else{
             ESP_LOGE(TAG, "Can't create blocks list, first create varaibles");
-            return EMU_ERR_PARSE_INVALID_REQUEST;
+            res.code = EMU_ERR_PARSE_INVALID_REQUEST;
+            res.warning = true;
+            return res;
         }
         break;
 
     case PARSE_CREATE_BLOCKS:
         if(flags.can_create_blocks && status.is_create_blocks_list_done){
-            emu_err_t err = emu_parse_block(source, emu_block_struct_execution_list, emu_block_total_cnt);
-            if(EMU_OK!=err){
-                ESP_LOGE(TAG, "While creating blocks error: %s", EMU_ERR_TO_STR(err));
-                return err;
+            res = emu_parse_block(source, emu_block_struct_execution_list, emu_block_total_cnt);
+            if(EMU_OK!=res.code){
+                ESP_LOGE(TAG, "While creating blocks error: %s", EMU_ERR_TO_STR(res.code));
+                res.restart = true;
+                return res;
             }
             flags.can_create_blocks = false;
             flags.can_fill_blocks = true;
             status.is_create_blocks_done = true;
             ESP_LOGI(TAG, "Succesfuly created blocks");
-            return EMU_OK;
+            return res;
         }else{
             ESP_LOGE(TAG, "Can't create blocks right now");
-            return EMU_ERR_PARSE_INVALID_REQUEST;
+            res.code = EMU_ERR_PARSE_INVALID_REQUEST;
+            res.warning = true;
+            return res;
         }
+
         break;
     case PARSE_FILL_BLOCKS:
         if(flags.can_fill_blocks && status.is_create_blocks_done){
-            emu_err_t err=emu_parse_fill_block_data();
-            if(EMU_OK!=err){
-                ESP_LOGE(TAG, "While filling blocks error: %s", EMU_ERR_TO_STR(err));
-                return err;
+            res = emu_parse_fill_block_data();
+            if(EMU_OK!=res.code){
+                ESP_LOGE(TAG, "While filling blocks error: %s in block: %d", EMU_ERR_TO_STR(res.code), res.block_idx);
+                res.restart = true;
+                return res;
             }
             flags.can_fill_blocks = false;
             status.is_fill_blocks_done = true;
             flags.can_run_code = true;
             ESP_LOGI(TAG, "Succesfuly filled blocks");
-            return EMU_OK;
+            return res;
         }else{
             ESP_LOGE(TAG, "Can't fill blocks right now");
-            return EMU_ERR_PARSE_INVALID_REQUEST;
+            res.code = EMU_ERR_PARSE_INVALID_REQUEST;
+            res.warning = true;
+            return res;
         }
         break;
     case PARSE_CHEKC_CAN_RUN:
         if(flags.can_run_code && status.is_fill_blocks_done){
-            return EMU_OK;
+            return res;
         }else{
-            return EMU_ERR_DENY;
+            res.code = EMU_ERR_DENY;
+            res.warning = true;
+            return res;
         }
         break;
     
     case PARSE_IS_CREATE_BLOCKS_DONE:
         if(status.is_create_blocks_done){
-            return EMU_OK;
-        }else{return EMU_ERR_DENY;}
+            return res;
+        }else{
+            res.code = EMU_ERR_DENY;
+            res.warning = true;
+            return res;
+        }
         break;
 
     case PARSE_IS_CREATE_VARIABLES_DONE:
         if(status.is_create_variables_done){
-            return EMU_OK;
-        }else{return EMU_ERR_DENY;}
+            return res;
+        }else{
+            res.code = EMU_ERR_DENY;
+            res.warning = true;
+            return res;
+        }
         break;
     
     case PARSE_IS_FILL_VARIABLES_DONE:
         if(status.is_fill_variables_done){
-            return EMU_OK;
-        }else{return EMU_ERR_DENY;}
+            return res;
+        }else{
+            res.code = EMU_ERR_DENY;
+            res.warning = true;
+            return res;
+        }
         break;
     
     case PARSE_IS_FILL_BLOCKS_DONE:
         if(status.is_fill_blocks_done){
-            return EMU_OK;
-        }else{return EMU_ERR_DENY;}
-        break;    
-
+            return res;
+        }else{
+            res.code = EMU_ERR_DENY;
+            res.warning = true;
+            return res;
+        }
+        break;
+    
     default:
+        res.code = EMU_ERR_PARSE_INVALID_REQUEST;
+        res.warning = true;
+        return res;
         break;
     }
-
-    return EMU_ERR_UNLIKELY;
+    res.code = EMU_ERR_UNLIKELY;
+    res.warning = true;
+    return res;
 }
 
-emu_err_t emu_parse_fill_block_data(){
-    emu_err_t err = EMU_OK;
+emu_result_t emu_parse_fill_block_data(){
+    emu_result_t res = {.code = EMU_OK};
     for(uint16_t i = 0; i<emu_block_total_cnt; i++){
         block_handle_t * block = emu_block_struct_execution_list[i];
         //if block already created and has no data
@@ -179,10 +219,12 @@ emu_err_t emu_parse_fill_block_data(){
             {
                 case BLOCK_MATH:
                 LOG_I(TAG, "Now will fill block data for block BLOCK_MATH idx: %d", i);
-                err = emu_parse_math_blocks(source);
-                if(err!=EMU_OK){
-                    ESP_LOGE(TAG, "While parsing math block data for block %d error: %s", i, EMU_ERR_TO_STR(err));
-                    return err;
+                res = emu_parse_block_math(source, i);
+                if(res.code!=EMU_OK){
+                    ESP_LOGE(TAG, "While parsing math block data for block %d error: %s", i, EMU_ERR_TO_STR(res.code));
+                    res.restart = true;
+                    res.block_idx = i;
+                    return res;
                 }
                 break;
                 case BLOCK_SET_GLOBAL:
@@ -191,18 +233,22 @@ emu_err_t emu_parse_fill_block_data(){
                     break;
                 case BLOCK_CMP:
                     LOG_I(TAG, "Now will fill block data for block BLOCK_CMP idx: %d", i);
-                    err = emu_parse_logic_blocks(source);
-                    if(err!=EMU_OK){
-                        ESP_LOGE(TAG, "While parsing logic block data for block %d error: %s", i, EMU_ERR_TO_STR(err));
-                        return err;
+                    res = emu_parse_block_logic(source, i);
+                    if(res.code!=EMU_OK){
+                        ESP_LOGE(TAG, "While parsing logic block data for block %d error: %s", i, EMU_ERR_TO_STR(res.code));
+                        res.restart = true;
+                        res.block_idx = i;
+                        return res;
                     }
                     break;
                 case BLOCK_FOR:
                     LOG_I(TAG, "Now will fill block data for block BLOCK_FOR idx: %d", i);
-                    err = emu_parse_for_blocks(source);
-                    if(err!=EMU_OK){
-                        ESP_LOGE(TAG, "While parsing for block data for block %d error: %s", i, EMU_ERR_TO_STR(err));
-                        return err;
+                    res = emu_parse_block_for(source , i);
+                    if(res.code!=EMU_OK){
+                        ESP_LOGE(TAG, "While parsing for block data for block %d error: %s", i, EMU_ERR_TO_STR(res.code));
+                        res.restart = true;
+                        res.block_idx = i;
+                        return res;
                     }
                     break;
                 default:
@@ -210,5 +256,5 @@ emu_err_t emu_parse_fill_block_data(){
             }
         }
     }
-    return EMU_OK;
+    return res;
 }

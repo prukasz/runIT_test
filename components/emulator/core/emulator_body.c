@@ -21,7 +21,7 @@ block_handle_t** emu_block_struct_execution_list=NULL;
 /**     
  * @brief execute list of funinctions and corresponding block structs
  */
-static inline emu_err_t emu_execute_code(block_handle_t** block_struct_list, uint16_t total_block_cnt); 
+static inline emu_result_t emu_execute_code(block_handle_t** block_struct_list, uint16_t total_block_cnt); 
 
 
 void emu_body_loop_task(void* params){
@@ -38,16 +38,17 @@ void emu_body_loop_task(void* params){
 }
 
 uint16_t emu_loop_iterator = 0;
-static inline emu_err_t emu_execute_code(block_handle_t **block_struct_list, uint16_t total_block_cnt){
+static inline emu_result_t emu_execute_code(block_handle_t **block_struct_list, uint16_t total_block_cnt){
+    emu_result_t res = {.code = EMU_OK};
     static const char* _TAG = "EMU_BODY_EXECUTE";
     
     for (emu_loop_iterator = 0; emu_loop_iterator < total_block_cnt; emu_loop_iterator++) {
         LOG_I(_TAG, "Now will execute block %d", emu_loop_iterator);
         if((block_struct_list[emu_loop_iterator]->in_set&block_struct_list[emu_loop_iterator]->in_used) == block_struct_list[emu_loop_iterator]->in_used){
-            emu_err_t err = (block_struct_list[emu_loop_iterator])->block_function(block_struct_list[emu_loop_iterator]);
-             if (err != EMU_OK) {
-                ESP_LOGE(TAG, "Block %d failed during execution, error: %s", emu_loop_iterator, EMU_ERR_TO_STR(err));
-                return err;
+            res = (block_struct_list[emu_loop_iterator])->block_function(block_struct_list[emu_loop_iterator]);
+             if (res.code != EMU_OK) {
+                ESP_LOGE(TAG, "Block %d (error block idx: %d) failed during execution, error: %s", emu_loop_iterator, res.block_idx,  EMU_ERR_TO_STR(res.code));
+                return res;
             }
         }else{
             LOG_W(TAG, "block %d skipped, some inputs not updated", emu_loop_iterator);
@@ -56,13 +57,17 @@ static inline emu_err_t emu_execute_code(block_handle_t **block_struct_list, uin
     for (uint16_t i = 0; i < total_block_cnt; i++) {
         block_struct_list[i]->in_set = 0;
     }
-    return EMU_OK;
+    return res;
 }
 
-emu_err_t emu_body_create_execution_table(uint16_t total_blocks_cnt) {
+emu_result_t emu_body_create_execution_table(uint16_t total_blocks_cnt) {
+    emu_result_t res = {.code = EMU_OK};
+
     if (total_blocks_cnt == 0){
         ESP_LOGE(TAG, "Zero blocks to create provided");
-        return EMU_ERR_INVALID_ARG;
+        res.code = EMU_ERR_INVALID_ARG;
+        res.abort = true;
+        return res;
     }
 
     emu_block_total_cnt = total_blocks_cnt;
@@ -70,9 +75,11 @@ emu_err_t emu_body_create_execution_table(uint16_t total_blocks_cnt) {
     emu_block_struct_execution_list = (block_handle_t**)calloc(emu_block_total_cnt, sizeof(block_handle_t*));
     if (!emu_block_struct_execution_list) {
         ESP_LOGE(TAG, "Failed to allocate space for block structs");
-        return EMU_ERR_NO_MEM;
+        res.code = EMU_ERR_NO_MEM;
+        res.abort = true;
+        return res;
     }
 
     LOG_I(TAG, "Successfully allocated space for %d block structs", total_blocks_cnt);
-    return EMU_OK;
+    return res;
 }

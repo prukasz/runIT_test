@@ -18,8 +18,9 @@ emu_err_t _clear_expression_internals(expression_t* expr);
 
 static const char* TAG = "MATH_PARSER";
 
-emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
+emu_result_t emu_parse_block_math(chr_msg_buffer_t *source, uint16_t block_idx)
 {
+    emu_result_t res = {.code = EMU_OK};
     uint8_t *data;
     size_t len;
     block_handle_t *block_ptr;
@@ -32,7 +33,7 @@ emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x02)
+        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x02 && (READ_U16(data, 3) == block_idx))
         {
             LOG_I(TAG, "Detected Expression header");
             uint16_t block_id = READ_U16(data, 3);
@@ -40,13 +41,19 @@ emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
             block_ptr->extras = calloc(1, sizeof(expression_t));
             if(!block_ptr->extras){
                 ESP_LOGE(TAG, "No memory to allocate math block extras for block %d", block_id);
-                return EMU_ERR_NO_MEM;
+                res.code = EMU_ERR_NO_MEM;
+                res.block_idx = block_id;
+                res.restart = true;
+                return res;
             }
             size_t const_msg_cnt = 1;
             if(_emu_parse_math_expr(source, search_idx, (block_ptr->extras), &const_msg_cnt) != EMU_OK){
                 ESP_LOGE(TAG, "Error while parsing expression for block %d", block_id);
                 emu_math_block_free_expression(block_ptr);
-                return EMU_ERR_NO_MEM;
+                res.code = EMU_ERR_NO_MEM;
+                res.block_idx = block_id;
+                res.restart = true;
+                return res;
             }
             search_idx++;
         }
@@ -60,7 +67,7 @@ emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x01)
+        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x01 && (READ_U16(data, 3) == block_idx))
         {
             LOG_I(TAG, "Detected Constant Table header");
             uint16_t block_id = READ_U16(data, 3);
@@ -69,7 +76,10 @@ emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
             if(_emu_parse_math_const(source, search_idx, (block_ptr->extras), &const_msg_cnt) != EMU_OK){
                 ESP_LOGE(TAG, "Error while parsing constant table for block %d", block_id);
                 emu_math_block_free_expression(block_ptr);
-                return EMU_ERR_NO_MEM;
+                res.code = EMU_ERR_NO_MEM;
+                res.block_idx = block_id;
+                res.restart = true;
+                return res;
             }
             search_idx++;
         }
@@ -78,7 +88,7 @@ emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source)
             search_idx++;
         }
     }
-    return EMU_OK;
+    return res;
 }
 
 emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt)
@@ -156,10 +166,9 @@ emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_in
     return EMU_OK;
 }
 
-emu_err_t block_math(block_handle_t* block){
-    if(!block->extras){
-        return EMU_ERR_INVALID_DATA;
-    }
+emu_result_t block_math(block_handle_t* block){
+    emu_result_t res = {.code = EMU_OK};
+
     expression_t* eval = (expression_t*)block->extras;
     double stack[16];
     int over_top = 0;
@@ -188,9 +197,12 @@ emu_err_t block_math(block_handle_t* block){
                 break;
 
             case OP_DIV:
-                if(is_zero(stack[over_top-1]))
-                    return EMU_ERR_DIV_BY_ZERO;
-
+                if(is_zero(stack[over_top-1])){
+                    res.code = EMU_ERR_BLOCK_DIV_BY_ZERO;
+                    res.warning = true;
+                    res.block_idx = block->block_idx;
+                    return res;
+                }
                 stack[over_top-2] = stack[over_top-2]/stack[over_top-1];
                 over_top--;
                 break;
@@ -224,7 +236,7 @@ emu_err_t block_math(block_handle_t* block){
     utils_set_q_val_safe(block, 0, 1);
     utils_set_q_val_safe(block, 1, result);
     block_pass_results(block);
-    return EMU_OK;      
+    return res;      
 } 
 
 static inline bool is_equal(double a, double b){

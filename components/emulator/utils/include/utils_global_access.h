@@ -47,4 +47,4 @@ void utils_global_var_access_free(global_acces_t** access_list, uint8_t cnt);
  * @param start Search start index 
  * @param block Block to assign to 
  */
-emu_err_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t start, block_handle_t *block);
+emu_result_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t start, block_handle_t *block);

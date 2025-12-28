@@ -5,8 +5,173 @@
 #include "utils_parse.h"
 #include "esp_log.h"
 
-
 static const char *TAG = "EMU_VARIABLES";
+
+emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR_DIMS], double value) {
+    emu_err_t err  = EMU_OK;
+    static const char* TAG = "MEM SET SAFE";
+    if (!(type == DATA_F || type == DATA_D)) {
+        value = round(value);
+        LOG_I(TAG, "Value after rounding %lf", value);
+    }
+
+    /*Clam value to match type sizes*/
+    switch (type) {
+        case DATA_UI8:  { if (value < 0) value = 0; if (value > UINT8_MAX) value = UINT8_MAX; } break;
+        case DATA_UI16: { if (value < 0) value = 0; if (value > UINT16_MAX) value = UINT16_MAX; } break;
+        case DATA_UI32: { if (value < 0) value = 0; if (value > UINT32_MAX) value = UINT32_MAX; } break;
+        case DATA_I8:   { if (value < INT8_MIN) value = INT8_MIN; if (value > INT8_MAX) value = INT8_MAX; } break;
+        case DATA_I16:  { if (value < INT16_MIN) value = INT16_MIN; if (value > INT16_MAX) value = INT16_MAX; } break;
+        case DATA_I32:  { if (value < INT32_MIN) value = INT32_MIN; if (value > INT32_MAX) value = INT32_MAX; } break;
+        case DATA_F:    { value = (double)((float)value); } break;
+        case DATA_D:    {} break;
+        case DATA_B:    { value = (double)(bool)value; } break;
+    }
+
+
+    /*Scalar set [FF,FF,FF]*/
+    if ((idx_table[0] == UINT8_MAX) && (idx_table[1] == UINT8_MAX) && (idx_table[2] == UINT8_MAX)) {
+        LOG_I(TAG, "Setting up scalar now for value %lf", value);
+        switch(type) {
+            case DATA_UI8:  mem.u8[idx]  = (uint8_t)(value); break;
+            case DATA_UI16: mem.u16[idx] = (uint16_t)(value); break;
+            case DATA_UI32: mem.u32[idx] = (uint32_t)(value); break;
+            case DATA_I8:   mem.i8[idx]  = (int8_t)(value); break;
+            case DATA_I16:  mem.i16[idx] = (int16_t)(value); break;
+            case DATA_I32:  mem.i32[idx] = (int32_t)(value); break;
+            case DATA_F:    mem.f[idx]   = (float)(value); break;
+            case DATA_D:    mem.d[idx]   = (double)(value); break;
+            case DATA_B:    mem.b[idx]   = (bool)(value); break;
+            default:
+                err = EMU_ERR_UNLIKELY;
+                return err; // Unknown type
+        }
+        return err; // Return success for scalar set
+    }else {
+        size_t flat_idx = (size_t)-1;
+        LOG_I(TAG, "Setting up array value for %lf at [%d, %d, %d]", value, idx_table[0], idx_table[1], idx_table[2]);
+        switch(type) {
+            case DATA_UI8:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[idx].num_dims, mem.arr_ui8[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_ui8[idx].data[flat_idx] = (uint8_t)(value); }
+                break;
+            case DATA_UI16:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_ui16[idx].num_dims, mem.arr_ui16[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_ui16[idx].data[flat_idx] = (uint16_t)(value); }
+                break;
+            case DATA_UI32:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_ui32[idx].num_dims, mem.arr_ui32[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_ui32[idx].data[flat_idx] = (uint32_t)(value); }
+                break;
+            case DATA_I8:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_i8[idx].num_dims, mem.arr_i8[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_i8[idx].data[flat_idx] = (int8_t)(value); }
+                break;
+            case DATA_I16:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_i16[idx].num_dims, mem.arr_i16[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_i16[idx].data[flat_idx] = (int16_t)(value); }
+                break;
+            case DATA_I32:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_i32[idx].num_dims, mem.arr_i32[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_i32[idx].data[flat_idx] = (int32_t)(value); }
+                break;
+            case DATA_F:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_f[idx].num_dims, mem.arr_f[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_f[idx].data[flat_idx] = (float)(value); }
+                break;
+            case DATA_D:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_d[idx].num_dims, mem.arr_d[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_d[idx].data[flat_idx] = (double)(value); }
+                break;
+            case DATA_B:
+                flat_idx = _ARR_FLAT_IDX(mem.arr_b[idx].num_dims, mem.arr_b[idx].dims, idx_table);
+                if(flat_idx != (size_t)-1) { mem.arr_b[idx].data[flat_idx] = (bool)(value); }
+                break;
+            default:
+                err = EMU_ERR_UNLIKELY;
+                return err;
+        }
+
+        // Return error if index calculation failed
+        if (flat_idx == (size_t)-1) {
+            LOG_E(TAG, "Tried to set variable with invalid index (check if variable exist)");
+            err = EMU_ERR_MEM_OUT_OF_BOUNDS;
+            return err;
+        }
+        return err;
+    }
+}
+
+emu_err_t mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[MAX_ARR_DIMS], double *out_value)
+{
+    emu_err_t err = EMU_OK;
+    static const char* TAG = "(mem_get_as_d)";
+    if (!out_value){
+        LOG_W(TAG, "No output value provided");
+        err = EMU_ERR_NULL_PTR;
+        goto error;
+    }
+
+    size_t flat_idx = SIZE_MAX;
+    bool is_scalar =
+        (idx_table[0] == UINT8_MAX &&
+         idx_table[1] == UINT8_MAX &&
+         idx_table[2] == UINT8_MAX);
+
+    /* Compute flat index if array */
+    if (!is_scalar) {
+        LOG_I(TAG, "Looking for variable: type %s, at idx %d is array", DATA_TYPE_TO_STR[type], var_idx);
+        switch (type) {
+            case DATA_UI8:   flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[var_idx].num_dims, mem.arr_ui8[var_idx].dims, idx_table); break;
+            case DATA_UI16:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui16[var_idx].num_dims, mem.arr_ui16[var_idx].dims, idx_table); break;
+            case DATA_UI32:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui32[var_idx].num_dims, mem.arr_ui32[var_idx].dims, idx_table); break;
+            case DATA_I8:    flat_idx = _ARR_FLAT_IDX(mem.arr_i8[var_idx].num_dims, mem.arr_i8[var_idx].dims, idx_table); break;
+            case DATA_I16:   flat_idx = _ARR_FLAT_IDX(mem.arr_i16[var_idx].num_dims, mem.arr_i16[var_idx].dims, idx_table); break;
+            case DATA_I32:   flat_idx = _ARR_FLAT_IDX(mem.arr_i32[var_idx].num_dims, mem.arr_i32[var_idx].dims, idx_table); break;
+            case DATA_F:     flat_idx = _ARR_FLAT_IDX(mem.arr_f[var_idx].num_dims, mem.arr_f[var_idx].dims, idx_table); break;
+            case DATA_D:     flat_idx = _ARR_FLAT_IDX(mem.arr_d[var_idx].num_dims, mem.arr_d[var_idx].dims, idx_table); break;
+            case DATA_B:     flat_idx = _ARR_FLAT_IDX(mem.arr_b[var_idx].num_dims, mem.arr_b[var_idx].dims, idx_table); break;
+            default: 
+                LOG_E(TAG, "Unknown array data type: %d", type);
+                err = EMU_ERR_MEM_INVALID_DATATYPE;
+                goto error;
+        }
+        //(macro returns -1 if cannot acces chosen cell)
+        if (flat_idx == (size_t)-1){
+            LOG_E(TAG, "While accesing with idx [%d, %d ,%d], tried to access out of array bounds", idx_table[0], idx_table[1], idx_table[2]);
+            err = EMU_ERR_MEM_OUT_OF_BOUNDS;
+            goto error;
+        }
+    }else{
+        LOG_I(TAG, "Provided type %s, at idx %d is scalar", DATA_TYPE_TO_STR[type], var_idx);
+    }
+
+    /* Extract value */
+    switch (type) {
+        case DATA_UI8:  *out_value = is_scalar ? mem.u8[var_idx]  : mem.arr_ui8[var_idx].data[flat_idx]; break;
+        case DATA_UI16: *out_value = is_scalar ? mem.u16[var_idx] : mem.arr_ui16[var_idx].data[flat_idx]; break;
+        case DATA_UI32: *out_value = is_scalar ? mem.u32[var_idx] : mem.arr_ui32[var_idx].data[flat_idx]; break;
+
+        case DATA_I8:   *out_value = is_scalar ? mem.i8[var_idx]  : mem.arr_i8[var_idx].data[flat_idx]; break;
+        case DATA_I16:  *out_value = is_scalar ? mem.i16[var_idx] : mem.arr_i16[var_idx].data[flat_idx]; break;
+        case DATA_I32:  *out_value = is_scalar ? mem.i32[var_idx] : mem.arr_i32[var_idx].data[flat_idx]; break;
+
+        case DATA_F:    *out_value = is_scalar ? mem.f[var_idx]   : mem.arr_f[var_idx].data[flat_idx]; break;
+        case DATA_D:    *out_value = is_scalar ? mem.d[var_idx]   : mem.arr_d[var_idx].data[flat_idx]; break;
+
+        case DATA_B:    *out_value = is_scalar ? mem.b[var_idx]   : mem.arr_b[var_idx].data[flat_idx]; break;
+
+        default: 
+            err = EMU_ERR_UNLIKELY;
+            goto error;
+    }
+    return err;
+
+    error:
+        ESP_LOGE(TAG, "Error during variable access: %s", EMU_ERR_TO_STR(err));
+        return err;
+}
+
 #define HEADER_SIZE 2
 bool _parse_check_arr_header(uint8_t *data, uint8_t *step);
 
@@ -59,11 +224,14 @@ bool _parse_check_arr_packet_size(uint16_t len, uint8_t step)
 /**
  * @brief This function allocate space for all single variables 
  */
-emu_err_t emu_variables_single_create(emu_mem_t *mem)
-{
+emu_result_t emu_variables_single_create(emu_mem_t *mem)
+{   
+    emu_result_t res = {.code = EMU_OK};
     if (!mem) {
-        LOG_E(TAG, "No mem struct provided");
-        return EMU_ERR_NULL_PTR;
+        LOG_E(TAG, "No mem struct provided to allocate single variables");
+        res.code = EMU_ERR_NULL_PTR;
+        res.abort = true;
+        return res;
     }   
     if(mem->single_cnt[0] > 0 ){
         mem->u8 = calloc(mem->single_cnt[0], data_size(0));
@@ -102,23 +270,26 @@ emu_err_t emu_variables_single_create(emu_mem_t *mem)
         if(!mem->b){goto error;}
     }
     LOG_I(TAG, "Single variables dataholder created successfully");
-    return EMU_OK;
+    return res;
     error:
         LOG_E(TAG, "Failed to create memory for single variables");
         emu_variables_reset(mem);
-        return EMU_ERR_NO_MEM;
+        res.code = EMU_ERR_NO_MEM;
+        res.abort = true;
+        return res;
 }
 
 /**
 *@brief this function parse source buffer and allocate array space
 */
-emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, size_t start_index)
+emu_result_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, size_t start_index)
 {
     uint8_t *data;
     size_t len;
     size_t buff_size = chr_msg_buffer_size(source);
     uint8_t step;
-    emu_err_t err = EMU_OK;
+    emu_result_t res = {.code = EMU_OK};
+    
     start_index += 1;
     LOG_I(TAG, "Now calculating total arrays count of each type");
     size_t total_sizes_table[TYPES_COUNT] = {0};
@@ -235,7 +406,8 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
                     HANDLE_ARR_DATA_TYPE(mem, DATA_B,    arr_b,    bool,     mem->arr_data_b);
                     default:
                         ESP_LOGE(TAG, "Unknown array data type");
-                        err = EMU_ERR_MEM_INVALID_DATATYPE;
+                        res.code = EMU_ERR_MEM_INVALID_DATATYPE;
+                        res.warning = true;
                         goto error;
 
                 }
@@ -243,15 +415,17 @@ emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, 
         }
     }
     LOG_I(TAG, "Array variables dataholder created successfully");
-    return EMU_OK;
+    return res;
 
     error: 
-        if (err == EMU_OK){
-            err = EMU_ERR_NO_MEM;  //so we do not need to set error everywhere where mem error
+        if (res.code == EMU_OK){//so we do not need to set error everywhere where mem error
+            res.code = EMU_ERR_NO_MEM;
+            res.abort = true;
+        }else{
+            LOG_E(TAG, "Failed to create memory for arrays error: %s", EMU_ERR_TO_STR(res.code));
+            emu_variables_reset(mem);
         }
-        LOG_E(TAG, "Failed to create memory for arrays error: %s", EMU_ERR_TO_STR(err));
-        emu_variables_reset(mem);
-        return err;
+        return res;
 }
 
 
@@ -281,168 +455,6 @@ void emu_variables_reset(emu_mem_t *mem)
     LOG_I(TAG, "Dataholder memory freed");
 }
 
-emu_err_t mem_get_as_d(data_types_t type, size_t var_idx, uint8_t idx_table[MAX_ARR_DIMS], double *out_value)
-{
-    static const char* TAG = "(mem_get_as_d)";
-    emu_err_t err = EMU_OK;
-    if (!out_value){
-        LOG_W(TAG, "No output value provided");
-        err = EMU_ERR_NULL_PTR;
-        goto error;
-    }
-
-
-    size_t flat_idx = SIZE_MAX;
-    bool is_scalar =
-        (idx_table[0] == UINT8_MAX &&
-         idx_table[1] == UINT8_MAX &&
-         idx_table[2] == UINT8_MAX);
-
-    /* Compute flat index if array */
-    if (!is_scalar) {
-        LOG_I(TAG, "Looking for variable: type %s, at idx %d is array", DATA_TYPE_TO_STR[type], var_idx);
-        switch (type) {
-            case DATA_UI8:   flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[var_idx].num_dims, mem.arr_ui8[var_idx].dims, idx_table); break;
-            case DATA_UI16:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui16[var_idx].num_dims, mem.arr_ui16[var_idx].dims, idx_table); break;
-            case DATA_UI32:  flat_idx = _ARR_FLAT_IDX(mem.arr_ui32[var_idx].num_dims, mem.arr_ui32[var_idx].dims, idx_table); break;
-            case DATA_I8:    flat_idx = _ARR_FLAT_IDX(mem.arr_i8[var_idx].num_dims, mem.arr_i8[var_idx].dims, idx_table); break;
-            case DATA_I16:   flat_idx = _ARR_FLAT_IDX(mem.arr_i16[var_idx].num_dims, mem.arr_i16[var_idx].dims, idx_table); break;
-            case DATA_I32:   flat_idx = _ARR_FLAT_IDX(mem.arr_i32[var_idx].num_dims, mem.arr_i32[var_idx].dims, idx_table); break;
-            case DATA_F:     flat_idx = _ARR_FLAT_IDX(mem.arr_f[var_idx].num_dims, mem.arr_f[var_idx].dims, idx_table); break;
-            case DATA_D:     flat_idx = _ARR_FLAT_IDX(mem.arr_d[var_idx].num_dims, mem.arr_d[var_idx].dims, idx_table); break;
-            case DATA_B:     flat_idx = _ARR_FLAT_IDX(mem.arr_b[var_idx].num_dims, mem.arr_b[var_idx].dims, idx_table); break;
-            default: 
-                LOG_E(TAG, "Unknown array data type: %d", type);
-                err = EMU_ERR_MEM_INVALID_DATATYPE;
-                goto error;
-        }
-        //(macro returns -1 if cannot acces chosen cell)
-        if (flat_idx == (size_t)-1){
-            LOG_E(TAG, "While accesing with idx [%d, %d ,%d], tried to access out of array bounds", idx_table[0], idx_table[1], idx_table[2]);
-            err = EMU_ERR_MEM_OUT_OF_BOUNDS;
-            goto error;
-        }
-    }else{
-        LOG_I(TAG, "Provided type %s, at idx %d is scalar", DATA_TYPE_TO_STR[type], var_idx);
-    }
-
-    /* Extract value */
-    switch (type) {
-        case DATA_UI8:  *out_value = is_scalar ? mem.u8[var_idx]  : mem.arr_ui8[var_idx].data[flat_idx]; break;
-        case DATA_UI16: *out_value = is_scalar ? mem.u16[var_idx] : mem.arr_ui16[var_idx].data[flat_idx]; break;
-        case DATA_UI32: *out_value = is_scalar ? mem.u32[var_idx] : mem.arr_ui32[var_idx].data[flat_idx]; break;
-
-        case DATA_I8:   *out_value = is_scalar ? mem.i8[var_idx]  : mem.arr_i8[var_idx].data[flat_idx]; break;
-        case DATA_I16:  *out_value = is_scalar ? mem.i16[var_idx] : mem.arr_i16[var_idx].data[flat_idx]; break;
-        case DATA_I32:  *out_value = is_scalar ? mem.i32[var_idx] : mem.arr_i32[var_idx].data[flat_idx]; break;
-
-        case DATA_F:    *out_value = is_scalar ? mem.f[var_idx]   : mem.arr_f[var_idx].data[flat_idx]; break;
-        case DATA_D:    *out_value = is_scalar ? mem.d[var_idx]   : mem.arr_d[var_idx].data[flat_idx]; break;
-
-        case DATA_B:    *out_value = is_scalar ? mem.b[var_idx]   : mem.arr_b[var_idx].data[flat_idx]; break;
-
-        default: 
-            err = EMU_ERR_UNLIKELY;
-            goto error;
-    }
-    return EMU_OK;
-
-    error:
-        ESP_LOGE(TAG, "Error during variable access: %s", EMU_ERR_TO_STR(err));
-        return err;
-}
-
-emu_err_t mem_set_safe(data_types_t type, uint8_t idx, uint8_t idx_table[MAX_ARR_DIMS], double value) {
-    static const char* TAG = "MEM SET SAFE";
-    if (!(type == DATA_F || type == DATA_D)) {
-        value = round(value);
-        LOG_I(TAG, "Value after rounding %lf", value);
-    }
-
-    /*Clam value to match type sizes*/
-    switch (type) {
-        case DATA_UI8:  { if (value < 0) value = 0; if (value > UINT8_MAX) value = UINT8_MAX; } break;
-        case DATA_UI16: { if (value < 0) value = 0; if (value > UINT16_MAX) value = UINT16_MAX; } break;
-        case DATA_UI32: { if (value < 0) value = 0; if (value > UINT32_MAX) value = UINT32_MAX; } break;
-        case DATA_I8:   { if (value < INT8_MIN) value = INT8_MIN; if (value > INT8_MAX) value = INT8_MAX; } break;
-        case DATA_I16:  { if (value < INT16_MIN) value = INT16_MIN; if (value > INT16_MAX) value = INT16_MAX; } break;
-        case DATA_I32:  { if (value < INT32_MIN) value = INT32_MIN; if (value > INT32_MAX) value = INT32_MAX; } break;
-        case DATA_F:    { value = (double)((float)value); } break;
-        case DATA_D:    {} break;
-        case DATA_B:    { value = (double)(bool)value; } break;
-    }
-
-
-    /*Scalar set [FF,FF,FF]*/
-    if ((idx_table[0] == UINT8_MAX) && (idx_table[1] == UINT8_MAX) && (idx_table[2] == UINT8_MAX)) {
-        LOG_I(TAG, "Setting up scalar now for value %lf", value);
-        switch(type) {
-            case DATA_UI8:  mem.u8[idx]  = (uint8_t)(value); break;
-            case DATA_UI16: mem.u16[idx] = (uint16_t)(value); break;
-            case DATA_UI32: mem.u32[idx] = (uint32_t)(value); break;
-            case DATA_I8:   mem.i8[idx]  = (int8_t)(value); break;
-            case DATA_I16:  mem.i16[idx] = (int16_t)(value); break;
-            case DATA_I32:  mem.i32[idx] = (int32_t)(value); break;
-            case DATA_F:    mem.f[idx]   = (float)(value); break;
-            case DATA_D:    mem.d[idx]   = (double)(value); break;
-            case DATA_B:    mem.b[idx]   = (bool)(value); break;
-            default: return EMU_ERR_UNLIKELY; // Unknown type
-        }
-        return EMU_OK; // Return success for scalar set
-    }else {
-        size_t flat_idx = (size_t)-1;
-        LOG_I(TAG, "Setting up array value for %lf at [%d, %d, %d]", value, idx_table[0], idx_table[1], idx_table[2]);
-        switch(type) {
-            case DATA_UI8:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_ui8[idx].num_dims, mem.arr_ui8[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_ui8[idx].data[flat_idx] = (uint8_t)(value); }
-                break;
-            case DATA_UI16:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_ui16[idx].num_dims, mem.arr_ui16[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_ui16[idx].data[flat_idx] = (uint16_t)(value); }
-                break;
-            case DATA_UI32:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_ui32[idx].num_dims, mem.arr_ui32[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_ui32[idx].data[flat_idx] = (uint32_t)(value); }
-                break;
-            case DATA_I8:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_i8[idx].num_dims, mem.arr_i8[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_i8[idx].data[flat_idx] = (int8_t)(value); }
-                break;
-            case DATA_I16:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_i16[idx].num_dims, mem.arr_i16[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_i16[idx].data[flat_idx] = (int16_t)(value); }
-                break;
-            case DATA_I32:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_i32[idx].num_dims, mem.arr_i32[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_i32[idx].data[flat_idx] = (int32_t)(value); }
-                break;
-            case DATA_F:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_f[idx].num_dims, mem.arr_f[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_f[idx].data[flat_idx] = (float)(value); }
-                break;
-            case DATA_D:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_d[idx].num_dims, mem.arr_d[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_d[idx].data[flat_idx] = (double)(value); }
-                break;
-            case DATA_B:
-                flat_idx = _ARR_FLAT_IDX(mem.arr_b[idx].num_dims, mem.arr_b[idx].dims, idx_table);
-                if(flat_idx != (size_t)-1) { mem.arr_b[idx].data[flat_idx] = (bool)(value); }
-                break;
-            default:
-                return EMU_ERR_UNLIKELY;
-        }
-
-        // Return error if index calculation failed
-        if (flat_idx == (size_t)-1) {
-            LOG_E(TAG, "Tried to set variable with invalid index (check if variable exist)");
-            return EMU_ERR_MEM_OUT_OF_BOUNDS;
-        }
-        return EMU_OK;
-    }
-}
-
-
 
 #define PACKET_SINGLE_VAR_SIZE 11  //2 + 9 * type cnt
 /*********************ARR cheks*****************/
@@ -470,8 +482,9 @@ bool _parse_check_arr_header(uint8_t *data, uint8_t *step)
     return false;
 }
 
-emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
+emu_result_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
 {
+    emu_result_t res = {.code = EMU_OK};
     uint8_t *data;
     size_t len;
     size_t start_index = -1;
@@ -498,21 +511,24 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
     if (start_index == -1)
     {
         ESP_LOGE(TAG, "Scalar variables packet not found can't create memory");
-        err = EMU_ERR_INVALID_DATA;
-        return err;
+        res.code = EMU_ERR_NO_MEM;
+        res.abort = true;
+        return res;
     }
     //create space for single variables and create pointers
-    err = emu_variables_single_create(mem);
-    if (err != EMU_OK){
-        ESP_LOGE(TAG, "When creating single variables error: %s", EMU_ERR_TO_STR(err));
-        return err;
+    res = emu_variables_single_create(mem);
+    if (res.code != EMU_OK){
+        ESP_LOGE(TAG, "When creating single variables error: %s", EMU_ERR_TO_STR(res.code));
+        res.abort = true;
+        return res;
     }
-    err = emu_variables_arrays_create(source, mem, start_index);
-    if (err != EMU_OK){
-        ESP_LOGE(TAG, "When creating arrays error: %s", EMU_ERR_TO_STR(err));
-        return err;
+    res = emu_variables_arrays_create(source, mem, start_index);
+    if (res.code != EMU_OK){
+        ESP_LOGE(TAG, "When creating arrays error: %s", EMU_ERR_TO_STR(res.code));
+        res.abort = true;
+        return res;
     }
-    return err;
+    return res;
 }
 
 #define ARR_DATA_START_IDX 5
@@ -549,11 +565,12 @@ emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem)
         break;                                                              \
     }
 
-emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
+emu_result_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
+    emu_result_t res = {.code = EMU_OK};
     uint8_t *data;
     size_t len;
     size_t buff_size = chr_msg_buffer_size(source);
-
+    
     for (uint16_t i = 0; i < buff_size; ++i) {
         chr_msg_buffer_get(source, i, &data, &len);
         if (len < HEADER_SIZE) continue;
@@ -590,5 +607,5 @@ emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem) {
                 break;
         }
     }
-    return EMU_OK;
+    return res;
 }

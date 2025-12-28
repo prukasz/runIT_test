@@ -44,6 +44,6 @@ typedef struct{
 #define BLOCK_FOR_IN_STEP  3
 #define BLOCK_FOR_MAX_CYCLES 1000
 
-emu_err_t block_for(block_handle_t *src);
+emu_result_t block_for(block_handle_t *src);
 
-emu_err_t emu_parse_for_blocks(chr_msg_buffer_t *source);
+emu_result_t emu_parse_block_for(chr_msg_buffer_t *source, uint16_t block_idx);

@@ -21,5 +21,5 @@
  *  static provided in global reference, if there is only input 0 -> Double, then block will set value 
  *  fetching all from global references provded
  */
-emu_err_t block_set_global(block_handle_t* block_data);
+emu_result_t block_set_global(block_handle_t* block_data);
 

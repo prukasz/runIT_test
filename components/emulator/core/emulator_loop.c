@@ -70,7 +70,8 @@ static void IRAM_ATTR loop_tick_intr_handler(void *parameters) {
         portYIELD_FROM_ISR();
 }
 
-emu_err_t emu_loop_init(void){
+emu_result_t emu_loop_init(void){
+    emu_result_t res = {.code = EMU_OK};
     emu_global_loop_start_semaphore = xSemaphoreCreateBinary();
     emu_global_loop_wtd_semaphore   = xSemaphoreCreateBinary();
     WTD_SET_LIMIT(10);
@@ -84,28 +85,50 @@ emu_err_t emu_loop_init(void){
     LOOP_SET_STATUS(LOOP_SET);
     LOG_I(TAG, "Timer period set to %lld us", loop_period_us);
     xSemaphoreGive(emu_global_loop_wtd_semaphore);
-    return EMU_OK;
+    return res;
 }
 
 
-emu_err_t emu_loop_start(void) {
-    if(LOOP_STATUS_CMP(LOOP_SET)&&(EMU_OK==emu_parse_manager(PARSE_CHEKC_CAN_RUN))){
-        LOOP_SET_STATUS(LOOP_RUNNING);
-        ESP_LOGI(TAG, "Starting loop first time");
-        return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
-    }else if (LOOP_STATUS_CMP(LOOP_STOPPED)&&(EMU_OK==emu_parse_manager(PARSE_CHEKC_CAN_RUN))){
-        LOOP_SET_STATUS(LOOP_RUNNING);
-        ESP_LOGI(TAG, "Starting loop after stop");
-        return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
-    }else if (LOOP_STATUS_CMP(LOOP_HALTED)&&(EMU_OK==emu_parse_manager(PARSE_CHEKC_CAN_RUN))){
-        ESP_LOGI(TAG, "Starting loop after halt");
-        LOOP_SET_STATUS(LOOP_RUNNING);
-        return esp_timer_start_periodic(loop_timer_handle, loop_period_us);
-    }else{
-        ESP_LOGE(TAG, "Loop cannot be started");
-        return EMU_ERR_INVALID_STATE;
+emu_result_t emu_loop_start(void) {
+    // 1. Check if the system configuration allows running
+    // We capture the result struct to check .code and propagate .flags if needed
+    emu_result_t res = emu_parse_manager(PARSE_CHEKC_CAN_RUN);
+
+    // If the manager says we can't run, return that specific error immediately.
+    if (res.code != EMU_OK) {
+        ESP_LOGE(TAG, "Cannot start loop: Verify failed with %s", EMU_ERR_TO_STR(res.code));
+        return res; 
     }
-    return EMU_ERR_UNLIKELY;
+
+    // 2. Check State Machine & Transition
+    if (LOOP_STATUS_CMP(LOOP_SET)&&res.code==EMU_OK) {
+        ESP_LOGI(TAG, "Starting loop (First Time)");
+        LOOP_SET_STATUS(LOOP_RUNNING);
+
+        esp_timer_start_periodic(loop_timer_handle, loop_period_us);
+        return res;
+
+    } 
+    else if (LOOP_STATUS_CMP(LOOP_STOPPED)&&res.code==EMU_OK) {
+        ESP_LOGI(TAG, "Starting loop (Resume form Stop)");
+        LOOP_SET_STATUS(LOOP_RUNNING);
+        esp_timer_start_periodic(loop_timer_handle, loop_period_us);
+        return res;
+
+    } 
+    else if (LOOP_STATUS_CMP(LOOP_HALTED)&&res.code==EMU_OK) {
+        ESP_LOGI(TAG, "Starting loop (Resume from Halt)");
+        LOOP_SET_STATUS(LOOP_RUNNING);
+        esp_timer_start_periodic(loop_timer_handle, loop_period_us);
+        return res;
+
+    } 
+    else {
+        ESP_LOGE(TAG, "Loop cannot be started: Invalid Status");
+        res.code = EMU_ERR_INVALID_STATE;
+        res.abort = true;
+        return res;
+    }
 }
 
 void emu_loop_period_set(uint64_t period_us){
@@ -118,15 +141,19 @@ void emu_loop_period_set(uint64_t period_us){
 }
 
 
-emu_err_t emu_loop_stop(void) {
+emu_result_t emu_loop_stop(void) {
+    emu_result_t res = {.code = EMU_OK};
     if (!LOOP_STATUS_CMP(LOOP_RUNNING))
     {
         ESP_LOGE(TAG, "Loop is not running can't stop");
-        return EMU_ERR_INVALID_STATE;
+        res.code = EMU_ERR_INVALID_STATE;
+        res.abort = true;
+        return res;
     }
     ESP_LOGI(TAG, "Stopping loop");
     LOOP_SET_STATUS(LOOP_STOPPED);
-    return esp_timer_stop(loop_timer_handle);
+    esp_timer_stop(loop_timer_handle);
+    return res;
     }
 
 

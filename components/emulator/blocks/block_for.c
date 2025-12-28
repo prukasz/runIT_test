@@ -19,16 +19,13 @@ extern block_handle_t **emu_block_struct_execution_list;
 extern uint16_t emu_loop_iterator;
 
 
-
-emu_err_t block_for(block_handle_t *src) {
-
+emu_result_t block_for(block_handle_t *src) {
+    emu_result_t res = {.code = EMU_OK};
     bool EN = IN_GET_B(src, 0);
-    emu_err_t err = EMU_OK;
     uint8_t offset = 0;
     if(EN || src->in_used == 0){
-        if (!src->extras) {
-            return EMU_ERR_INVALID_DATA;
-        }
+
+
         block_for_handle_t* config = (block_for_handle_t*)src->extras;
         double iterator = config->start_val;
         if (((config->what_to_use_mask & START_SETTING_MASK)>>1) == START_SETTING_MASK){
@@ -86,8 +83,10 @@ emu_err_t block_for(block_handle_t *src) {
             if (!condition_met) break;
             if (watchdog > BLOCK_FOR_MAX_CYCLES) {
                 LOG_W(TAG, "Max for loop iterations exceeding block: %d", src->block_idx);
-                return EMU_ERR_BLOCK_FOR_TIMEOUT;
-                break;
+                res.code = EMU_ERR_BLOCK_FOR_TIMEOUT;
+                res.warning = true;
+                res.block_idx = src->block_idx;
+                return res;
             }
 
             for (uint16_t b = 1; b <= config->chain_len; b++) {
@@ -102,10 +101,10 @@ emu_err_t block_for(block_handle_t *src) {
             for (uint16_t b = 1; b <= config->chain_len; b++) {
                 block_handle_t* child = emu_block_struct_execution_list[src->block_idx + b];
                 if (child && child->block_function) {
-                    err = child->block_function(child);
-                    if (err != EMU_OK) {
-                        LOG_I(TAG, "During execution of block %d error %s", src->block_idx + b, EMU_ERR_TO_STR(err));
-                        return err;
+                    res = child->block_function(child);
+                    if (res.code != EMU_OK) {
+                        LOG_I(TAG, "During execution of block %d error %s", src->block_idx + b, EMU_ERR_TO_STR(res.code));
+                        return res;
                     }
                 }
             }
@@ -131,9 +130,9 @@ emu_err_t block_for(block_handle_t *src) {
 
         emu_loop_iterator += config->chain_len;
 
-        return EMU_OK;
+        return res;
     }
-    return EMU_OK;
+    return res;
 }
 
 /*************************************************************************************** 
@@ -147,8 +146,9 @@ static emu_err_t _emu_parse_for_config(uint8_t *data, uint16_t len, block_for_ha
 #define CONST_PACKET 0x01
 #define CONFIG_PACKET 0x02
 
-emu_err_t emu_parse_for_blocks(chr_msg_buffer_t *source)
+emu_result_t emu_parse_block_for(chr_msg_buffer_t *source, uint16_t block_idx)
 {
+    emu_result_t res = {.code = EMU_OK};
     uint8_t *data;
     size_t len;
     block_handle_t *block_ptr;
@@ -159,28 +159,38 @@ emu_err_t emu_parse_for_blocks(chr_msg_buffer_t *source)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == BLOCK_FOR)
+        if (data[0] == 0xbb && data[1] == BLOCK_FOR && (READ_U16(data, 3)==block_idx))
         {
             uint16_t block_idx = READ_U16(data, 3);
             block_ptr = emu_block_struct_execution_list[block_idx];
-
             if (block_ptr->extras == NULL) {
                 block_ptr->extras = calloc(1, sizeof(block_for_handle_t));
                 if (!block_ptr->extras) {
-                    return EMU_ERR_NO_MEM;
+                    res.code = EMU_ERR_NO_MEM;
+                    res.restart = true;
+                    return res;
                 }
+            }else{
+                res.code = EMU_ERR_BLOCK_ALREADY_FILLED;
+                res.warning = true;
+                return res;
             }
+
 
             block_for_handle_t* handle = (block_for_handle_t*)block_ptr->extras;
 
             if (data[2] == CONST_PACKET) { 
                 if (_emu_parse_for_doubles(data, len, handle) != EMU_OK) {
-                    return EMU_ERR_INVALID_DATA;
+                    res.code = EMU_ERR_INVALID_DATA;
+                    res.restart = true;
+                    return res;
                 }
             }
             else if (data[2] == CONFIG_PACKET) {
                 if (_emu_parse_for_config(data, len, handle) != EMU_OK) {
-                    return EMU_ERR_INVALID_DATA;
+                    res.code = EMU_ERR_INVALID_DATA;
+                    res.restart = true;
+                    return res;
                 }
             }  
             search_idx++;
@@ -189,7 +199,7 @@ emu_err_t emu_parse_for_blocks(chr_msg_buffer_t *source)
             search_idx++;
         }
     }
-    return EMU_OK;
+    return res;
 }
 
 // Helper: Parsowanie Double (Start, End, Step) - MSG TYPE 0x01

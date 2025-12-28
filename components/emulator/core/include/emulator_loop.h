@@ -58,15 +58,15 @@ extern emu_status_t emu_global_status;
 /**
 * @brief start loop if possible, else return error
 */
-emu_err_t emu_loop_start(void);
+emu_result_t emu_loop_start(void);
 /**
 * @brief stop loop if running, else return error
 */
-emu_err_t emu_loop_stop(void);
+emu_result_t emu_loop_stop(void);
 /**
 * @brief create loop and emulator body_loop_task
 */
-emu_err_t emu_loop_init(void);
+emu_result_t emu_loop_init(void);
 
 /** 
 *@brief set emulator tickrate

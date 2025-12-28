@@ -28,9 +28,7 @@ typedef struct{
     double *constant_table;
 } expression_t;
 
-typedef emu_err_t (*emu_block_func)(block_handle_t *block);
-
-emu_err_t emu_parse_math_blocks(chr_msg_buffer_t *source);
+emu_result_t emu_parse_block_math(chr_msg_buffer_t *source, uint16_t block_idx);
 emu_err_t emu_math_block_free_expression(block_handle_t* block);
 
 
@@ -52,4 +50,4 @@ emu_err_t emu_math_block_free_expression(block_handle_t* block);
 /**
 *@brief compute block - handling math operations
 */
-emu_err_t block_math(block_handle_t *src);
+emu_result_t block_math(block_handle_t *src);

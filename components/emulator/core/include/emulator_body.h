@@ -4,7 +4,7 @@
  * @brief allocate struct list for every block, also allocate function list
  * @param num_blocks total blocks in code
  */
-emu_err_t emu_body_create_execution_table(uint16_t num_blocks);
+emu_result_t emu_body_create_execution_table(uint16_t num_blocks);
 
 /**
 *@brief This task runs all blocks parsed and is managed by internally by emulator loop

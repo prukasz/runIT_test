@@ -15,7 +15,7 @@
 typedef struct _block_handle_s block_handle_t;
 
 /*block specific function pointer*/
-typedef emu_err_t (*emu_block_func)(block_handle_t *block);
+typedef emu_result_t (*emu_block_func)(block_handle_t *block);
 
 /*
 * this is list of blocks and it's inputs thatat one output is connected to
@@ -80,6 +80,6 @@ void emu_blocks_free_all(block_handle_t ** block_structs, uint16_t num_blocks);
 /**
  *@brief Read total count of blocks
  */
-emu_err_t emu_parse_total_block_cnt(chr_msg_buffer_t *source);
+emu_result_t emu_parse_total_block_cnt(chr_msg_buffer_t *source);
 
-emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt);
+emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt);

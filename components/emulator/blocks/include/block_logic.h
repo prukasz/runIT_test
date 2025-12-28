@@ -33,8 +33,8 @@ typedef struct {
     double *constant_table;
 } logic_expression_t;
 
-emu_err_t emu_parse_logic_blocks(chr_msg_buffer_t *source);
-emu_err_t emu_logic_block_free_expression(block_handle_t* block);
+emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, uint16_t block_idx);
+emu_result_t emu_logic_block_free_expression(block_handle_t* block);
 
 
 /****************************************************************************
@@ -47,5 +47,5 @@ emu_err_t emu_logic_block_free_expression(block_handle_t* block);
             |________________|
  
 ****************************************************************************/
-emu_err_t block_logic(block_handle_t *block);
+emu_result_t block_logic(block_handle_t *block);
 

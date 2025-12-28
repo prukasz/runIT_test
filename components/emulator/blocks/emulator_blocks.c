@@ -6,6 +6,8 @@
 #include "utils_parse.h"
 #include <math.h>
 #include "blocks_all_list.h"
+#include "emulator_errors.h"
+
 
 #define HEADER_SIZE 2
 
@@ -139,7 +141,8 @@ void emu_blocks_free_all(block_handle_t** blocks_list, uint16_t blocks_cnt) {
 }
 
 
-emu_err_t emu_parse_total_block_cnt(chr_msg_buffer_t *source){
+emu_result_t emu_parse_total_block_cnt(chr_msg_buffer_t *source){
+    emu_result_t res = {.code = EMU_OK};
     uint16_t cnt = 0;
     uint8_t *data;
     size_t len;
@@ -150,17 +153,20 @@ emu_err_t emu_parse_total_block_cnt(chr_msg_buffer_t *source){
             if(parse_check_header(data, EMU_H_BLOCK_CNT)){
                 cnt = READ_U16(data, HEADER_SIZE);
                 ESP_LOGI(TAG_PARSE, "Found %d block structs to allocate", cnt);
-                return emu_body_create_execution_table(cnt);
+                res = emu_body_create_execution_table(cnt);
+                return res;
             }
         search_idx++;
     }
-    return EMU_ERR_NOT_FOUND;
+    res.code = EMU_ERR_NOT_FOUND;
+    res.abort = true;
+    return res;
 }
 
 
 #define IN_Q_STEP 3  //block id (2) + in num (1)
 #define DATA_START 5
-emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt)
+emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt)
 {
     uint8_t *data;
     size_t len;
@@ -168,7 +174,7 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
     uint8_t search_idx = 0;
     uint16_t block_idx = 0;
     block_handle_t * block_new = NULL;
-    emu_err_t err = EMU_OK;
+    emu_result_t res = {.code = EMU_OK};
     while (search_idx < buff_size)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
@@ -197,7 +203,8 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
 
             block_new = _block_create_struct(in_cnt, q_cnt);
             if(!block_new){
-                err = EMU_ERR_NO_MEM;
+                res.code = EMU_ERR_NO_MEM;
+                res.restart = true;
                 goto error;
             }
 
@@ -211,7 +218,8 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
                 block_new->in_data = calloc(in_size, sizeof(uint8_t));
                 if(!block_new->in_data){
                     LOG_E(TAG_PARSE, "Error when allocating space for in data (%d)B", in_size);
-                    err = EMU_ERR_NO_MEM;
+                    res.code = EMU_ERR_NO_MEM;
+                    res.restart = true;
                     goto error;
                 }
             }
@@ -219,7 +227,8 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
                 block_new->q_data = calloc(in_size, sizeof(uint8_t));
                 if(!block_new->q_data){
                     LOG_E(TAG_PARSE, "Error when allocating space for in data (%d)B", q_size);
-                    err = EMU_ERR_NO_MEM;
+                    res.code = EMU_ERR_NO_MEM;
+                    res.restart = true;
                     goto error;
                 }
             }
@@ -254,7 +263,8 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
                 block_new->q_connections_table[q].target_inputs_list = (uint8_t *)calloc(conn_cnt, sizeof(uint8_t));
                 if((!block_new->q_connections_table[q].target_blocks_id_list ||!block_new->q_connections_table[q].target_inputs_list)&&conn_cnt > 0){
                     ESP_LOGE(TAG_PARSE, "No memory to allocate output connections for block %d", block_idx);
-                    err = EMU_ERR_NO_MEM;
+                    res.code = EMU_ERR_NO_MEM;
+                    res.restart = true;
                     goto error;
                 }
                 idx++; 
@@ -274,44 +284,46 @@ emu_err_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_lis
             if(total_lines == 0){
                 LOG_I(TAG_PARSE, "No connections form block_idx: %d", block_new->block_idx);
             }
-            err = utils_parse_global_access_for_block(source, search_idx, block_new);
-            if(EMU_OK != err){
-                LOG_E(TAG_PARSE, "When creating global references error: %s", EMU_ERR_TO_STR(err));
-                err = EMU_ERR_NO_MEM;
+            res = utils_parse_global_access_for_block(source, search_idx, block_new);
+            if(EMU_OK != res.code){
+                LOG_E(TAG_PARSE, "When creating global references error: %s", EMU_ERR_TO_STR(res.code));
+                res.code = EMU_ERR_NO_MEM;
+                res.restart = true;
                 goto error;
             }
-            err = utils_parse_fuction_assign_to_block(block_new);
-            if(EMU_OK != err){
-                LOG_E(TAG_PARSE, "When assigning function to block error: %s", EMU_ERR_TO_STR(err));
-                err = EMU_ERR_NO_MEM;
+            res = utils_parse_fuction_assign_to_block(block_new);
+            if(EMU_OK != res.code){
+                LOG_E(TAG_PARSE, "When assigning function to block error: %s", EMU_ERR_TO_STR(res.code));
+                res.code = EMU_ERR_NO_MEM;
+                res.restart = true;
                 goto error;
             }
         }
         search_idx++;
     }
     
-    return EMU_OK;
+    return res;
     error:
-        ESP_LOGE(TAG_PARSE, "Error during block creation: %s, block %d won't be created", EMU_ERR_TO_STR(err), data[1]);
+        ESP_LOGE(TAG_PARSE, "Error during block creation: %s, block %d won't be created", EMU_ERR_TO_STR(res.code), data[1]);
         free(block_new);
-    return err;
+    return res;
 }
 
-#include "emulator_blocks.h"
-#include "emulator_errors.h"
-#include <stddef.h>
-
 // Prototypes for specific block verification functions (defined in their respective .c files)
-extern emu_err_t emu_parse_verify_block_math(void* extras);
-extern emu_err_t emu_parse_verify_block_logic(void* extras);
-extern emu_err_t emu_parse_verify_block_for(void* extras);
+extern emu_result_t emu_parse_verify_block_math(void* extras);
+extern emu_result_t emu_parse_verify_block_logic(void* extras);
+extern emu_result_t emu_parse_verify_block_for(void* extras);
 // ... other prototypes ...
 
-emu_err_t emu_parse_verify_blocks(block_handle_t **blocks_list, uint16_t total_blocks_cnt) {
+emu_result_t emu_parse_verify_blocks(block_handle_t **blocks_list, uint16_t total_blocks_cnt) {
+    emu_result_t res = {.code = EMU_OK};
+
     static const char * TAG = "BLOCK VERIFY";
     if (!blocks_list){
         LOG_I(TAG, "No block list provided");
-        return EMU_ERR_NULL_PTR;
+        res.code = EMU_ERR_NULL_PTR;
+        res.restart = true;
+        return res;
     }
 
     for (uint16_t i = 0; i < total_blocks_cnt; i++) {
@@ -319,7 +331,9 @@ emu_err_t emu_parse_verify_blocks(block_handle_t **blocks_list, uint16_t total_b
        
         if (!block){
             LOG_E(TAG, "Block %d isn't created", i);
-            return EMU_ERR_NULL_PTR;
+            res.code = EMU_ERR_NULL_PTR;
+            res.restart = true;
+            return res;
         }
         // Iterate through all outputs of this block
         for (uint8_t q_idx = 0; q_idx < block->q_cnt; q_idx++) {
@@ -332,13 +346,17 @@ emu_err_t emu_parse_verify_blocks(block_handle_t **blocks_list, uint16_t total_b
                 uint8_t  target_in = conn_info->target_inputs_list[wire_idx];
 
                 if (target_id >= total_blocks_cnt || blocks_list[target_id] == NULL) {
-                    return EMU_ERR_BLOCK_INVALID_CONNECTION;
+                    res.code = EMU_ERR_BLOCK_INVALID_CONN;
+                    res.restart = true;
+                    return res;
                 }
 
                 block_handle_t* target_block = blocks_list[target_id];
                 if (target_in >= target_block->in_cnt) {
                     LOG_I(TAG, "Target in of block %d, index %d doesn't exist in block %d", block->block_idx, target_in, target_id);
-                    return EMU_ERR_BLOCK_INVALID_CONNECTION; // Error: Target block doesn't have this input
+                    res.code = EMU_ERR_BLOCK_INVALID_CONN;
+                    res.restart = true;
+                    return res;
                 }
             }
         }
@@ -380,5 +398,5 @@ emu_err_t emu_parse_verify_blocks(block_handle_t **blocks_list, uint16_t total_b
     //     }
     // }
 
-    return EMU_OK;
+    return res;
 }

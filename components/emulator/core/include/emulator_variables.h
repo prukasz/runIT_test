@@ -82,14 +82,14 @@ extern emu_mem_t mem;
  * @brief create arrays space
  * @param mem pointer to global memory struct
  */
-emu_err_t emu_variables_single_create(emu_mem_t *mem);
+emu_result_t emu_variables_single_create(emu_mem_t *mem);
 
 /**
  * @brief create arrays space
  * @param mem pointer to global memory struct
  * @param start_index starting index in source buffer
  */
-emu_err_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, size_t start_index);
+emu_result_t emu_variables_arrays_create(chr_msg_buffer_t *source, emu_mem_t *mem, size_t start_index);
 
 /**
 * @brief reset created memory
@@ -283,11 +283,11 @@ Todo: rework so it caps value or round it
 /**
  * @brief Find variables packets, allocate space, create arrays and scalars
  */
-emu_err_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem);
+emu_result_t emu_parse_variables(chr_msg_buffer_t *source, emu_mem_t *mem);
 /**
  * @brief Find variables packets, fill created arrays and scalars
  */
-emu_err_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem);
+emu_result_t emu_parse_variables_into(chr_msg_buffer_t *source, emu_mem_t *mem);
 
 
 /******************************************************************************************************** 

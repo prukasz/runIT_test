@@ -19,8 +19,9 @@ static emu_err_t _emu_parse_logic_const_msg(uint8_t *data, uint16_t len, size_t 
 static emu_err_t _clear_logic_expression_internals(logic_expression_t* expr);
 
 
-emu_err_t emu_parse_logic_blocks(chr_msg_buffer_t *source)
+emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, uint16_t block_idx)
 {
+    emu_result_t res = {.code = EMU_OK};
     uint8_t *data;
     size_t len;
     block_handle_t *block_ptr;
@@ -32,7 +33,7 @@ emu_err_t emu_parse_logic_blocks(chr_msg_buffer_t *source)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (len > 3 && data[0] == 0xbb && data[1] == BLOCK_CMP && data[2] == 0x02)
+        if (len > 3 && data[0] == 0xbb && data[1] == BLOCK_CMP && data[2] == 0x02 && (READ_U16(data, 3) == block_idx))
         {
             LOG_I(TAG, "Detected CMP Expression header");
             uint16_t block_idx = READ_U16(data, 3);
@@ -41,14 +42,20 @@ emu_err_t emu_parse_logic_blocks(chr_msg_buffer_t *source)
             block_ptr->extras = calloc(1, sizeof(logic_expression_t));
             if(!block_ptr->extras){
                 ESP_LOGE(TAG, "No memory for CMP block idx: %d)", block_idx);
-                return EMU_ERR_NO_MEM;
+                res.code = EMU_ERR_NO_MEM;
+                res.block_idx = block_idx;
+                res.restart = true;
+                return res;
             }
 
             size_t const_msg_cnt = 1;
             if(_emu_parse_logic_expr(source, search_idx, (logic_expression_t*)(block_ptr->extras), &const_msg_cnt) != EMU_OK){
                 ESP_LOGE(TAG, "Error parsing CMP expression block idx: %d", block_idx);
                 emu_logic_block_free_expression(block_ptr);
-                return EMU_ERR_NO_MEM; 
+                res.code = EMU_ERR_NO_MEM;
+                res.block_idx = block_idx;
+                res.restart = true;
+                return res;
             }
             search_idx++;
         }
@@ -63,7 +70,7 @@ emu_err_t emu_parse_logic_blocks(chr_msg_buffer_t *source)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (len > 3 && data[0] == 0xbb && data[1] == BLOCK_CMP && data[2] == 0x01)
+        if (len > 3 && data[0] == 0xbb && data[1] == BLOCK_CMP && data[2] == 0x01 && (READ_U16(data, 3) == block_idx))
         {
             uint16_t block_idx = READ_U16(data, 3);
             block_ptr = emu_block_struct_execution_list[block_idx];
@@ -74,7 +81,10 @@ emu_err_t emu_parse_logic_blocks(chr_msg_buffer_t *source)
                 if(_emu_parse_logic_const(source, search_idx, (logic_expression_t*)(block_ptr->extras), &const_msg_cnt) != EMU_OK){
                      ESP_LOGE(TAG, "Error parsing constants for CMP block %d", block_idx);
                      emu_logic_block_free_expression(block_ptr);
-                     return EMU_ERR_NO_MEM;
+                     res.code = EMU_ERR_NO_MEM;
+                     res.block_idx = block_idx;
+                     res.restart = true;
+                     return res;
                 }
             }
             search_idx++;
@@ -84,15 +94,13 @@ emu_err_t emu_parse_logic_blocks(chr_msg_buffer_t *source)
             search_idx++;
         }
     }
-    return EMU_OK;
+    return res;
 }
 
 
-emu_err_t block_logic(block_handle_t* block){
-    if(!block->extras){
-        LOG_E(TAG, "No block data");
-        return EMU_ERR_NULL_PTR;
-    }
+emu_result_t block_logic(block_handle_t* block){
+    emu_result_t res = {.code = EMU_OK};
+
     logic_expression_t* eval = (logic_expression_t*)block->extras;
     double stack[16];
     int8_t over_top = 0;
@@ -166,7 +174,10 @@ emu_err_t block_logic(block_handle_t* block){
 
             default:
                 LOG_E("BLOCK_CMP", "Unknown opcode: %d", ins->op);
-                return EMU_ERR_INVALID_DATA;
+                res.code = EMU_ERR_INVALID_DATA;
+                res.block_idx = block->block_idx;
+                res.abort = true;
+                return res;
         }
     }
 
@@ -183,7 +194,7 @@ emu_err_t block_logic(block_handle_t* block){
         utils_set_q_val(block, 0, &final);
         block_pass_results(block);
     }
-    return EMU_OK;
+    return res;
 }
 
 /* Helper functions for block */
@@ -201,8 +212,8 @@ emu_err_t _clear_logic_expression_internals(logic_expression_t* expr){
     if(expr->constant_table) free(expr->constant_table);
     return EMU_OK;
 }
-
-emu_err_t emu_logic_block_free_expression(block_handle_t* block){
+emu_result_t emu_logic_block_free_expression(block_handle_t* block){
+    emu_result_t res = {.code = EMU_OK};
     logic_expression_t* expr = (logic_expression_t*)block->extras;
     if(expr){
         _clear_logic_expression_internals(expr);
@@ -210,7 +221,7 @@ emu_err_t emu_logic_block_free_expression(block_handle_t* block){
         block->extras = NULL;
         LOG_I(TAG, "Cleared block data");
     }
-    return EMU_OK;
+    return res;
 }
 
 
