@@ -91,8 +91,6 @@ void app_main(void) {
 
     while(1){
         vTaskDelay(pdMS_TO_TICKS(2000));
-        if (!LOOP_STATUS_CMP(LOOP_RUNNING))
-
         //chr_msg_buffer_print(&emu_in_buffer);
         taskYIELD();
     }

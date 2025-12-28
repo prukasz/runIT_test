@@ -1,7 +1,7 @@
 #pragma once 
 #include "stdint.h"
 //comment to disable excess logging 
-#define ENABLE_LOGGING 1
+//#define ENABLE_LOGGING 1
 
 /**
  * @brief Debug logging for non essential code parts
@@ -63,6 +63,7 @@ typedef enum {
     EMU_ERR_BLOCK_FOR_TIMEOUT       = 0xB005,
     EMU_ERR_BLOCK_INVALID_CONN      = 0xB006,
     EMU_ERR_BLOCK_ALREADY_FILLED    = 0xB007,
+    EMU_ERR_BLOCK_WTD_TRIGGERED     = 0xB008,
 
 } emu_err_t;
 
@@ -83,15 +84,21 @@ const char* EMU_ERR_TO_STR(emu_err_t err_code);
 #define EMU_RESULT_CRITICAL(_code, _block_id) \
     (emu_result_t){ \
         .code = _code, \
-        .block_id = _block_id, \
+        .block_idx = _block_id, \
         .abort = 1 \
     }
 
 #define EMU_RESULT_WARN(_code, _block_id) \
     (emu_result_t){ \
         .code = _code, \
-        .block_id = _block_id, \
+        .block_idx = _block_id, \
         .warning = 1 \
+    }
+
+#define EMU_RESULT_OK() \
+    (emu_result_t){ \
+        .code = EMU_OK, \
+        .block_idx = 0xFFFF, \
     }
 
 

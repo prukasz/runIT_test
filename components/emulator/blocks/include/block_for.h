@@ -42,7 +42,7 @@ typedef struct{
 #define BLOCK_FOR_IN_START 1
 #define BLOCK_FOR_IN_STOP  2
 #define BLOCK_FOR_IN_STEP  3
-#define BLOCK_FOR_MAX_CYCLES 1000
+#define BLOCK_FOR_MAX_CYCLES 100000
 
 emu_result_t block_for(block_handle_t *src);
 

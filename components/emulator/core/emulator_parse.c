@@ -148,7 +148,7 @@ emu_result_t emu_parse_manager(parse_cmd_t cmd){
             return res;
         }
         break;
-    case PARSE_CHEKC_CAN_RUN:
+    case PARSE_CHECK_CAN_RUN:
         if(flags.can_run_code && status.is_fill_blocks_done){
             return res;
         }else{

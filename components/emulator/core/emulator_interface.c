@@ -36,9 +36,9 @@ QueueHandle_t emu_interface_orders_queue;
 /***************************************************************************/
 /*             Functions that are executed when order comes in             */
 
-static emu_result_t _interface_execute_loop_init(void);
-static emu_err_t _interface_execute_loop_stop_execution(void);
-static emu_err_t _interface_execute_loop_start_execution(void);
+static emu_loop_handle_t _interface_execute_loop_init(uint64_t period_us);
+static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t loop_handle);
+static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t loop_handle);
 
 /***************************************************************************/
 
@@ -47,6 +47,8 @@ extern uint16_t emu_block_total_cnt;
 
 void emu_interface_task(void* params){
     emu_result_t res = {.code = EMU_OK};
+
+    emu_loop_handle_t loop_handle = NULL;
     ESP_LOGI(TAG, "Emulator interface task created");
     emu_interface_orders_queue  = xQueueCreate(5, sizeof(emu_order_t));
     static emu_order_t orders;
@@ -62,19 +64,24 @@ void emu_interface_task(void* params){
                     res = emu_parse_manager(PARSE_FILL_VARIABLES);
                     break;             
                 case ORD_EMU_LOOP_START:
-                    _interface_execute_loop_start_execution();
+                    
+                    _interface_execute_loop_start_execution(loop_handle);
                     //add here check if code can be run
                     break;
                 case ORD_EMU_LOOP_INIT:
-                    _interface_execute_loop_init();
+                    loop_handle = _interface_execute_loop_init(10000);
+                    if(!loop_handle)
+                    {
+                        ESP_LOGE(TAG, "While creating loop error");
+                    }
                     break;
 
                 case ORD_EMU_LOOP_STOP:
-                    _interface_execute_loop_stop_execution();
+                    _interface_execute_loop_stop_execution(loop_handle);
                     break;
 
                     case ORD_RESET_ALL: 
-                    _interface_execute_loop_stop_execution();
+                    _interface_execute_loop_stop_execution(loop_handle);
                     chr_msg_buffer_clear(source);
                     emu_variables_reset(&mem);
                     emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
@@ -107,17 +114,35 @@ void emu_interface_task(void* params){
 /**
 *@brief Execute order from user: Start loop execution cycle
 */
-static emu_err_t _interface_execute_loop_start_execution(void){
-    emu_loop_start();
-    return EMU_OK;
-}  //start execution
+static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t loop_handle){
+    emu_result_t res = {.code = EMU_OK};
+    if (!loop_handle){
+        LOG_E(TAG, "No loop handle provided");
+        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF);
+    }
+    res = emu_loop_start(loop_handle);
+    if(res.code!=EMU_OK){
+        ESP_LOGE(TAG, "While starting loop error: %s", EMU_ERR_TO_STR(res.code));
+        return res;
+    }
+    return res;
+}  
 
 /**
 *@brief Execute order from user: Stop loop execution cycle 
 */
-static emu_err_t _interface_execute_loop_stop_execution(void){
-    emu_loop_stop();
-    return EMU_OK;
+static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t loop_handle){
+    emu_result_t res = {.code = EMU_OK};
+    if (!loop_handle){
+        LOG_E(TAG, "No loop handle provided");
+        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF);
+    }
+    res = emu_loop_stop(loop_handle);
+    if(res.code!=EMU_OK){
+        LOG_E(TAG, "While stopping loop error: %s", EMU_ERR_TO_STR(res.code));
+        return res;
+    }
+    return res;
 }   //stop and preserve state (stops after loop ends)
 
 
@@ -125,21 +150,20 @@ static emu_err_t _interface_execute_loop_stop_execution(void){
 /**
 *@brief Execute order from user: Create loop timer and emulator body 
 */
-static emu_result_t _interface_execute_loop_init(void){
-    emu_result_t res = emu_parse_manager(PARSE_CHEKC_CAN_RUN);
+static emu_loop_handle_t _interface_execute_loop_init(uint64_t period_us){
+    emu_result_t res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
     if(res.code==EMU_OK){
-        res = emu_loop_init();
-        if (res.code!=EMU_OK){
-            ESP_LOGE(TAG, "While creating loop error: %s", EMU_ERR_TO_STR(res.code));
-            return res;
+        emu_loop_handle_t loop_handle = emu_loop_init(period_us);
+        if (!loop_handle){
+            ESP_LOGE(TAG, "While creating loop error");
+            return NULL;
         }
+        return loop_handle;
     }else{
         ESP_LOGE(TAG, "Can't init loop, first parse code");
-        res.code = EMU_ERR_PARSE_INVALID_REQUEST;
-        res.warning = true;
-        return res;
+        return NULL;
     }
-    return res;
+    return NULL;
 }   
 
 

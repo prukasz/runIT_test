@@ -1,13 +1,35 @@
 FFFF
-FF00 01 00 00 00 00 00 00 00 00
+FF00 00 00 00 00 02 00 00 00 00
+FF01 07 0A
 EEEE
-FF11 00 0A
+FF51 01 C800
 DDDD
-B000 0100
-BB 01 00 #B_idx# 0000 #in_used# 0000 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 00 #qconn1# #conn_cnt# 00
-#REF DUPA# BB 01 F0 0000 00 00 FF FF FF FF FF FF
+B000 0800
+BB 01 00 #B_idx# 0000 #in_used# 0000 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 00 #qconn1# #conn_cnt# 01 0200 00
+#REF value A# BB 01 F0 0000 04 00 FF FF FF FF FF FF
 #MATH CONST# BB 01 01 0000 01 0000000000002440
-#MATH CODE# BB 01 02 0000 03 0900 0900 0100
+#MATH CODE# BB 01 02 0000 03 0001 0900 0100
+BB 01 00 #B_idx# 0100 #in_used# 0000 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 00 #qconn1# #conn_cnt# 01 0300 00
+#REF value B# BB 01 F0 0100 04 01 FF FF FF FF FF FF
+#MATH CONST# BB 01 01 0100 01 0000000000001440
+#MATH CODE# BB 01 02 0100 03 0001 0900 0100
+BB 02 00 #B_idx# 0200 #in_used# 0100 #in_cnt/size# 01 02 #in_types# 04 #q_cnt/size# 01 01 #q_types# 08 #conn_cnt# 01 #qconn0# #conn_cnt# 00
+#REF value A# BB 02 F0 0200 04 00 FF FF FF FF FF FF
+BB 02 00 #B_idx# 0300 #in_used# 0100 #in_cnt/size# 01 02 #in_types# 04 #q_cnt/size# 01 01 #q_types# 08 #conn_cnt# 01 #qconn0# #conn_cnt# 00
+#REF value B# BB 02 F0 0300 04 01 FF FF FF FF FF FF
+BB 03 00 #B_idx# 0400 #in_used# 0000 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 02 #q_types# 08 08 #conn_cnt# 02 #qconn0# #conn_cnt# 01 0500 00 #qconn1# #conn_cnt# 00
+#REF value A# BB 03 F0 0400 04 00 FF FF FF FF FF FF
+#REF value B# BB 03 F1 0400 04 01 FF FF FF FF FF FF
+#LOGIC CODE# BB 03 02 0400 03 0001 0002 1100
+BB 08 00 #B_idx# 0500 #in_used# 0100 #in_cnt/size# 04 19 #in_types# 08 07 07 07 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 01 0600 00 #qconn1# #conn_cnt# 00
+# FOR LIMITS # BB 08 01 0500 0000000000000000 000000000088C340 000000000000F03F
+# FOR CONFIG # BB 08 02 0500 # chain # 0200 # cond # 02 # op # 01 # mask # 07
+BB 01 00 #B_idx# 0600 #in_used# 0100 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 00 #qconn1# #conn_cnt# 01 0700 00
+#REF Array 1# BB 01 F0 0600 07 00 00 FF FF FF FF FF
+#MATH CONST# BB 01 01 0600 01 0000000000001440
+#MATH CODE# BB 01 02 0600 03 0001 0900 0100
+BB 02 00 #B_idx# 0700 #in_used# 0100 #in_cnt/size# 02 09 #in_types# 07 00 #q_cnt/size# 01 01 #q_types# 08 #conn_cnt# 01 #qconn0# #conn_cnt# 00
+#REF Array 1# BB 02 F0 0700 07 00 00 FF FF FF FF FF
 B100
 B200
 2137

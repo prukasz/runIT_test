@@ -40,7 +40,7 @@ def main():
     block_cmp = BlockLogic(block_idx=4, in_list=[], ref_list= [G("value A").build(),G("value B").build() ],  expression="in_1<in_2")
     blk_store.add_block(block_cmp)
 
-    block_for = BlockFor(block_idx=5, chain_len=2, start=0 ,limit=6, step=1, operator=ForOperator.ADD, condition=ForCondition.LT)
+    block_for = BlockFor(block_idx=5, chain_len=2, start=0 ,limit=10000, step=1, operator=ForOperator.ADD, condition=ForCondition.LT)
     blk_store.add_block(block_for)
     block_cmp.connect(0, block_for, 0)
 

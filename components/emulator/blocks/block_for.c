@@ -170,13 +170,7 @@ emu_result_t emu_parse_block_for(chr_msg_buffer_t *source, uint16_t block_idx)
                     res.restart = true;
                     return res;
                 }
-            }else{
-                res.code = EMU_ERR_BLOCK_ALREADY_FILLED;
-                res.warning = true;
-                return res;
             }
-
-
             block_for_handle_t* handle = (block_for_handle_t*)block_ptr->extras;
 
             if (data[2] == CONST_PACKET) { 

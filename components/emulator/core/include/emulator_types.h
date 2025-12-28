@@ -99,7 +99,7 @@ typedef enum{
 */
 typedef enum {
     LOOP_NOT_SET,
-    LOOP_SET,
+    LOOP_CREATED,
     LOOP_RUNNING,
     LOOP_STOPPED,
     LOOP_HALTED,
