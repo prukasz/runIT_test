@@ -22,35 +22,60 @@ def indication_handler(sender: int, data: bytearray):
     global current_message_chunks, current_message_expected_len, current_message_received_len, new_message_flag
 
     data_bytes = bytes(data)
-    
+    # ---------------------------------------------------------
+    # Nowa wiadomość (Pierwszy Chunk)
+    # ---------------------------------------------------------
     if new_message_flag:
         current_message_chunks.clear()
         current_message_expected_len = 0
         current_message_received_len = 0
-    # First chunk - extract 2-byte length header
+
+        # Sprawdź nagłówek długości (2 bajty)
         if len(data_bytes) < 2:
-            print("Error: First chunk too short")
+            print("Error: First chunk too short to contain length header")
             return
-    # Parse length from first 2 bytes (big-endian)
+            
+        # Parsuj długość (Big-Endian: Bajt 0 to MSB, Bajt 1 to LSB)
         current_message_expected_len = (data_bytes[0] << 8) | data_bytes[1]
     
-    # Store data WITHOUT the header (skip first 2 bytes)
-        actual_data = data_bytes[2:]
-        current_message_chunks.append(actual_data)
-        current_message_received_len = len(actual_data)
+        # Zapisz dane BEZ nagłówka (pomiń pierwsze 2 bajty)
+        chunk_payload = data_bytes[2:]
+        current_message_chunks.append(chunk_payload)
+        current_message_received_len = len(chunk_payload)
         new_message_flag = False
     
-        print(f"   NEW MESSAGE - First chunk received")
-        print(f"   Expected total: {current_message_expected_len} bytes")
-        print(f"   Received data: {len(actual_data)} bytes")
+        print(f"   NEW MESSAGE START - Header detected")
+        print(f"   Expected Payload: {current_message_expected_len} bytes")
+        
+    # ---------------------------------------------------------
+    # Kolejne fragmenty (Continuation Chunks)
+    # ---------------------------------------------------------
     else:
         current_message_chunks.append(data_bytes)
         current_message_received_len += len(data_bytes)
         print(f"   Chunk received: {len(data_bytes)} bytes")
-    
+    # ---------------------------------------------------------
+    # Sprawdzenie czy odebrano całość
+    # ---------------------------------------------------------
     if current_message_received_len >= current_message_expected_len:
         print(f"   MESSAGE COMPLETE: {current_message_received_len}/{current_message_expected_len} bytes")
-        new_message_flag = True  # Reset for next message
+        
+        # 1. Złóż wszystkie kawałki w jeden ciąg bajtów
+        full_message_bytes = b''.join(current_message_chunks)
+        
+        # 2. Konwersja na czytelny HEX (np. "AA 0B 1F ...")
+        # .hex() tworzy ciąg, .upper() powiększa litery, a logika join dzieli je spacjami
+        hex_string = " ".join(f"{b:02X}" for b in full_message_bytes)
+        
+        print(f"   FULL HEX: {hex_string}")
+        
+        # Opcjonalnie: Wyświetl jako tekst (jeśli to ASCII)
+        # try:
+        #     print(f"   ASCII: {full_message_bytes.decode('utf-8')}")
+        # except:
+        #     pass
+
+        new_message_flag = True  # Reset flagi, gotowość na nową wiadomość
     
 
 async def get_characteristic_or_fail(client, uuid):

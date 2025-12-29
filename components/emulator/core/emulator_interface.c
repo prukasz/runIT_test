@@ -70,7 +70,7 @@ void emu_interface_task(void* params){
                     //add here check if code can be run
                     break;
                 case ORD_EMU_LOOP_INIT:
-                    loop_handle = _interface_execute_loop_init(100000);
+                    loop_handle = _interface_execute_loop_init(1000000);
                     if(!loop_handle)
                     {
                         ESP_LOGE(TAG, "While creating loop error");

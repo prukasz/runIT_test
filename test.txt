@@ -9,7 +9,7 @@ BB 03 00 #B_idx# 0000 #in_used# 0000 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/si
 #LOGIC CODE# BB 03 02 0000 03 0900 0900 1200
 BB 09 00 #B_idx# 0100 #in_used# 0100 #in_cnt/size# 03 06 #in_types# 08 02 08 #q_cnt/size# 02 05 #q_types# 08 02 #conn_cnt# 02 #qconn0# #conn_cnt# 01 0200 00 #qconn1# #conn_cnt# 00
 #G_ACC# BB 09 EF 0100 0000
-# TIMER CONFIG # BB 09 01 0100 03 B80B0000
+# TIMER CONFIG # BB 09 01 0100 02 B80B0000
 BB 01 00 #B_idx# 0200 #in_used# 0100 #in_cnt/size# 01 01 #in_types# 08 #q_cnt/size# 02 09 #q_types# 08 07 #conn_cnt# 02 #qconn0# #conn_cnt# 00 #qconn1# #conn_cnt# 01 0300 00
 #G_ACC# BB 01 EF 0200 0000
 #MATH CONST# BB 01 01 0200 02 0000000000002440 0000000000B2A040
