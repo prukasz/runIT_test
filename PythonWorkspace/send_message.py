@@ -9,9 +9,49 @@ DEVICE_NAME = "SKIBIDI"
 UUID_SERVICE = "00000000-0000-0000-0000-000000000020"
 UUID_WRITE   = "00000000-0000-0000-0000-000000000003"   # emu_in
 UUID_NOTIFY  = "00000000-0000-0000-0000-000000000003"   # emu_out
+UUID_READ  = "00000000-0000-0000-0000-000000000002"
 
 CMD_FILE = "test.txt" # Zmieniono na plik generowany przez FullDump
 
+current_message_chunks = []  # Only current message
+current_message_expected_len = 0
+current_message_received_len = 0
+new_message_flag = True
+
+def indication_handler(sender: int, data: bytearray):
+    global current_message_chunks, current_message_expected_len, current_message_received_len, new_message_flag
+
+    data_bytes = bytes(data)
+    
+    if new_message_flag:
+        current_message_chunks.clear()
+        current_message_expected_len = 0
+        current_message_received_len = 0
+    # First chunk - extract 2-byte length header
+        if len(data_bytes) < 2:
+            print("Error: First chunk too short")
+            return
+    # Parse length from first 2 bytes (big-endian)
+        current_message_expected_len = (data_bytes[0] << 8) | data_bytes[1]
+    
+    # Store data WITHOUT the header (skip first 2 bytes)
+        actual_data = data_bytes[2:]
+        current_message_chunks.append(actual_data)
+        current_message_received_len = len(actual_data)
+        new_message_flag = False
+    
+        print(f"   NEW MESSAGE - First chunk received")
+        print(f"   Expected total: {current_message_expected_len} bytes")
+        print(f"   Received data: {len(actual_data)} bytes")
+    else:
+        current_message_chunks.append(data_bytes)
+        current_message_received_len += len(data_bytes)
+        print(f"   Chunk received: {len(data_bytes)} bytes")
+    
+    if current_message_received_len >= current_message_expected_len:
+        print(f"   MESSAGE COMPLETE: {current_message_received_len}/{current_message_expected_len} bytes")
+        new_message_flag = True  # Reset for next message
+    
 
 async def get_characteristic_or_fail(client, uuid):
     """Ensures the characteristic exists, otherwise prints all services."""
@@ -94,6 +134,11 @@ async def main():
 
         # Discover and validate characteristic
         write_char = await get_characteristic_or_fail(client, UUID_WRITE)
+        read_char = await get_characteristic_or_fail(client, UUID_READ)
+
+        await client.start_notify(read_char.uuid, indication_handler)
+
+        global current_message_chunks, current_message_expected_len, current_message_received_len, new_message_flag
 
         # Initial send
         await send_file(client, write_char.uuid)
@@ -110,6 +155,39 @@ async def main():
 
             if user_input.lower() == "r":
                 await send_file(client, write_char.uuid)
+                continue
+
+            if user_input.lower() == "show":             
+                if current_message_chunks != []:
+                    combined = b''.join(current_message_chunks)
+                    print(f"Expected length: {current_message_expected_len} bytes")
+                    print(f"Received length: {len(combined)} bytes")
+                    
+                    if len(combined) == current_message_expected_len:
+                        print("Message is COMPLETE")
+                    else:
+                        print(f"Message is INCOMPLETE ({len(combined)}/{current_message_expected_len})")
+                    
+                    print(f"\nCombined data ({len(combined)} bytes):")
+                    print(combined.hex().upper())
+                    
+                    print("\nFormatted view:")
+                    for i in range(0, len(combined), 16):
+                        chunk = combined[i:i+16]
+                        hex_str = ' '.join(f'{b:02X}' for b in chunk)
+                        print(f"{i:04d}: {hex_str}")
+                else:
+                    print("No message received yet.")
+                continue
+
+            if user_input.lower() == "read":
+                try:
+                    data = await client.read_gatt_char(read_char.uuid)
+                    print(f"Read value: {data.hex().upper()}")
+                    # Wyświetlenie jako liczba binarna
+                    print(f"Length: {len(data)} bytes")
+                except Exception as e:
+                    print(f"Failed to read: {e}")
                 continue
 
             try:

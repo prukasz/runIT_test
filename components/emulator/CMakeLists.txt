@@ -7,6 +7,7 @@ idf_component_register(
         "core/emulator_parse.c"
         "core/emulator_variables.c"
         "core/emulator_errors.c"
+        "core/emulator_debug.c"
         "utils/utils_global_access.c"
         "utils/utils_block_in_q_access.c"
         "utils/utils_parse.c"

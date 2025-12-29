@@ -3,6 +3,7 @@
 #include "emulator_variables.h"
 #include "emulator_blocks.h"
 #include "emulator_loop.h"
+#include "emulator_debug.h"
 #include "esp_log.h"
 
 
@@ -34,6 +35,7 @@ void emu_body_loop_task(void* params){
         if(xSemaphoreTake(loop_ctx->sem_loop_start, portMAX_DELAY) == pdTRUE) {
             int64_t start_time = esp_timer_get_time();
             emu_execute_code(emu_block_struct_execution_list, emu_block_total_cnt, loop_ctx);
+            debug_blocks_value_dump(emu_block_struct_execution_list, emu_block_total_cnt);
             int64_t end_time = esp_timer_get_time();
             ESP_LOGI(TAG, "loop completed in %lld us", (end_time - start_time));
             xSemaphoreGive(loop_ctx->sem_loop_wtd);
@@ -66,7 +68,7 @@ static inline emu_result_t emu_execute_code(block_handle_t **block_struct_list, 
             return EMU_RESULT_CRITICAL(EMU_ERR_BLOCK_WTD_TRIGGERED, emu_loop_iterator);
         }else{
             LOG_W(TAG, "block %d skipped, some inputs not updated", emu_loop_iterator);
-        }      
+        }
     }
     return res;
 }
