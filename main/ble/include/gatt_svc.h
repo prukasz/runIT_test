@@ -8,7 +8,7 @@
 
 void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg);
 void gatt_svr_subscribe_cb(struct ble_gap_event *event);
-int gatt_svc_init(chr_msg_buffer_t *rx_buffer);
+int gatt_svc_init(chr_msg_buffer_t *rx_buffer, chr_msg_buffer_t *tx_buffer);
                                  
 typedef struct{         
     bool ind_status;

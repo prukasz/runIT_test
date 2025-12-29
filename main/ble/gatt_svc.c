@@ -5,6 +5,7 @@
 extern QueueHandle_t emu_interface_orders_queue;
 
 static chr_msg_buffer_t *emu_in_buffer = NULL;  // internal, not global outside this file
+static chr_msg_buffer_t *emu_out_buffer = NULL; // internal, not global outside this file 
 
 /*-----callback when characteristics is accesed----*/
 static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -88,9 +89,20 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     if (attr_handle == chr_val_handle_emu_out) {
         //read only option
         if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-            //os_mbuf_append(ctxt->om, NULL, sizeof(data_to_send)); //load message to buffer
-            ESP_LOGI("GATT", "Device %d read Characteristics_1", conn_handle);
-            ESP_LOGI("GATT", "Access op: %d, attr handle: 0x%04x", ctxt->op, attr_handle);
+            uint8_t *data_to_send = NULL;
+            size_t len = 0;
+            
+            if (chr_msg_buffer_size(emu_out_buffer) > 0) {
+                esp_err_t err = chr_msg_buffer_get(emu_out_buffer, 0, &data_to_send, &len);
+                if (err == ESP_OK && data_to_send != NULL) {
+                    // Append entire message - NimBLE handles MTU fragmentation
+                    int rc = os_mbuf_append(ctxt->om, data_to_send, len);
+                    if (rc != 0) {
+                        return BLE_ATT_ERR_INSUFFICIENT_RES;
+                    }
+                    ESP_LOGI("GATT", "Sent %d bytes to device %d", len, conn_handle);
+                }
+            }
             return 0;
         }
         return BLE_ATT_ERR_READ_NOT_PERMITTED;
@@ -177,9 +189,10 @@ void gatt_svr_subscribe_cb(struct ble_gap_event *event) {
     }
 }
 
-int gatt_svc_init(chr_msg_buffer_t *emu_in_buff) {
+int gatt_svc_init(chr_msg_buffer_t *emu_in_buff, chr_msg_buffer_t *emu_out_buff) {
     ESP_LOGI(TAG, "gap_svc_init");
     emu_in_buffer = emu_in_buff;
+    emu_out_buffer = emu_out_buff;
     ble_svc_gatt_init();
     RETURN_ON_ERROR(ble_gatts_count_cfg(gatt_svr_svcs));
     RETURN_ON_ERROR(ble_gatts_add_svcs(gatt_svr_svcs));

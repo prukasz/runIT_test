@@ -10,6 +10,7 @@
 #include "emulator_loop.h"
 #include "emulator_interface.h"
 #include "emulator_types.h"
+#include "emulator_debug.h"
 
 
 
@@ -67,7 +68,9 @@ void chr_msg_buffer_print(const chr_msg_buffer_t *buf) {
 void app_main(void) {
 
     static chr_msg_buffer_t emu_in_buffer;
+    static chr_msg_buffer_t emu_out_buffer;
     chr_msg_buffer_init(&emu_in_buffer);
+    chr_msg_buffer_init(&emu_out_buffer);
     esp_err_t ret;
     ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -79,7 +82,7 @@ void app_main(void) {
 
     // Initialize GAP and GATT services
     ble_gap_configure();
-    gatt_svc_init(&emu_in_buffer);
+    gatt_svc_init(&emu_in_buffer, &emu_out_buffer);
     
     // Configure NimBLE host callbacks
     nimble_host_config_init();  
@@ -88,9 +91,11 @@ void app_main(void) {
     main_task = xTaskGetCurrentTaskHandle();
     
     emu_parse_source_add(&emu_in_buffer);
+    emu_debug_output_add(&emu_out_buffer);
 
     while(1){
         vTaskDelay(pdMS_TO_TICKS(2000));
+        
         //chr_msg_buffer_print(&emu_in_buffer);
         taskYIELD();
     }
