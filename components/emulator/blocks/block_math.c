@@ -168,7 +168,14 @@ emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_in
 
 emu_result_t block_math(block_handle_t* block){
     emu_result_t res = {.code = EMU_OK};
-
+    double EN = false;
+    utils_get_in_val_auto(block, 0, &EN);
+    if(!EN){
+        res.code = EMU_ERR_BLOCK_INACTIVE;
+        res.notice = true;
+        res.block_idx = block->block_idx;
+        return res;
+    }
     expression_t* eval = (expression_t*)block->extras;
     double stack[16];
     int over_top = 0;

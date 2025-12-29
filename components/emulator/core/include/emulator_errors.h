@@ -1,16 +1,16 @@
 #pragma once 
 #include "stdint.h"
 //comment to disable excess logging 
-//#define ENABLE_LOGGING 1
+#define ENABLE_LOGGING 1
 
 /**
  * @brief Debug logging for non essential code parts
  */
 #ifdef ENABLE_LOGGING
-    #define LOG_I(tag, fmt, ...) ESP_LOGI(tag, fmt, ##__VA_ARGS__)
-    #define LOG_E(tag, fmt, ...) ESP_LOGE(tag, fmt, ##__VA_ARGS__)
-    #define LOG_W(tag, fmt, ...) ESP_LOGW(tag, fmt, ##__VA_ARGS__)
-    #define LOG_D(tag, fmt, ...) ESP_LOGD(tag, fmt, ##__VA_ARGS__)
+    #define LOG_I(tag, fmt, ...) ESP_LOGI(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
+    #define LOG_E(tag, fmt, ...) ESP_LOGE(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
+    #define LOG_W(tag, fmt, ...) ESP_LOGW(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
+    #define LOG_D(tag, fmt, ...) ESP_LOGD(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
 #else
     #define LOG_I(tag, fmt, ...) do {} while(0)
     #define LOG_E(tag, fmt, ...) do {} while(0)
@@ -65,7 +65,7 @@ typedef enum {
     EMU_ERR_BLOCK_ALREADY_FILLED    = 0xB007,
     EMU_ERR_BLOCK_WTD_TRIGGERED     = 0xB008,
     EMU_ERR_BLOCK_USE_INTERNAL_VAR  = 0xB009,
-
+    EMU_ERR_BLOCK_INACTIVE          = 0xB00A,
 
 } emu_err_t;
 

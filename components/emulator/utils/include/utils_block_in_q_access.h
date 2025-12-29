@@ -23,7 +23,7 @@ emu_err_t utils_set_q_val_safe(block_handle_t* block, uint8_t q_num, double val)
 
 /**
 * @brief This function returns value of selected input of known type 
-* @warning out must match type of input accesed
+* @warning out must match type of given pointer type 
 */
 emu_err_t utils_set_q_val(block_handle_t* block, uint8_t q_num, void* val);
 

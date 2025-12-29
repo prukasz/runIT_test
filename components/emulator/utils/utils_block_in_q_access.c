@@ -9,6 +9,7 @@ emu_err_t utils_get_in_val_auto(block_handle_t *block, uint8_t in_idx, double *o
         return EMU_ERR_NULL_PTR;
     }
     if(block->in_used & (1 << in_idx)){
+        LOG_I(__func__, "accesing input");
         return utils_get_in_val_safe(in_idx, block, out);
     }
 
@@ -18,6 +19,7 @@ emu_err_t utils_get_in_val_auto(block_handle_t *block, uint8_t in_idx, double *o
     uint16_t lower_bits_mask = (1 << in_idx) - 1;
     uint16_t bits_to_count = block->in_global_used & lower_bits_mask;
     uint8_t idx = (uint8_t)__builtin_popcount(bits_to_count);
+    LOG_I(__func__, "accessing global");
     return utils_global_var_acces_recursive(block->global_reference[idx], out);
 }
     

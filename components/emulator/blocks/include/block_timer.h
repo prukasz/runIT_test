@@ -7,18 +7,21 @@
 typedef enum {
     TIMER_TYPE_TON = 0x01, // On-Delay
     TIMER_TYPE_TOF = 0x02, // Off-Delay
-    TIMER_TYPE_TP  = 0x03  // Pulse
+    TIMER_TYPE_TP  = 0x03,  // Pulse
+    TIMER_TYPE_TON_INV = 0x04,
+    TIMER_TYPE_TOF_INV = 0x05,
+    TIMER_TYPE_TP_INV = 0x06
 } block_timer_type_t;
 
-/* Block Data (Config + Runtime State) */
+
 typedef struct {
-    /* Configuration (Parsed from file) */
     block_timer_type_t type;
-    uint32_t default_pt;    // Default Preset Time if Input[1] is not linked
-    uint32_t elapsed_time;  // Current accumulated time [ms]
-    uint8_t  q_out   :1;             // Current Output state
-    uint8_t  prev_in :1;            // Previous input state (for edge detection)            
-    uint8_t active   :1;            // Internal activity flag (for TP/TOF)
+    uint64_t start_time;
+    uint32_t default_pt; 
+    uint32_t delta_time;  
+    bool q_out;            
+    bool prev_in;                  
+    bool counting;         
 } block_timer_t;
 
 /* Inputs/Outputs Indices */

@@ -40,6 +40,10 @@ const char* EMU_ERR_TO_STR(emu_err_t err_code) {
         case EMU_ERR_BLOCK_COMPUTE_IDX:     return "EMU_ERR_BLOCK_COMPUTE_IDX";
         case EMU_ERR_BLOCK_FOR_TIMEOUT:     return "EMU_ERR_BLOCK_FOR_TIMEOUT";
         case EMU_ERR_BLOCK_INVALID_CONN:    return "EMU_ERR_BLOCK_INVALID_CONN";
+        case EMU_ERR_BLOCK_ALREADY_FILLED:  return "EMU_ERR_BLOCK_ALREADY_FILLED";
+        case EMU_ERR_BLOCK_WTD_TRIGGERED:   return "EMU_ERR_BLOCK_WTD_TRIGGERED";
+        case EMU_ERR_BLOCK_USE_INTERNAL_VAR:return "EMU_ERR_BLOCK_USE_INTERNAL_VAR";
+        case EMU_ERR_BLOCK_INACTIVE:        return "EMU_ERR_BLOCK_INACTIVE";
 
         default:                            return "UNKNOWN_ERR_CODE";
     }

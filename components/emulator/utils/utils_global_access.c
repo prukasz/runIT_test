@@ -59,12 +59,11 @@ emu_err_t utils_global_var_acces_recursive(global_acces_t *root, double *out){
             return EMU_ERR_MEM_INVALID_IDX;
         }
     }
-    double val;
-
+    double val = 0.0;
     emu_err_t err = mem_get_as_d(root->target_type, root->target_idx, idx_table, &val);
     if(EMU_OK!=err){
         LOG_E(TAG, "While trying to access variable type %s, at idx %d and indices %d, %d, %d encountered err: %s",
-            DATA_TYPE_TO_STR[root->target_type], root->target_idx, idx_table[0], idx_table[1], idx_table[3], EMU_ERR_TO_STR(err));
+            DATA_TYPE_TO_STR[root->target_type], root->target_idx, idx_table[0], idx_table[1], idx_table[2], EMU_ERR_TO_STR(err));
             return err;
     }
     *out = val;

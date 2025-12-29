@@ -7,9 +7,8 @@ from FullDump import FullDump
 # Importy bloków
 from BlockLogic import BlockLogic
 from BlockSetGlobal import BlockSetGlobal
-from BlockFor import BlockFor, ForCondition, ForOperator
+from BlockTimer import BlockTimer, TimerType
 from BlockMath import BlockMath
-
 
 def main():
     # 1. Inicjalizacja
@@ -17,52 +16,68 @@ def main():
     blk_store = BlocksStorage()
     G.set_store(glob_store)
 
-    glob_store.add_scalar("PRESSURE", DataTypes.DATA_D, 60.0)
-    glob_store.add_scalar("LIMIT_VAL", DataTypes.DATA_D, 50.0)
-    glob_store.add_scalar("ALARM_LEVEL", DataTypes.DATA_D, 0)
+    # Zmienna na wynik (żebyśmy widzieli efekt działania)
+    glob_store.add_scalar("RESULT_VAL", DataTypes.DATA_D, 0.0)
 
-    b_set_1 = BlockSetGlobal(
+    print("--- 1. Tworzenie Bloków ---")
+
+    # ---------------------------------------------------------
+    # BLOK 0: LOGIC (Zawsze Prawda)
+    # Warunek startowy. Używamy prostego "1 == 1".
+    # ---------------------------------------------------------
+    b_start = BlockLogic(
         block_idx=0,
-        target_ref=G("ALARM_LEVEL").build(),
-        source_ref=G("PRESSURE").build()
+        expression="1 == 1", 
+        in_list=[] 
     )
-    blk_store.add_block(b_set_1)
+    blk_store.add_block(b_start)
 
-
-    b_logic = BlockLogic(
+    # ---------------------------------------------------------
+    # BLOK 1: TIMER (TON - 3 sekundy)
+    # ---------------------------------------------------------
+    b_timer = BlockTimer(
         block_idx=1,
-        expression="100 > 10",
-        in_list=[], 
+        timer_type=TimerType.TOF,
+        pt=3000  # 3000 ms = 3s
     )
-    blk_store.add_block(b_logic)
-    b_for = BlockFor(
-        block_idx=2,
-        chain_len=2,
-        start=0,
-        limit=100,
-        step=1,
-        condition=ForCondition.LT,
-        operator=ForOperator.ADD
-    )
-    blk_store.add_block(b_for)
+    blk_store.add_block(b_timer)
 
+    # ---------------------------------------------------------
+    # BLOK 2: MATH (10 * 2137)
+    # Wykona się, gdy Timer poda sygnał na wejście EN
+    # ---------------------------------------------------------
     b_math = BlockMath(
-        block_idx=3,
-        expression="100 + 10",
+        block_idx=2,
+        expression="10 * 2137"
     )
     blk_store.add_block(b_math)
 
+    # ---------------------------------------------------------
+    # BLOK 3: SET GLOBAL (Zapis wyniku)
+    # ---------------------------------------------------------
     b_set = BlockSetGlobal(
-        block_idx=4,
-        target_ref=G("ALARM_LEVEL").build()
+        block_idx=3,
+        target_ref=G("RESULT_VAL").build()
     )
     blk_store.add_block(b_set)
 
-    b_set_1.connect(0, b_logic, 0)
-    b_logic.connect(0, b_for, 0)
-    b_for.connect(0, b_math, 0)
+    print("--- 2. Łączenie (Wiring) ---")
+
+    # 1. Logic -> Timer
+    # Logic Out 1 (Result) ---> Timer In 0 (EN)
+    # Gdy Logic da TRUE, Timer zaczyna liczyć.
+    b_start.connect(1, b_timer, 0)
+
+    # 2. Timer -> Math
+    # Timer Out 0 (Q) ---> Math In 0 (EN)
+    # Math wykona się (będzie Enabled) dopiero gdy Timer skończy liczyć (Q=True).
+    b_timer.connect(0, b_math, 0)
+
+    # 3. Math -> Set Global
+    # Math Out 1 (Result) ---> SetGlobal In 0 (Value)
     b_math.connect(1, b_set, 0)
 
+    print("--- 3. Generowanie Pliku ---")
     filename = "test.txt"
     dumper = FullDump(glob_store, blk_store)
     
@@ -71,11 +86,11 @@ def main():
     
     print(f"Gotowe! Plik '{filename}' wygenerowany.")
     
-    # Weryfikacja zawartości pod kątem referencji
+    # Podgląd fragmentu z Math (dla pewności, że stałe weszły)
     with open(filename, "r") as f:
-        print("\n--- Podgląd Referencji w pliku ---")
+        print("\n--- Sprawdzenie stałych w MATH ---")
         for line in f:
-            if "#REF" in line:
+            if "LOGIC CONST" in line: # Math używa tego samego parsera stałych co Logic
                 print(line.strip())
 
 if __name__ == "__main__":
