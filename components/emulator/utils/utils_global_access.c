@@ -88,13 +88,11 @@ void utils_global_var_access_free(global_acces_t** access_list, uint8_t cnt){
     // Free the array that held the pointers
     free(access_list);
 }
-
 emu_result_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint16_t start, block_handle_t *block) 
 {
     uint8_t *data;
     size_t len;
     size_t buffer_len = chr_msg_buffer_size(source);
-    uint8_t total_references = 0;
     uint8_t cursor = start;
     emu_result_t res = {.code = EMU_OK};
 
@@ -105,20 +103,31 @@ emu_result_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint1
         return res;
     }
     //check total count of global access
-    while(cursor < buffer_len){ 
+    bool mask_found = false;
+    while(cursor < buffer_len) { 
         chr_msg_buffer_get(source, cursor, &data, &len);
-        if(data[0] == EMU_H_BLOCK_PACKET && data[2] >= EMU_H_BLOCK_START_G_ACCES && READ_U16(data,3) == block->block_idx){
-            total_references++;
+        if (data[0] == EMU_H_BLOCK_PACKET && 
+            data[2] == EMU_H_BLOCK_START_G_ACCES_MASK && 
+            READ_U16(data, 3) == block->block_idx) 
+        {
+            uint16_t mask = READ_U16(data, 5);
+            block->in_global_used = mask;
+            mask_found = true;
+            block->global_reference_cnt = __builtin_popcount(mask);
+            LOG_I(TAG, "Mask found: 0x%04X, Allocating for %d refs", mask, block->global_reference_cnt);
+            break;
         }
         cursor++;
     }
-    block->global_reference_cnt = total_references;
 
+    if (!mask_found || block->global_reference_cnt == 0) {
+        // Brak maski lub maska pusta -> brak referencji do parsowania
+        return res; 
+    }
 
-    
     // Allocate the array of pointers (pointers to the trees)
-    block->global_reference = (global_acces_t**)calloc(total_references, sizeof(global_acces_t*));
-    if(NULL == block->global_reference && total_references !=0 ){
+    block->global_reference = (global_acces_t**)calloc(block->global_reference_cnt, sizeof(global_acces_t*));
+    if(NULL == block->global_reference && block->global_reference_cnt !=0 ){
         LOG_E(TAG, "Array allocation failed");
         res.code = EMU_ERR_NO_MEM;
         res.restart = true;
@@ -131,7 +140,6 @@ emu_result_t utils_parse_global_access_for_block(chr_msg_buffer_t *source, uint1
     
     while(cursor < buffer_len){
         chr_msg_buffer_get(source, cursor, &data, &len);
-        
         if(data[0] == EMU_H_BLOCK_PACKET && data[2] >= EMU_H_BLOCK_START_G_ACCES && READ_U16(data,3) == block->block_idx){
             // 1. Calculate size needed for THIS specific tree
             uint16_t total_nodes = 1; 

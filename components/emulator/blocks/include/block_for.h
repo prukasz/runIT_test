@@ -22,7 +22,6 @@ typedef struct{
     double start_val;
     double end_val;
     double op_step;
-    uint8_t what_to_use_mask;
     block_for_condition_t condition;
     block_for_operator_t op;
 }block_for_handle_t;    

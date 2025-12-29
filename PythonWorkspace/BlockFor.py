@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import Union
 from enum import IntEnum
 import struct
-from GlobalReferences import Global_reference, Global
-
+from GlobalReferences import Global_reference
 
 # ==========================================
 # 1. ENUMY DLA BLOKU FOR
@@ -23,13 +22,8 @@ class ForOperator(IntEnum):
     MUL = 0x03
     DIV = 0x04
 
-class ForSourceType(IntEnum):
-    CONST  = 0  # Wartość stała
-    INPUT  = 1  # Wejście z innego bloku
-    GLOBAL = 2  # Referencja globalna
-
 # ==========================================
-# 2. KONFIGURACJA (PAYLOAD) Z KOMENTARZAMI
+# 2. KONFIGURACJA (PAYLOAD)
 # ==========================================
 
 @dataclass
@@ -41,7 +35,7 @@ class ForBlockConfig:
     step_val: float
     condition: ForCondition
     operator: ForOperator
-    what_to_use_mask: int
+    # USUNIĘTO: what_to_use_mask - C robi to teraz automatycznie
     
     BLOCK_FOR_TYPE_ID: int = 0x08 
 
@@ -66,17 +60,17 @@ class ForBlockConfig:
         # Chain Length (u16 -> 2 bajty)
         hex_chain = val_to_hex(struct.pack('<H', self.chain_len), 2)
         
-        # Condition, Operator, Mask (u8 -> 1 bajt każdy)
+        # Condition, Operator (u8 -> 1 bajt każdy)
         hex_cond = val_to_hex(struct.pack('<B', int(self.condition)), 1)
         hex_op   = val_to_hex(struct.pack('<B', int(self.operator)), 1)
-        hex_mask = val_to_hex(struct.pack('<B', self.what_to_use_mask), 1)
         
-        # Składanie ramki z komentarzami przed każdym polem
+        # USUNIĘTO: hex_mask
+
+        # Składanie ramki
         msg_config = (f"# FOR CONFIG # {h2_prefix} {h2_id} "
                       f"# chain # {hex_chain} "
                       f"# cond # {hex_cond} "
-                      f"# op # {hex_op} "
-                      f"# mask # {hex_mask}")
+                      f"# op # {hex_op}")
 
         return f"{msg_doubles}\n{msg_config}"
 
@@ -86,49 +80,37 @@ class ForBlockConfig:
 
 class BlockFor(BlockBase):
     def __init__(self, block_idx: int, chain_len: int,
-                 start: Union[float, int, str, Global_reference],
-                 limit: Union[float, int, str, Global_reference],
-                 step: Union[float, int, str, Global_reference],
-                 condition: ForCondition,
-                 operator: ForOperator):
+                start: Union[float, int, Global_reference] = None,
+                 limit: Union[float, int, Global_reference] = None,
+                 step: Union[float, int, Global_reference] = None,
+                 condition: ForCondition = ForCondition.LT,
+                 operator: ForOperator = ForOperator.ADD):
         
         super().__init__(block_idx, BlockTypes.BLOCK_FOR)
         
-        #EN (Enable)
-        self.in_data_type_table.append(DataTypes.DATA_B)
-        #START 
-        self.in_data_type_table.append(DataTypes.DATA_D) 
-        #STOP
-        self.in_data_type_table.append(DataTypes.DATA_D) 
-        #STEP
-        self.in_data_type_table.append(DataTypes.DATA_D) 
+        self.in_data_type_table.append(DataTypes.DATA_B)# [0] EN (Enable)
+        self.in_data_type_table.append(DataTypes.DATA_D)# [1] START  
+        self.in_data_type_table.append(DataTypes.DATA_D)# [2] STOP (LIMIT) 
+        self.in_data_type_table.append(DataTypes.DATA_D)# [3] STEP 
         
-        mask = 0 
-
-        def set_input_mask(param):
-            nonlocal mask
-            mask <<= 1 
-            val_for_hex = 0.0
-            if isinstance(param, (int, float)):
-                mask |= 1
-                val_for_hex = float(param) 
-                
-            elif isinstance(param, Global_reference):
-                self.global_references.append(param)
-                val_for_hex = 0.0
-                pass
-            elif isinstance(param, str):
-                pass
+        def process_param(param, input_idx):
+            val_for_config = 0.0
+            if param is None:
+                return val_for_config
+            elif isinstance(param, (int, float)):
+                val_for_config = float(param)
+            elif isinstance(param, Global_reference):       
+                self.add_global_connection(input_idx, param)
             else: 
                 raise ValueError(f"BlockFor: Nieobsługiwany typ parametru: {param}")
-            return val_for_hex 
-                
-        #Set 1 if assigned constant value 
-        #Assign reference if provided
-        stp_val = set_input_mask(step)
-        l_val = set_input_mask(limit)
-        s_val = set_input_mask(start)
+            return val_for_config
+
+
+        s_val = process_param(start, 1)   # Input 1: Start
+        l_val = process_param(limit, 2)   # Input 2: Limit
+        stp_val = process_param(step, 3)  # Input 3: Step
         
+        # Tworzenie obiektu konfiguracji (bez maski)
         self.config = ForBlockConfig(
             block_id=block_idx,
             chain_len=chain_len,
@@ -136,38 +118,36 @@ class BlockFor(BlockBase):
             end_val=l_val,
             step_val=stp_val,
             condition=condition,
-            operator=operator,
-            what_to_use_mask=mask
+            operator=operator
         )
         
-        # Outpun ENO
-        self.q_data_type_table.append(DataTypes.DATA_B)
-        # Output: Iterator 
-        self.q_data_type_table.append(DataTypes.DATA_D)
+        self.q_data_type_table.append(DataTypes.DATA_B)# Output [0]: ENO
+        self.q_data_type_table.append(DataTypes.DATA_D)# Output [1]: Iterator 
         
         self.__post_init__()
 
     def get_extra_data(self) -> str:
         """Zwraca sformatowany string HEX z konfiguracją pętli"""
         return str(self.config)
-    0xE
+
+# ==========================================
+# TEST
+# ==========================================
 
 if __name__ == "__main__":
     try:
-
+        # Przykład użycia
         blk = BlockFor(
             block_idx=1,
             chain_len=5,
-            start=10,
-            limit="in",
-            step=10,
+            start=10,                      # Stała (trafi do configu)
+            limit="in",                    # Wire (trafi jako 0 do configu, ale C użyje kabla)
+            step=Global_reference("TEST"), # Global (trafi do listy referencji)
             condition=ForCondition.LT,
             operator=ForOperator.ADD
         )
 
-
         print(blk)
-        print(f"Mask Value: 0x{blk.config.what_to_use_mask:02X}")
 
     except Exception as e:
         print(f"ERROR: {e}")

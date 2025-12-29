@@ -56,8 +56,9 @@ typedef enum {
     ORD_EMU_LOOP_START      = 0x1000,
     ORD_EMU_LOOP_STOP     = 0x2000,
     ORD_EMU_LOOP_INIT     = 0x2137,
-    ORD_EMU_ALLOCATE_BLOCKS_LIST = 0xb100,
-    ORD_EMU_FILL_BLOCKS_LIST = 0xb200,
+    ORD_EMU_CREATE_BLOCK_LIST = 0xb100,
+    ORD_EMU_CREATE_BLOCKS     = 0xb200,
+    ORD_EMU_FILL_BLOCKS       = 0xb300
 }emu_order_t;
 
 
@@ -92,6 +93,7 @@ typedef enum{
     EMU_H_BLOCK_CNT   = 0xB000,
     EMU_H_BLOCK_PACKET= 0xBB,
     EMU_H_BLOCK_START_G_ACCES = 0xF0,
+    EMU_H_BLOCK_START_G_ACCES_MASK = 0xEF
 }emu_header_t;
 
 /**
@@ -114,5 +116,6 @@ typedef enum{
     BLOCK_SET_GLOBAL = 0x02,
     BLOCK_CMP = 0x03,
     BLOCK_FOR = 0x08,
+    BLOCK_TIMER = 0x09,
 }block_type_t;
 

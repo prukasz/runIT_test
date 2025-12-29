@@ -7,7 +7,7 @@ class BlockSetGlobal(BlockBase):
     def __init__(self, block_idx: int, target_ref: Global_reference):
         super().__init__(block_idx, BlockTypes.BLOCK_SET_GLOBAL)
 
-        self.global_references.append(target_ref)
+        self.add_global_connection(0, target_ref)
 
         val_type = DataTypes(target_ref.target_type_id)
         self.in_data_type_table.append(val_type)

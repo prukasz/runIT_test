@@ -5,12 +5,6 @@
 /*Common functions for all blocks*/
 /******************************************************************************************/
 
-
-/**
-* @brief This function returns value of selected input or global var assigned to block
-*/
-emu_err_t utils_get_in_val_autoselect(uint8_t idx, block_handle_t *block, double* out);
-
 /**
 * @brief This function returns value of selected input
 */
@@ -33,7 +27,10 @@ emu_err_t utils_set_q_val_safe(block_handle_t* block, uint8_t q_num, double val)
 */
 emu_err_t utils_set_q_val(block_handle_t* block, uint8_t q_num, void* val);
 
-
+/**
+ * @brief Get from input or global variable (auto select based on block masks)
+ */
+emu_err_t utils_get_in_val_auto(block_handle_t *block, uint8_t in_idx, double *out);
 
 
 /*macros if datatype at input is the same in all blocks of given type*/

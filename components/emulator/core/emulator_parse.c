@@ -100,7 +100,7 @@ emu_result_t emu_parse_manager(parse_cmd_t cmd){
             flags.can_create_blocks_list = false;
             status.is_create_blocks_list_done = true;
         }else{
-            ESP_LOGE(TAG, "Can't create blocks list, first create varaibles");
+            ESP_LOGE(TAG, "Can't create blocks list");
             res.code = EMU_ERR_PARSE_INVALID_REQUEST;
             res.warning = true;
             return res;
@@ -251,6 +251,18 @@ emu_result_t emu_parse_fill_block_data(){
                         return res;
                     }
                     break;
+                case BLOCK_TIMER:
+                    LOG_I(TAG, "Now will fill block data for block BLOCK_TIMER idx: %d", i);
+                    res = emu_parse_block_timer(source, i);
+                    if(res.code!=EMU_OK){
+                        ESP_LOGE(TAG, "While parsing timer block data for block %d error: %s", i, EMU_ERR_TO_STR(res.code));
+                        res.restart = true;
+                        res.block_idx = i;
+                        return res;
+                    }
+                    break;
+
+
                 default:
                 break;
             }

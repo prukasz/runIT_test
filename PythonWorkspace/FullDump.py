@@ -49,8 +49,9 @@ class FullDump:
         # 5. TAIL MARKERS / EXECUTION ORDER
         # ==========================================
         tail_markers = [
-            Order.ORD_EMU_ALLOCATE_BLOCKS_LIST, # B100
-            Order.ORD_EMU_FILL_BLOCKS_LIST,     # B200
+            Order.ORD_EMU_CREATE_BLOCK_LIST, 
+            Order.ORD_EMU_CREATE_BLOCKS,     
+            Order.ORD_EMU_FILL_BLOCKS,       
             Order.ORD_EMU_LOOP_INIT,            # 2137
             Order.ORD_EMU_LOOP_START            # 1000
         ]

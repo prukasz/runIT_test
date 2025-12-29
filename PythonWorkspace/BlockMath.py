@@ -1,6 +1,6 @@
 import struct
 import re
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Optional
 from dataclasses import dataclass
 from BlockBase import BlockBase, val_to_hex
 from Enums import DataTypes, BlockTypes
@@ -204,7 +204,7 @@ class MathExpression:
 # ==========================================
 
 class BlockMath(BlockBase):
-    def __init__(self, block_idx: int, in_list: List[DataTypes], ref_list: List[Global_reference], expression: str):
+    def __init__(self, block_idx: int,  expression: str, in_list: List[DataTypes]= None, global_refs: Optional[Dict[int, Global_reference]] = None,):
         
         super().__init__(block_idx, BlockTypes.BLOCK_MATH)
 
@@ -212,13 +212,19 @@ class BlockMath(BlockBase):
         self.in_data_type_table.append(DataTypes.DATA_B)
         
         # User inputs
+        if in_list is None:
+            in_list = []
         for input_type in in_list:
             self.in_data_type_table.append(input_type)
     
         # Outputs [0]=ENO, [1]=Result
         self.q_data_type_table.append(DataTypes.DATA_B)
         self.q_data_type_table.append(DataTypes.DATA_D)
-        self.global_references = ref_list
+        if global_refs:
+            for inp_idx, g_ref in global_refs.items():
+                if inp_idx >= 16:
+                    raise ValueError(f"BlockLogic {block_idx}: Global ref idx to high: {inp_idx} (max allowed 16)")
+                self.add_global_connection(inp_idx, g_ref)
 
         self.parser = MathExpression(expression, block_id=block_idx)
 

@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Dict
 import struct
-from Enums import DataTypes, BlockTypes, DataTypesSizes
+from Enums import DataTypes, BlockTypes, DataTypesSizes, Headers
 from GlobalReferences import Global_reference
 
 # Formatter
@@ -45,11 +45,13 @@ class BlockBase:
     q_data_type_table: List[DataTypes] = field(default_factory=list)
     
     in_used_mask: int = 0
+    in_global_mask: int = 0
     q_connections: List[QConnection] = field(default_factory=list)
     global_references: List[Global_reference] = field(default_factory=list)
 
     def __post_init__(self):
         self.q_connections = [QConnection() for _ in range(len(self.q_data_type_table))]
+        self._global_map: Dict[int, Global_reference] = {}
 
     def connect(self, output_idx: int, target_block: 'BlockBase', target_input_idx: int):
         if output_idx >= len(self.q_connections):
@@ -61,6 +63,16 @@ class BlockBase:
 
         self.q_connections[output_idx].add_target(target_block.block_idx, target_input_idx)
         target_block.in_used_mask |= (1 << target_input_idx)
+        
+    def add_global_connection(self, input_idx: int, ref: Global_reference):
+        if input_idx >= 16:
+            raise ValueError(f"Block {self.block_idx}: Input {input_idx} out of range for global connection")
+
+        self._global_map[input_idx] = ref
+        self.in_global_mask |= (1 << input_idx)
+
+        sorted_indices = sorted(self._global_map.keys())
+        self.global_references = [self._global_map[idx] for idx in sorted_indices]
 
     def get_extra_data(self) -> str:
         return ""
@@ -113,10 +125,15 @@ class BlockBase:
         
         lines.append(" ".join(parts))
 
+
         # Global References
+        h_prefix = val_to_hex(struct.pack('<BBB', 0xBB, int(self.block_type), int(Headers.H_BLOCK_START_G_ACCES_MASK)), 1)
+        h_id = val_to_hex(struct.pack('<H', self.block_idx), 2)
+        h_mask = val_to_hex(struct.pack('<H', self.in_global_mask), 2)
+        lines.append(f"#G_ACC# {h_prefix} {h_id} {h_mask}")
         for idx, ref in enumerate(self.global_references):
             if ref is None: continue
-            ref_marker = 0xF0 + idx
+            ref_marker = int(Headers.H_START_REFERENCE) + idx
             
             # Header: BB Type Marker(u8) BlockID(u16)
             h_prefix = val_to_hex(struct.pack('<BBB', 0xBB, int(self.block_type), ref_marker), 1)

@@ -45,10 +45,11 @@ static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t lo
 extern block_handle_t **emu_block_struct_execution_list;
 extern uint16_t emu_block_total_cnt;
 
+emu_loop_handle_t loop_handle = NULL;
+
 void emu_interface_task(void* params){
     emu_result_t res = {.code = EMU_OK};
 
-    emu_loop_handle_t loop_handle = NULL;
     ESP_LOGI(TAG, "Emulator interface task created");
     emu_interface_orders_queue  = xQueueCreate(5, sizeof(emu_order_t));
     static emu_order_t orders;
@@ -69,7 +70,7 @@ void emu_interface_task(void* params){
                     //add here check if code can be run
                     break;
                 case ORD_EMU_LOOP_INIT:
-                    loop_handle = _interface_execute_loop_init(10000);
+                    loop_handle = _interface_execute_loop_init(100000);
                     if(!loop_handle)
                     {
                         ESP_LOGE(TAG, "While creating loop error");
@@ -97,9 +98,13 @@ void emu_interface_task(void* params){
                     ESP_LOGI(TAG, "Clearing Msg buffer");   
                     chr_msg_buffer_clear(source);
                     break;
-                case ORD_EMU_FILL_BLOCKS_LIST:
+                case ORD_EMU_CREATE_BLOCK_LIST:
                     res = emu_parse_manager(PARSE_CREATE_BLOCKS_LIST);
-                    res =emu_parse_manager(PARSE_CREATE_BLOCKS);
+                    break;
+                case ORD_EMU_CREATE_BLOCKS:
+                    res = emu_parse_manager(PARSE_CREATE_BLOCKS);
+                    break;
+                case ORD_EMU_FILL_BLOCKS:
                     res =emu_parse_manager(PARSE_FILL_BLOCKS);
                     break;
                 default:

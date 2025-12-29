@@ -97,7 +97,9 @@ void free_single_block(block_handle_t* block) {
         }     
     }
     utils_global_var_access_free(block->global_reference, block->global_reference_cnt);
+    LOG_I(TAG_PARSE, "Block %d freed", block->block_idx);
     free(block);
+    
 }
 
 
