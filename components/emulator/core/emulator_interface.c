@@ -98,7 +98,7 @@ void emu_interface_task(void* params){
                     if (loop_handle) {
                         ESP_LOGW(TAG, "Loop already initialized");
                     } else {
-                        loop_handle = _interface_execute_loop_init(1000); // 1s default
+                        loop_handle = _interface_execute_loop_init(100000); // 1s default
                     }
                     break;
 

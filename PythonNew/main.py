@@ -28,7 +28,7 @@ if __name__ == "__main__":
     mem_glob.add("Multiplier", DataTypes.DATA_F, 2.5)   # Mnożnik
     mem_glob.add("BaseOffset", DataTypes.DATA_F, 10.0)  # Stały dodatek
     mem_glob.add("AlarmThreshold", DataTypes.DATA_UI8, 200) # Próg alarmowy
-    mem_glob.add("settings",  DataTypes.DATA_UI8, [10,20,250], [3])
+    mem_glob.add("settings",  DataTypes.DATA_UI16, [10,20,999], [3])
     mem_glob.add("limit", DataTypes.DATA_UI32, 50) #loop
     
     # Przeliczenie indeksów (niezbędne przed użyciem w blokach)

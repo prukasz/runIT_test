@@ -1,13 +1,29 @@
 #include "emulator_blocks.h"
 #include "emulator_errors.h"
 #include "emulator_variables_acces.h"
+#include "emulator_variables.h"
 #include "emulator_blocks_functions_list.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h> // For round()
 
-extern emu_block_parse_func emu_block_parsers_table[255];
+extern emu_mem_t* s_mem_contexts[];
 static const char* TAG = "EMU_BLOCKS";
+
+// Helper Macros
+#ifndef LOG_E
+#define LOG_E(tag, fmt, ...) ESP_LOGE(tag, fmt, ##__VA_ARGS__)
+#endif
+#ifndef LOG_I
+#define LOG_I(tag, fmt, ...) ESP_LOGI(tag, fmt, ##__VA_ARGS__)
+#endif
+#ifndef LOG_W
+#define LOG_W(tag, fmt, ...) ESP_LOGW(tag, fmt, ##__VA_ARGS__)
+#endif
+#ifndef LOG_D
+#define LOG_D(tag, fmt, ...) ESP_LOGD(tag, fmt, ##__VA_ARGS__)
+#endif
 
 // Definicje nagłówków protokołu
 #define EMU_H_BLOCK_CNT     0xB000
@@ -29,6 +45,12 @@ static void free_single_block(block_handle_t* block) {
     if (block->outputs) {
         free(block->outputs);
         block->outputs = NULL;
+    }
+
+    // Custom data should be freed by specific block logic or here if generic
+    if (block->custom_data) {
+        free(block->custom_data);
+        block->custom_data = NULL;
     }
 
     free(block);
@@ -103,8 +125,6 @@ emu_result_t emu_parse_total_block_cnt(chr_msg_buffer_t *source, block_handle_t 
 /* ============================================================================
     PARSOWANIE: KONFIGURACJA POJEDYNCZEGO BLOKU
    ============================================================================ */
-
-
 
 emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t **blocks_list, uint16_t blocks_total_cnt) {
     if (!blocks_list || blocks_total_cnt == 0) {
@@ -181,8 +201,15 @@ emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t **blocks_l
                     LOG_W(TAG, "Block %d: Outputs parsing issue: %d", blk_idx, res_out.code);
                 }
             }
-            LOG_I(TAG, "Parsing content");
-            emu_block_parsers_table[block->cfg.block_type](source, block);
+            
+            // 3. Parsuj Custom Data
+            // Check bounds for function pointer array
+            if (block->cfg.block_type < 255 && emu_block_parsers_table[block->cfg.block_type] != NULL) {
+                LOG_I(TAG, "Parsing content for Block %d Type %d", blk_idx, block->cfg.block_type);
+                emu_block_parsers_table[block->cfg.block_type](source, block);
+            } else {
+                LOG_W(TAG, "No parser for Block Type %d", block->cfg.block_type);
+            }
             
             found_cnt++;
             LOG_D(TAG, "Configured Block %d (Type:%d In:%d Out:%d)", 
@@ -203,13 +230,19 @@ bool emu_block_check_inputs_updated(block_handle_t *block) {
 
     for (uint8_t i = 0; i < block->cfg.in_cnt; i++) {
         if ((block->cfg.in_connected >> i) & 0x01) {
+            mem_acces_s_t *access_node = (mem_acces_s_t*)block->inputs[i];
             
-            void *access_node = block->inputs[i];
-            
-            if (!access_node) {
-                return false; 
+            if (unlikely(!access_node)) {
+                return false; // If connected bit is set but input is null -> error
             }
-            emu_mem_instance_iter_t meta = mem_get_instance(access_node);
+
+            emu_mem_t *mem = s_mem_contexts[access_node->reference_id];
+
+            emu_mem_instance_iter_t meta;
+            meta.raw = (uint8_t*)mem->instances[access_node->target_type][access_node->target_idx];
+            
+            if (unlikely((meta).raw == NULL)) return false; // Invalid instance
+
             if (meta.single->updated == 0) {
                 return false;
             }
@@ -219,10 +252,10 @@ bool emu_block_check_inputs_updated(block_handle_t *block) {
 }
 
 emu_result_t emu_block_set_output(block_handle_t *block, emu_variable_t *var, uint8_t num) {
-    if (!block || !var) return EMU_RESULT_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, num);
+    if (unlikely(!block || !var)) {return EMU_RESULT_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, num);}
     
     // 1. Validate Output Index
-    if (num >= block->cfg.q_cnt) {
+    if (unlikely(num >= block->cfg.q_cnt)) {
         return EMU_RESULT_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, num);
     }
 
@@ -230,70 +263,54 @@ emu_result_t emu_block_set_output(block_handle_t *block, emu_variable_t *var, ui
     // block->outputs is an array of unions, .single gives the struct ptr
     emu_mem_instance_s_t *meta = block->outputs[num].single;
     
-    if (!meta) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, num);
+    if (unlikely(!meta)) {return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, num);}
 
-    // 3. Resolve Memory Context and Pool
-    // We use the reference_id stored inside the instance metadata
-    emu_mem_t *mem = _get_mem_context(meta->reference_id);
-    if (!mem) return EMU_RESULT_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, num);
+    // 3. Resolve Memory Context
+    emu_mem_t *mem = s_mem_contexts[meta->reference_id];
+    if (unlikely(!mem)) {return EMU_RESULT_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, num);}
 
-    // 4. Convert Input Value to Standard Double
-    // This handles input being Int, Float, Double, Bool, etc.
     double src_val = emu_var_to_double(*var);
-    
-    // Round if target is integer type
+
     double rnd = (meta->target_type < DATA_F) ? round(src_val) : src_val;
 
-    // 5. Get Start Index (Offset in elements)
     uint32_t offset = meta->start_idx;
 
-    // 6. Write Data to Specific Pool
-    // We perform the write + cast + clamp in one go
+    void *pool_ptr = mem->data_pools[meta->target_type];
+    
+    if (unlikely(!pool_ptr)) {
+        LOG_E(TAG, "Output Pool NULL Type %d", meta->target_type);
+        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, num);
+    }
+
     switch (meta->target_type) {
-        case DATA_UI8: 
-            if (mem->pool_ui8) mem->pool_ui8[offset] = CLAMP_CAST(rnd, 0, UINT8_MAX, uint8_t); 
-            break;
-        case DATA_UI16: 
-            if (mem->pool_ui16) mem->pool_ui16[offset] = CLAMP_CAST(rnd, 0, UINT16_MAX, uint16_t); 
-            break;
-        case DATA_UI32: 
-            if (mem->pool_ui32) mem->pool_ui32[offset] = CLAMP_CAST(rnd, 0, UINT32_MAX, uint32_t); 
-            break;
-        case DATA_I8:   
-            if (mem->pool_i8) mem->pool_i8[offset] = CLAMP_CAST(rnd, INT8_MIN, INT8_MAX, int8_t); 
-            break;
-        case DATA_I16:  
-            if (mem->pool_i16) mem->pool_i16[offset] = CLAMP_CAST(rnd, INT16_MIN, INT16_MAX, int16_t); 
-            break;
-        case DATA_I32:  
-            if (mem->pool_i32) mem->pool_i32[offset] = CLAMP_CAST(rnd, INT32_MIN, INT32_MAX, int32_t); 
-            break;
-        case DATA_F:    
-            if (mem->pool_f) mem->pool_f[offset] = (float)src_val; 
-            break;
-        case DATA_D:    
-            if (mem->pool_d) mem->pool_d[offset] = src_val; 
-            break;
-        case DATA_B:    
-            if (mem->pool_b) mem->pool_b[offset] = (src_val != 0.0); 
-            break;
+        case DATA_UI8:  ((uint8_t*)pool_ptr)[offset]  = CLAMP_CAST(rnd, 0, UINT8_MAX, uint8_t); break;
+        case DATA_UI16: ((uint16_t*)pool_ptr)[offset] = CLAMP_CAST(rnd, 0, UINT16_MAX, uint16_t); break;
+        case DATA_UI32: ((uint32_t*)pool_ptr)[offset] = CLAMP_CAST(rnd, 0, UINT32_MAX, uint32_t); break;
+        case DATA_I8:   ((int8_t*)pool_ptr)[offset]   = CLAMP_CAST(rnd, INT8_MIN, INT8_MAX, int8_t); break;
+        case DATA_I16:  ((int16_t*)pool_ptr)[offset]  = CLAMP_CAST(rnd, INT16_MIN, INT16_MAX, int16_t); break;
+        case DATA_I32:  ((int32_t*)pool_ptr)[offset]  = CLAMP_CAST(rnd, INT32_MIN, INT32_MAX, int32_t); break;
+        
+        case DATA_F:    ((float*)pool_ptr)[offset]    = (float)src_val; break;
+        case DATA_D:    ((double*)pool_ptr)[offset]   = src_val; break;
+        case DATA_B:    ((bool*)pool_ptr)[offset]     = (src_val != 0.0); break;
+        
         default: 
             return EMU_RESULT_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, num);
     }
+    
     // 7. Mark as Updated
-    // This allows downstream blocks to know data is fresh in this cycle
     meta->updated = 1;
 
     return EMU_RESULT_OK();
 }
 
 void emu_block_reset_outputs_status(block_handle_t *block) {
-    if (!block || block->cfg.q_cnt == 0 || !block->outputs) {
+    if (unlikely(!block || block->cfg.q_cnt == 0 || !block->outputs)) {
         return;
     }
 
     for (uint8_t i = 0; i < block->cfg.q_cnt; i++) {
         emu_mem_instance_s_t *instance = block->outputs[i].single;
-        if (instance){instance->updated = 0;}
+        if (likely(instance)){instance->updated = 0;}
     }
 }

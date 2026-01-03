@@ -57,4 +57,33 @@ void emu_refs_system_init(size_t max_scalar_nodes, size_t arena_size_bytes);
 void emu_refs_system_free(void);
 emu_result_t emu_parse_block_inputs(chr_msg_buffer_t *source, block_handle_t *block);
 emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *block);
-double emu_var_to_double(emu_variable_t v);
+
+static inline double emu_var_to_double(emu_variable_t v) {
+    if (v.by_reference) {
+        switch (v.type) {
+            case DATA_UI8:  return (double)(*v.reference.u8);
+            case DATA_UI16: return (double)(*v.reference.u16);
+            case DATA_UI32: return (double)(*v.reference.u32);
+            case DATA_I8:   return (double)(*v.reference.i8);
+            case DATA_I16:  return (double)(*v.reference.i16);
+            case DATA_I32:  return (double)(*v.reference.i32);
+            case DATA_F:    return (double)(*v.reference.f);
+            case DATA_D:    return (*v.reference.d);
+            case DATA_B:    return (*v.reference.b) ? 1.0 : 0.0;
+            default: return 0.0;
+        }
+    } else {
+        switch (v.type) {
+            case DATA_UI8:  return (double)v.data.u8;
+            case DATA_UI16: return (double)v.data.u16;
+            case DATA_UI32: return (double)v.data.u32;
+            case DATA_I8:   return (double)v.data.i8;
+            case DATA_I16:  return (double)v.data.i16;
+            case DATA_I32:  return (double)v.data.i32;
+            case DATA_F:    return (double)v.data.f;
+            case DATA_D:    return v.data.d;
+            case DATA_B:    return v.data.b ? 1.0 : 0.0;
+            default: return 0.0;
+        }
+    }
+}

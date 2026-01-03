@@ -6,8 +6,7 @@
     #include "gatt_buff.h"
     #include "math.h"
 
-    #define TYPES_COUNT 9  
-
+     
     typedef struct __attribute__((packed)) {
         uint32_t dims_cnt     :4; 
         uint32_t target_type  :4;
@@ -32,25 +31,10 @@
     } emu_mem_instance_iter_t;
 
     typedef struct {
-        uint8_t  *pool_ui8;
-        uint16_t *pool_ui16;
-        uint32_t *pool_ui32;
-        int8_t   *pool_i8;
-        int16_t  *pool_i16;
-        int32_t  *pool_i32;
-        float    *pool_f;
-        double   *pool_d;
-        bool     *pool_b;
+        void *data_pools[TYPES_COUNT];
+        void   **instances[TYPES_COUNT];
+        uint8_t  sizes[TYPES_COUNT];
 
-        void **instances_ui8;
-        void **instances_ui16;
-        void **instances_ui32;
-        void **instances_i8;
-        void **instances_i16;
-        void **instances_i32;
-        void **instances_f;
-        void **instances_d;
-        void **instances_b;
         uint16_t next_data_idx[TYPES_COUNT]; 
         uint16_t next_instance_idx[TYPES_COUNT];
         uint16_t instances_cnt[TYPES_COUNT];

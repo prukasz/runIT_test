@@ -1,9 +1,11 @@
 #pragma once
+#include <stdint.h>
 
 /******************************************
 Specific enums used in emulator code
 ******************************************/
-
+#define likely(x)      __builtin_expect(!!(x), 1)
+#define unlikely(x)    __builtin_expect(!!(x), 0)
 /**
  * @brief block type identifier (what block does)
  */
@@ -15,6 +17,7 @@ typedef enum {
 /**
 * @brief Data types used within emulator
 */
+#define TYPES_COUNT 9 
 typedef enum{
     //uint8_t
     DATA_UI8  = 0,
@@ -35,6 +38,18 @@ typedef enum{
     //bool
     DATA_B    = 8
 }data_types_t;
+
+static const uint8_t TYPE_SIZES[TYPES_COUNT] = {
+    1, // DATA_UI8
+    2, // DATA_UI16
+    4, // DATA_UI32
+    1, // DATA_I8
+    2, // DATA_I16
+    4, // DATA_I32
+    4, // DATA_F
+    8, // DATA_D
+    1  // DATA_B
+    };
 
 extern const char *DATA_TYPE_TO_STR[9];
 

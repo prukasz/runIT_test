@@ -9,11 +9,7 @@
 
 static const char *TAG = "EMU_VARIABLES";
 
-/******************************************************
- * 
- * MEMORY CONTEXT
- * 
- *****************************************************/
+
 #define MAX_MEM_CONTEXTS 8 
 emu_mem_t* s_mem_contexts[MAX_MEM_CONTEXTS] = {NULL};
 
@@ -25,32 +21,18 @@ emu_mem_t* _get_mem_context(uint8_t id) {
 void emu_mem_register_context(uint8_t id, emu_mem_t *mem_ptr) {
     if (id < MAX_MEM_CONTEXTS) {
         s_mem_contexts[id] = mem_ptr;
-        LOG_I(TAG, "Registered Context ID %d", id);
-        // }else{
-        //     LOG_W(TAG, "Context %d already registered!", id);
-        // }
+        LOG_I(TAG, "Registered Context ID %d at %p", id, mem_ptr);
     }
 }
+
 
 void emu_mem_free_context(emu_mem_t *mem) {
     if (!mem) return;
 
-    void** pools_ptrs[] = {
-        (void**)&mem->pool_ui8, (void**)&mem->pool_ui16, (void**)&mem->pool_ui32,
-        (void**)&mem->pool_i8,  (void**)&mem->pool_i16,  (void**)&mem->pool_i32,
-        (void**)&mem->pool_f,   (void**)&mem->pool_d,    (void**)&mem->pool_b
-    };
-
-    void*** instances_ptrs[] = {
-        &mem->instances_ui8, &mem->instances_ui16, &mem->instances_ui32,
-        &mem->instances_i8,  &mem->instances_i16,  &mem->instances_i32,
-        &mem->instances_f,   &mem->instances_d,    &mem->instances_b
-    };
-
     for (uint8_t i = 0; i < TYPES_COUNT; i++) {
-        if (*pools_ptrs[i]) { free(*pools_ptrs[i]); *pools_ptrs[i] = NULL; }
-        if (*instances_ptrs[i]) { free(*instances_ptrs[i]); *instances_ptrs[i] = NULL; }
-        if (mem->arenas[i]) { free(mem->arenas[i]); mem->arenas[i] = NULL; }
+        if (mem->data_pools[i]) { free(mem->data_pools[i]); mem->data_pools[i] = NULL; }
+        if (mem->instances[i])  { free(mem->instances[i]);  mem->instances[i] = NULL; }
+        if (mem->arenas[i])     { free(mem->arenas[i]);     mem->arenas[i] = NULL; }
         mem->instances_cnt[i] = 0;
     }
     LOG_I(TAG, "Memory context freed");
@@ -63,44 +45,39 @@ emu_result_t emu_mem_alloc_context(uint8_t context_id,
 {
     emu_result_t res = { .code = EMU_OK };
     
-    emu_mem_t *mem;
-    mem = calloc(1, sizeof(emu_mem_t));
-    memset(mem, 0, sizeof(emu_mem_t));
+    emu_mem_t *mem = _get_mem_context(context_id);
+    
     if (!mem) {
-        LOG_E(TAG, "Context struct alloc failed for ID %d", context_id);
-        return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, 0);
+        mem = calloc(1, sizeof(emu_mem_t));
+        if (!mem) {
+            LOG_E(TAG, "Context struct alloc failed for ID %d", context_id);
+            return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, 0);
+        }
+        emu_mem_register_context(context_id, mem);
+    } else {
+        emu_mem_free_context(mem);
+        memset(mem, 0, sizeof(emu_mem_t));
     }
-    emu_mem_register_context(context_id, mem);
-
-    void** pools_ptrs[] = {
-        (void**)&mem->pool_ui8, (void**)&mem->pool_ui16, (void**)&mem->pool_ui32,
-        (void**)&mem->pool_i8,  (void**)&mem->pool_i16,  (void**)&mem->pool_i32,
-        (void**)&mem->pool_f,   (void**)&mem->pool_d,    (void**)&mem->pool_b
-    };
-    void*** instances_ptrs[] = {
-        &mem->instances_ui8, &mem->instances_ui16, &mem->instances_ui32,
-        &mem->instances_i8,  &mem->instances_i16,  &mem->instances_i32,
-        &mem->instances_f,   &mem->instances_d,    &mem->instances_b
-    };
 
     for (int i = 0; i < TYPES_COUNT; i++) {
-        //data pools 
+        // 1. Data Pools
         if (var_counts[i] > 0) {
-            *pools_ptrs[i] = calloc(var_counts[i], DATA_TYPE_SIZES[i]);
-            if (*pools_ptrs[i] == NULL) {
-                LOG_E(TAG, "Ctx %d: Data Pool Alloc Failed Type %d (Cnt: %d)", context_id, i, var_counts[i]);
+            mem->data_pools[i] = calloc(var_counts[i], DATA_TYPE_SIZES[i]);
+            if (mem->data_pools[i] == NULL) {
+                LOG_E(TAG, "Data Pool alloc failed type %d count %d", i, var_counts[i]);
                 res = EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, i);
                 goto error;
             }
         }
         
+        // 2. Instances & Arena
         uint16_t cnt = inst_counts[i];
         mem->instances_cnt[i] = cnt;
 
         if (cnt > 0) {
-            *instances_ptrs[i] = calloc(cnt, sizeof(void*));   
-            if (*instances_ptrs[i] == NULL) {
-                LOG_E(TAG, "Ctx %d: Inst Table Alloc Failed Type %d (Cnt: %d)", context_id, i, cnt);
+            mem->instances[i] = calloc(cnt, sizeof(void*));   
+            if (mem->instances[i] == NULL) {
+                LOG_E(TAG, "Instances table alloc failed type %d count %d", i, cnt);
                 res = EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, i);
                 goto error;
             }
@@ -109,7 +86,7 @@ emu_result_t emu_mem_alloc_context(uint8_t context_id,
 
             mem->arenas[i] = calloc(1, arena_size);
             if (mem->arenas[i] == NULL) {
-                LOG_E(TAG, "Ctx %d: Arena Alloc Failed Type %d (%d bytes)", context_id, i, (int)arena_size);
+                LOG_E(TAG, "Arena alloc failed type %d (%d bytes)", i, (int)arena_size);
                 res = EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, i);
                 goto error;
             }
@@ -128,11 +105,9 @@ error:
     return res;
 }
 
-/*****************************************************************************************
- * 
- * PARSE + ALLOCATION (CONTEXT)
- * 
- *******************************************************************************************/
+// ============================================================================
+// 2. PARSERS (ALLOC & INIT)
+// ============================================================================
 
 emu_result_t emu_mem_parse_create_context(chr_msg_buffer_t *source) {
     uint8_t *data;
@@ -150,7 +125,14 @@ emu_result_t emu_mem_parse_create_context(chr_msg_buffer_t *source) {
         if (header == VAR_H_SIZES) {
             uint8_t ctx_id = data[2]; 
             
+            size_t payload_size = 3 * TYPES_COUNT * 2; 
+            if (len != (3 + payload_size)) {
+                LOG_E(TAG, "Packet incomplete for VAR_H_SIZES (len=%d, expected=%d)", (int)len, (int)(3 + payload_size));
+                return EMU_RESULT_WARN(EMU_ERR_PACKET_INCOMPLETE, VAR_H_SIZES);
+            }
+
             uint16_t idx = 3; 
+            
             uint16_t var_counts[TYPES_COUNT];
             memcpy(var_counts, &data[idx], sizeof(var_counts)); idx += sizeof(var_counts);
             
@@ -160,10 +142,7 @@ emu_result_t emu_mem_parse_create_context(chr_msg_buffer_t *source) {
             uint16_t extra_dims[TYPES_COUNT];
             memcpy(extra_dims, &data[idx], sizeof(extra_dims));
             
-            for (int i = 0; i < TYPES_COUNT; i++) {
-                LOG_I(TAG, "CTX_id %d, TYPE %s, instacnec cnt %d, total cnt %d", ctx_id, DATA_TYPE_TO_STR[i], inst_counts[i], var_counts[i]);
-            }
-            LOG_I(TAG, "Allocating context now");
+            LOG_I(TAG, "Allocating context %d", ctx_id);
             return emu_mem_alloc_context(ctx_id, var_counts, inst_counts, extra_dims);
         }
     }
@@ -180,6 +159,8 @@ emu_result_t emu_mem_parse_create_scalar_instances(chr_msg_buffer_t *source) {
     for (size_t i = 0; i < buff_size; i++) {
         chr_msg_buffer_get(source, i, &data, &packet_len);
         
+        if (packet_len < 3) continue;
+
         uint16_t header = 0;
         memcpy(&header, data, 2);
 
@@ -187,32 +168,30 @@ emu_result_t emu_mem_parse_create_scalar_instances(chr_msg_buffer_t *source) {
             uint8_t ctx_id = data[2];
             emu_mem_t *mem = _get_mem_context(ctx_id);
             if (!mem) {
-                LOG_E(TAG, "Scalar Cnt: Ctx %d not found/allocated", ctx_id);
+                LOG_E(TAG, "Scalar Cnt: Invalid Context ID %d", ctx_id);
                 return EMU_RESULT_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, i);   
             }
             
             uint16_t idx = 3; 
-        
-            void** instances_ptrs[] = {
-                mem->instances_ui8, mem->instances_ui16, mem->instances_ui32,
-                mem->instances_i8,  mem->instances_i16,  mem->instances_i32,
-                mem->instances_f,   mem->instances_d,    mem->instances_b
-            };
+            if (packet_len != (idx + EXPECTED_PAYLOAD)) {
+                LOG_E(TAG, "Packet incomplete for VAR_H_SCALAR_CNT");
+                return EMU_RESULT_WARN(EMU_ERR_PACKET_INCOMPLETE, VAR_H_SCALAR_CNT);
+            }
 
-            for(uint8_t type = 0; type < TYPES_COUNT; type++) {
+            for (uint8_t type = 0; type < TYPES_COUNT; type++) {
                 uint16_t scalar_cnt = 0;
                 memcpy(&scalar_cnt, &data[idx], sizeof(uint16_t));
                 idx += sizeof(uint16_t);
                 
                 if (scalar_cnt == 0) continue;
 
-                if (!mem->arenas[type] || !instances_ptrs[type]) {
-                    LOG_E(TAG, "Scalar Cnt: Arena/Table missing for Type %s Ctx %d",DATA_TYPE_TO_STR[type], ctx_id);
+                if (!mem->arenas[type] || !mem->instances[type]) {
+                    LOG_E(TAG, "Scalar Cnt: Arena/Table missing for Type %d Ctx %d", type, ctx_id);
                     return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, i);
                 }
 
                 uint8_t *arena_cursor = (uint8_t*)mem->arenas[type];
-                void **instance_table = instances_ptrs[type];
+                void **instance_table = mem->instances[type];
 
                 for (int k = 0; k < scalar_cnt; k++) {
                     instance_table[k] = arena_cursor;
@@ -248,6 +227,7 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
     for (size_t i = 0; i < buff_size; i++) {
         chr_msg_buffer_get(source, i, &data, &len);
         
+        if (len < 3) continue;
 
         uint16_t header = 0;
         memcpy(&header, data, 2);
@@ -256,7 +236,7 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
             uint8_t ctx_id = data[2];
             emu_mem_t *mem = _get_mem_context(ctx_id);
             if (!mem) {
-                LOG_E(TAG, "Ctx %d not found", ctx_id);
+                LOG_E(TAG, "Arr Def: Ctx %d not found", ctx_id);
                 return EMU_RESULT_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, i);
             }
 
@@ -268,27 +248,20 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
                 uint8_t dims_cnt    = data[idx++];
                 uint8_t target_type = data[idx++];
 
+                if (target_type >= TYPES_COUNT || dims_cnt > 8) {
+                    LOG_E(TAG, "Invalid Arr Def T:%d D:%d", target_type, dims_cnt);
+                    return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_DATA, i);
+                }
+
                 if ((idx + dims_cnt) > len) {
-                    LOG_E(TAG, "Arr Def: Payload incomplete");
+                    LOG_E(TAG, "Arr Def Payload incomplete");
                     return EMU_RESULT_WARN(EMU_ERR_PACKET_INCOMPLETE, VAR_H_ARR);
                 }
 
-                void **instance_table = NULL;
-                switch(target_type) {
-                    case DATA_UI8: instance_table = mem->instances_ui8; break;
-                    case DATA_UI16: instance_table = mem->instances_ui16; break;
-                    case DATA_UI32: instance_table = mem->instances_ui32; break;
-                    case DATA_I8:   instance_table = mem->instances_i8; break;
-                    case DATA_I16:  instance_table = mem->instances_i16; break;
-                    case DATA_I32:  instance_table = mem->instances_i32; break;
-                    case DATA_F:    instance_table = mem->instances_f; break;
-                    case DATA_D:    instance_table = mem->instances_d; break;
-                    case DATA_B:    instance_table = mem->instances_b; break;
-                    default: instance_table = NULL; break;
-                }
+                void **instance_table = mem->instances[target_type];
                 
                 if (!instance_table) {
-                    LOG_E(TAG, "Instance Table missing for Type %d", target_type);
+                    LOG_E(TAG, "Instance table NULL for type %d", target_type);
                     return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, i);
                 }
 
@@ -297,7 +270,7 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
                 uint8_t *arena_cursor = (uint8_t*)mem->arenas[target_type] + mem->arena_offset[target_type];
 
                 if (instance_idx >= mem->instances_cnt[target_type]) {
-                    LOG_E(TAG, "Max Instances Reached CTX %d Type %s",ctx_id, DATA_TYPE_TO_STR[target_type]);
+                    LOG_E(TAG, "Max instances reached for type %d", target_type);
                     return EMU_RESULT_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, i);
                 }
 
@@ -330,14 +303,10 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
     return EMU_RESULT_WARN(EMU_ERR_PACKET_NOT_FOUND, VAR_H_ARR);
 }
 
-/*****************************************************************************
- * 
- * DATA PARSERS (INTO CONTEXT)
- * 
- *****************************************************************************/
+// ============================================================================
+// 3. DATA PARSER (VALUES)
+// ============================================================================
 
-
- //eaisly get type and is scalar from packet ID
 static int8_t _get_type_from_header(uint16_t header, bool *is_array) {
     *is_array = false;
     switch (header) {
@@ -365,36 +334,22 @@ static int8_t _get_type_from_header(uint16_t header, bool *is_array) {
     }
 }
 
-static void* _mem_get_pool_ptr(uint8_t context_id, uint8_t type) {
-    emu_mem_t *mem = _get_mem_context(context_id);
-    if (!mem) return NULL;
-    switch (type) {
-        case DATA_UI8:  return mem->pool_ui8;
-        case DATA_UI16: return mem->pool_ui16;
-        case DATA_UI32: return mem->pool_ui32;
-        case DATA_I8:   return mem->pool_i8;
-        case DATA_I16:  return mem->pool_i16;
-        case DATA_I32:  return mem->pool_i32;
-        case DATA_F:    return mem->pool_f;
-        case DATA_D:    return mem->pool_d;
-        case DATA_B:    return mem->pool_b;
-        default:        return NULL;
+// Helpers
+static inline emu_mem_instance_iter_t _mem_get_instance_meta(emu_mem_t *mem, uint8_t type, uint16_t idx) {
+    emu_mem_instance_iter_t iter = {0};
+    if (mem && idx < mem->instances_cnt[type]) {
+        iter.raw = mem->instances[type][idx];
     }
+    return iter;
 }
 
-/**
- * @brief Internal, parse scalar data if detected
- */
 static emu_err_t _parse_scalar_data(uint8_t ctx_id, uint8_t type, uint8_t *data, size_t len) {
     emu_mem_t *mem = _get_mem_context(ctx_id);
-    if (!mem) {
-        LOG_E(TAG, "Ctx %d not found", ctx_id);
-        return EMU_ERR_MEM_INVALID_REF_ID;
-    }
-    void *pool_ptr = _mem_get_pool_ptr(ctx_id, type);
-    if (!pool_ptr) {
-        LOG_E(TAG, "Invalid pool ptr for type %s, ctx %d", DATA_TYPE_TO_STR[type], ctx_id);
-        return EMU_ERR_NULL_PTR;}
+    if (!mem) return EMU_ERR_MEM_INVALID_REF_ID;
+
+    // Use Array Access instead of switch
+    void *pool_ptr = mem->data_pools[type];
+    if (!pool_ptr) return EMU_ERR_NULL_PTR;
 
     size_t cursor = 0;
     size_t elem_size = DATA_TYPE_SIZES[type];
@@ -406,14 +361,12 @@ static emu_err_t _parse_scalar_data(uint8_t ctx_id, uint8_t type, uint8_t *data,
         cursor += 2;
 
         if (instance_idx >= mem->instances_cnt[type]) {
-            LOG_E(TAG, "Data Parse: Instance Idx OOB (%d >= %d) for type %s", instance_idx, mem->instances_cnt[type], DATA_TYPE_TO_STR[type]);
+            LOG_E(TAG, "Data Parse: Instance Idx OOB (%d >= %d) type %d", instance_idx, mem->instances_cnt[type], type);
             return EMU_ERR_MEM_OUT_OF_BOUNDS;
         }
 
-        emu_mem_instance_iter_t meta = _mem_get_instance(mem, type, instance_idx);
-        if (!meta.raw) {
-            LOG_E(TAG, "Data Parse: Meta NULL for Inst %d", instance_idx);
-            return EMU_ERR_MEM_OUT_OF_BOUNDS;}
+        emu_mem_instance_iter_t meta = _mem_get_instance_meta(mem, type, instance_idx);
+        if (!meta.raw) return EMU_ERR_MEM_OUT_OF_BOUNDS;
 
         uint32_t pool_idx = meta.single->start_idx;
         uint8_t *dest = (uint8_t*)pool_ptr + (pool_idx * elem_size);
@@ -421,17 +374,14 @@ static emu_err_t _parse_scalar_data(uint8_t ctx_id, uint8_t type, uint8_t *data,
         memcpy(dest, &data[cursor], elem_size);
         cursor += elem_size;
     }
-    
-    LOG_I(TAG, "Ctx %d: Parsed Data Batch Type %s (Len %d)", ctx_id, DATA_TYPE_TO_STR[type], len);
     return EMU_OK;
 }
 
-/**
- * @brief Internal, parse array data if detected
- */
 static emu_err_t _parse_array_data(uint8_t ctx_id, uint8_t type, uint8_t *data, size_t len) {
     emu_mem_t *mem = _get_mem_context(ctx_id);
     if (!mem) return EMU_ERR_MEM_INVALID_REF_ID;
+
+    if (len < 4) return EMU_ERR_PACKET_INCOMPLETE;
 
     uint16_t instance_idx = 0;
     memcpy(&instance_idx, &data[0], 2);
@@ -439,16 +389,16 @@ static emu_err_t _parse_array_data(uint8_t ctx_id, uint8_t type, uint8_t *data, 
     uint16_t offset_in_array = 0;
     memcpy(&offset_in_array, &data[2], 2);
 
-    emu_mem_instance_iter_t meta = _mem_get_instance(mem, type, instance_idx);
+    emu_mem_instance_iter_t meta = _mem_get_instance_meta(mem, type, instance_idx);
     if (!meta.raw) {
-        LOG_E(TAG, "NULL Inst %d", instance_idx);
+        LOG_E(TAG, "Arr Data Parse: Meta NULL for Inst %d", instance_idx);
         return EMU_ERR_MEM_OUT_OF_BOUNDS;
     }
 
     uint32_t pool_start_idx = meta.arr->start_idx;
     uint32_t final_pool_idx = pool_start_idx + offset_in_array;
 
-    void *pool_ptr = _mem_get_pool_ptr(ctx_id, type);
+    void *pool_ptr = mem->data_pools[type];
     if (!pool_ptr) return EMU_ERR_NULL_PTR;
 
     size_t elem_size = DATA_TYPE_SIZES[type];
@@ -467,6 +417,8 @@ emu_result_t emu_mem_parse_context_data_packets(chr_msg_buffer_t *source, emu_me
 
     for (size_t i = 0; i < buff_size; i++) {
         chr_msg_buffer_get(source, i, &data, &len);
+
+        if (len < 3) continue;
 
         uint16_t header = 0;
         memcpy(&header, data, 2); 
