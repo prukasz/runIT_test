@@ -49,7 +49,7 @@ emu_loop_handle_t emu_loop_init(uint64_t period_us){
         ESP_LOGE(TAG, "Failed to allocate memory for loop context");
         return NULL;
     }
-    ctx->wtd.max_skipp = 5;
+    ctx->wtd.max_skipp = 2;
     ctx->wtd.wtd_active = 1;
     ctx->wtd.wtd_triggered = 0;
     ctx->timer.loop_period = period_us;

@@ -96,6 +96,35 @@ typedef enum{
     EMU_H_BLOCK_START_G_ACCES_MASK = 0xEF
 }emu_header_t;
 
+typedef enum{
+    //[HEADER][9x][UINT16_T TOTAL_CNT_OF_SLOTS] [9x] [UINT16_T TOTAL_CNT_OF_INSTANCE],[9x] [UINT16_T TOTAL_CNT_OF_EXTRA_SPACE] 
+    VAR_H_SIZES = 0xFF00,
+    //[HEADER][9x][UINT16_T scalar_cnt]
+    VAR_H_SCALAR_CNT = 0xFF01,
+    //[HEADER]N*([uint32_t  dims_cnt: 4 uint32_t  target_type : 4;uint32_t start_idx:24;] [Nx][uint8_t idx] )
+    VAR_H_ARR = 0xFF02,
+    //[HEADER], [ui16_t idx] [data], [ui16_t idx] [data], [ui16_t idx] [data] .. 
+    VAR_H_DATA_S_UI8 = 0x0F10,
+    VAR_H_DATA_S_UI16 = 0x0F20,
+    VAR_H_DATA_S_UI32 = 0x0F30,
+    VAR_H_DATA_S_I8 = 0x0F40,
+    VAR_H_DATA_S_I16 = 0x0F50,
+    VAR_H_DATA_S_I32 = 0x0F60,
+    VAR_H_DATA_S_F = 0x0F70,
+    VAR_H_DATA_S_D = 0x0F80,
+    VAR_H_DATA_S_B = 0x0F90,
+    //[HEADER], [ui16_t idx,][ui16_t in_arr_idx_offset][data](till end of packet)
+    VAR_H_DATA_ARR_UI8 = 0xFFF0,
+    VAR_H_DATA_ARR_UI16 = 0xFFF1,
+    VAR_H_DATA_ARR_UI32 = 0xFFF2,
+    VAR_H_DATA_ARR_I8 = 0xFFF3,
+    VAR_H_DATA_ARR_I16 = 0xFFF4,
+    VAR_H_DATA_ARR_I32 = 0xFFF5,
+    VAR_H_DATA_ARR_F = 0xFFF6,
+    VAR_H_DATA_ARR_D = 0xFFF7,
+    VAR_H_DATA_ARR_B = 0xFFF8,
+}emu_variables_headers_t;
+
 /**
 * @brief emulator main loop flags
 */
@@ -114,7 +143,7 @@ typedef enum {
 typedef enum{
     BLOCK_MATH = 0x01,
     BLOCK_SET_GLOBAL = 0x02,
-    BLOCK_CMP = 0x03,
+    BLOCK_LOGIC = 0x03,
     BLOCK_FOR = 0x08,
     BLOCK_TIMER = 0x09,
 }block_type_t;

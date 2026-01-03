@@ -5,7 +5,6 @@
 #include "emulator_types.h"
 #include "emulator_blocks.h"
 #include "emulator_variables.h"
-#include "utils_global_access.h"
 #include "emulator_errors.h"
 
 

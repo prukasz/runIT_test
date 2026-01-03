@@ -1,6 +1,5 @@
 #pragma once
-#include "utils_block_in_q_access.h"
-#include "utils_global_access.h"
+#include "emulator_variables_acces.h"
 #include "emulator_errors.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -33,7 +32,7 @@ typedef struct {
     double *constant_table;
 } logic_expression_t;
 
-emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, uint16_t block_idx);
+emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, block_handle_t *block);
 emu_result_t emu_logic_block_free_expression(block_handle_t* block);
 
 

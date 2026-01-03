@@ -1,20 +1,17 @@
-#include "utils_block_in_q_access.h"
-#include "utils_global_access.h"
-
-#define READ_U16(DATA, IDX)     ((uint16_t)((DATA)[(IDX)]) | ((uint16_t)((DATA)[(IDX)+1]) << 8))
-
-typedef enum {
-    OP_VAR = 0x00,
-    OP_ADD = 0x01,
-    OP_MUL = 0x02,
-    OP_DIV = 0x03,
-    OP_SUB = 0x04,
-    OP_ROOT = 0x05,
-    OP_POWER = 0x06,
-    OP_SIN = 0x07,
-    OP_COS = 0x08,
-    OP_CONST = 0x09,
-} op_code_t;
+#include "emulator_variables_acces.h"
+typedef enum{
+    OP_VAR   = 0x00,      
+    OP_CONST = 0x01,      
+    OP_ADD   = 0x02,     
+    OP_MUL   = 0x03,      
+    OP_DIV   = 0x04,      
+    OP_COS   = 0x05,     
+    OP_SIN   = 0x06,      
+    OP_POW   = 0x07,      
+    OP_ROOT  = 0x08,      
+    OP_SUB   = 0x09, 
+}op_code_t;
+     
 
 typedef struct {
     op_code_t op;
@@ -28,10 +25,8 @@ typedef struct{
     double *constant_table;
 } expression_t;
 
-emu_result_t emu_parse_block_math(chr_msg_buffer_t *source, uint16_t block_idx);
-emu_err_t emu_math_block_free_expression(block_handle_t* block);
-
-
+emu_result_t emu_parse_block_math(chr_msg_buffer_t *source, block_handle_t *block);
+void emu_parse_block_math_free(block_handle_t* block);
 
 
 

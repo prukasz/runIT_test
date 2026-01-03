@@ -1,6 +1,6 @@
 #pragma once
-#include "utils_block_in_q_access.h"
-#include "utils_global_access.h"
+#include "emulator_variables_acces.h"
+
 
 /****************************************************************************
                     SET BLOCK

@@ -1,92 +1,114 @@
 #include "block_math.h"
 #include "emulator_errors.h"
+#include "emulator_variables_acces.h"
+#include "emulator_blocks.h" 
+#include "esp_log.h"
 #include <math.h>
 #include <float.h>
 #include <stdbool.h>
+#include <string.h>
+#include <stdlib.h>
 
+static const char* TAG = "BLOCK_MATH";
 
-extern block_handle_t **emu_block_struct_execution_list;
+// Internal Helpers
 static inline bool is_greater(double a, double b);
 static inline bool is_equal(double a, double b);
 static inline bool is_zero(double a);
 
+// Forward Declarations
+void emu_parse_math_block_free(block_handle_t * block);
 emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
 emu_err_t _emu_parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code);
 emu_err_t _emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
 emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table);
 emu_err_t _clear_expression_internals(expression_t* expr);
 
-static const char* TAG = "MATH_PARSER";
+/* ============================================================================
+    PARSING LOGIC
+   ============================================================================ */
 
-emu_result_t emu_parse_block_math(chr_msg_buffer_t *source, uint16_t block_idx)
+emu_result_t emu_parse_block_math(chr_msg_buffer_t *source, block_handle_t *block)
 {
+    if (!block) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0);
+
     emu_result_t res = {.code = EMU_OK};
     uint8_t *data;
     size_t len;
-    block_handle_t *block_ptr;
+    
+    // Get ID from the block struct provided
+    uint16_t block_idx = block->cfg.block_idx;
 
     size_t buff_size = chr_msg_buffer_size(source);
     size_t search_idx = 0;
 
-
-        while(search_idx < buff_size)
+    // --- PASS 1: EXPRESSION CODE (Subtype 0x02) ---
+    while(search_idx < buff_size)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x02 && (READ_U16(data, 3) == block_idx))
+        // Check header bytes safely
+        if (len > 3 && data[0] == 0xBB && data[1] == BLOCK_MATH && data[2] == 0x02) 
         {
-            LOG_I(TAG, "Detected Expression header");
-            uint16_t block_id = READ_U16(data, 3);
-            block_ptr = emu_block_struct_execution_list[block_id];
-            block_ptr->extras = calloc(1, sizeof(expression_t));
-            if(!block_ptr->extras){
-                ESP_LOGE(TAG, "No memory to allocate math block extras for block %d", block_id);
-                res.code = EMU_ERR_NO_MEM;
-                res.block_idx = block_id;
-                res.restart = true;
-                return res;
+            uint16_t packet_blk_id;
+            memcpy(&packet_blk_id, &data[3], 2); 
+
+            if (packet_blk_id == block_idx) 
+            {
+                LOG_I(TAG, "Detected Expression header for block %d", block_idx);
+                
+                // Allocate custom data if not exists
+                if (!block->custom_data) {
+                    block->custom_data = calloc(1, sizeof(expression_t));
+                    if(!block->custom_data){
+                        ESP_LOGE(TAG, "No memory for custom_data block %d", block_idx);
+                        return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                    }
+                }
+
+                size_t const_msg_cnt = 1;
+                if(_emu_parse_math_expr(source, search_idx, (expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
+                    ESP_LOGE(TAG, "Expr parse error block %d", block_idx);
+                    emu_parse_math_block_free(block);
+                    return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                }
             }
-            size_t const_msg_cnt = 1;
-            if(_emu_parse_math_expr(source, search_idx, (block_ptr->extras), &const_msg_cnt) != EMU_OK){
-                ESP_LOGE(TAG, "Error while parsing expression for block %d", block_id);
-                emu_math_block_free_expression(block_ptr);
-                res.code = EMU_ERR_NO_MEM;
-                res.block_idx = block_id;
-                res.restart = true;
-                return res;
-            }
-            search_idx++;
         }
-        else
-        {
-            search_idx++;
-        }
+        search_idx++;
     }
+
+    // --- PASS 2: CONSTANT TABLE (Subtype 0x01) ---
     search_idx = 0;
     while(search_idx < buff_size)
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == BLOCK_MATH && data[2] == 0x01 && (READ_U16(data, 3) == block_idx))
+        if (len > 3 && data[0] == 0xBB && data[1] == BLOCK_MATH && data[2] == 0x01) 
         {
-            LOG_I(TAG, "Detected Constant Table header");
-            uint16_t block_id = READ_U16(data, 3);
-            block_ptr = emu_block_struct_execution_list[block_id];
-            size_t const_msg_cnt = 1;
-            if(_emu_parse_math_const(source, search_idx, (block_ptr->extras), &const_msg_cnt) != EMU_OK){
-                ESP_LOGE(TAG, "Error while parsing constant table for block %d", block_id);
-                emu_math_block_free_expression(block_ptr);
-                res.code = EMU_ERR_NO_MEM;
-                res.block_idx = block_id;
-                res.restart = true;
-                return res;
+            uint16_t packet_blk_id;
+            memcpy(&packet_blk_id, &data[3], 2);
+
+            if (packet_blk_id == block_idx) 
+            {
+                LOG_I(TAG, "Detected Constant Table header for block %d", block_idx);
+                
+                // Ensure custom_data exists
+                if (!block->custom_data) {
+                     block->custom_data = calloc(1, sizeof(expression_t));
+                     if(!block->custom_data){
+                        return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                     }
+                }
+
+                size_t const_msg_cnt = 1;
+                if(_emu_parse_math_const(source, search_idx, (expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
+                    ESP_LOGE(TAG, "Const parse error block %d", block_idx);
+                    //emu_parse_block_math_free(block);
+                    return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                }
             }
-            search_idx++;
         }
-        else
-        {
-            search_idx++;
-        }
+        search_idx++;
     }
     return res;
 }
@@ -95,63 +117,73 @@ emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expre
 {
     uint8_t *data;
     size_t len;
-    size_t len_total;
     uint8_t op_count = 0;
     uint8_t idx_start = 0;
 
     chr_msg_buffer_get(source, msg_index, &data, &len);
+    if(len < 6) return EMU_ERR_PACKET_INCOMPLETE;
+
     op_count = data[5];
     expression->count = op_count;
+    
     expression->code = (instruction_t*)calloc(op_count, sizeof(instruction_t));
     if(!expression->code){
-        ESP_LOGE(TAG, "No memory to allocate math expression code");
-
+        ESP_LOGE(TAG, "Expr code alloc failed");
         return EMU_ERR_NO_MEM;
     }
-    len_total = op_count * 2 + 1;
+
+    size_t len_total = op_count * 2 + 1;
     _emu_parse_math_expr_msg(data, len, 6, &idx_start, expression->code);
 
-    while(len_total>(len-5)){
+    while(len_total > (len - 5)){
         len_total = len_total - (len - 5);
-        chr_msg_buffer_get(source, msg_index++, &data, &len);
+        msg_index++;
+        chr_msg_buffer_get(source, msg_index, &data, &len);
+        
+        if (!data) break; 
+
         _emu_parse_math_expr_msg(data, len, 5, &idx_start, expression->code);
         (*const_msg_cnt)++;
     }
-        return EMU_OK;
+    return EMU_OK;
 }
 
 emu_err_t _emu_parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code)
 {
-    for(int i = start_index; i<len; i+=2){
-        memcpy(&(code[(*idx_start)].op), &data[i], 1);
-        memcpy(&(code[(*idx_start)].input_index), &data[i+1], 1);
+    for(int i = start_index; i < len - 1; i += 2){ 
+        code[*idx_start].op = data[i];
+        code[*idx_start].input_index = data[i+1];
         (*idx_start)++;
     }
     return EMU_OK;
 }
 
 emu_err_t _emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt){
-
     uint8_t *data;
     size_t len;
-    size_t len_total;
     uint8_t const_cnt = 0;
     uint8_t idx_start = 0;
 
     chr_msg_buffer_get(source, msg_index, &data, &len);
-    const_cnt = data[5];
-    len_total = const_cnt * sizeof(double) + 1;
-    expression->constant_table = (double*)calloc(const_cnt, sizeof(double));
+    if(len < 6) return EMU_ERR_PACKET_INCOMPLETE;
 
+    const_cnt = data[5];
+    size_t len_total = const_cnt * sizeof(double) + 1;
+    
+    expression->constant_table = (double*)calloc(const_cnt, sizeof(double));
     if(!expression->constant_table){
-        ESP_LOGE(TAG, "No memory to allocate math expression constant table");
+        ESP_LOGE(TAG, "Const table alloc failed");
         return EMU_ERR_NO_MEM;
     }
+
     _emu_parse_math_const_msg(data, len, 6, &idx_start, expression->constant_table);
 
-    while(len_total>(len-5)){
+    while(len_total > (len - 5)){
         len_total = len_total - (len - 5);
-        chr_msg_buffer_get(source, msg_index++, &data, &len);
+        msg_index++;
+        chr_msg_buffer_get(source, msg_index, &data, &len);
+        if(!data) break;
+
         _emu_parse_math_const_msg(data, len, 5, &idx_start, expression->constant_table);
         (*const_msg_cnt)++;
     }
@@ -159,122 +191,130 @@ emu_err_t _emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expr
 }
 
 emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table){
-    for(size_t i = start_index; i<len; i=i+sizeof(double)){
+    for(size_t i = start_index; i <= len - sizeof(double); i += sizeof(double)){
         memcpy(&(table[*idx_start]), &data[i], sizeof(double));
         (*idx_start)++;
     }
     return EMU_OK;
 }
 
+/* ============================================================================
+    EXECUTION LOGIC
+   ============================================================================ */
+
 emu_result_t block_math(block_handle_t* block){
     emu_result_t res = {.code = EMU_OK};
-    double EN = false;
-    utils_get_in_val_auto(block, 0, &EN);
-    if(!EN){
+    
+    if (!emu_block_check_inputs_updated(block)) {
         res.code = EMU_ERR_BLOCK_INACTIVE;
         res.notice = true;
-        res.block_idx = block->block_idx;
+        res.block_idx = block->cfg.block_idx;
         return res;
     }
-    expression_t* eval = (expression_t*)block->extras;
+    
+    emu_variable_t var;
+    bool EN = true;
+    if (block->cfg.in_connected & 0x01){
+        var = mem_get(block->inputs[0], false);
+        if (var.error == EMU_OK) {
+            EN = (emu_var_to_double(var) > 0.5);
+        }else{
+            EN = false;
+        }
+    }
+
+    expression_t* eval = (expression_t*)block->custom_data;
     double stack[16];
     int over_top = 0;
     double result = 0;
 
-    for(uint16_t i = 0; i<eval->count; i++){
+    for(uint16_t i = 0; i < eval->count; i++){
         instruction_t *ins = &(eval->code[i]);
         switch(ins->op){
-            case OP_VAR:
-                utils_get_in_val_auto(block, ins->input_index, &stack[over_top++]);
-                LOG_I(TAG, "Pushed variable value: %lf", stack[over_top-1]);
+            case OP_VAR: {
+                emu_variable_t v = mem_get(block->inputs[ins->input_index], false);
+                double tmp = emu_var_to_double(v);
+                if(over_top < 16) stack[over_top++] = tmp;
                 break;
-
+            }
             case OP_CONST:
-                stack[over_top++] = eval->constant_table[ins->input_index];
+                if(over_top < 16) stack[over_top++] = eval->constant_table[ins->input_index];
                 break;
-
             case OP_ADD:
-                stack[over_top-2] = stack[over_top-2] + stack[over_top-1];
-                over_top--;
+                if(over_top >= 2) { stack[over_top-2] += stack[over_top-1]; over_top--; }
                 break;
-
             case OP_MUL:
-                stack[over_top-2] = stack[over_top-2] * stack[over_top-1];
-                over_top--;
+                if(over_top >= 2) { stack[over_top-2] *= stack[over_top-1]; over_top--; }
                 break;
-
             case OP_DIV:
-                if(is_zero(stack[over_top-1])){
-                    res.code = EMU_ERR_BLOCK_DIV_BY_ZERO;
-                    res.warning = true;
-                    res.block_idx = block->block_idx;
-                    return res;
+                if(over_top >= 2) {
+                    if(is_zero(stack[over_top-1])){
+                        res.code = EMU_ERR_BLOCK_DIV_BY_ZERO;
+                        res.warning = true;
+                        res.block_idx = block->cfg.block_idx;
+                        return res;
+                    }
+                    stack[over_top-2] /= stack[over_top-1];
+                    over_top--;
                 }
-                stack[over_top-2] = stack[over_top-2]/stack[over_top-1];
-                over_top--;
                 break;
-
             case OP_COS:
-                stack[over_top-1] = cos(stack[over_top-1]);
+                if(over_top >= 1) stack[over_top-1] = cos(stack[over_top-1]);
                 break;
-
             case OP_SIN:
-                stack[over_top-1] = sin(stack[over_top-1]);
+                if(over_top >= 1) stack[over_top-1] = sin(stack[over_top-1]);
                 break; 
-
-            case OP_POWER:
-                stack[over_top-2] = pow(stack[over_top-2], stack[over_top-1]);
-                over_top--;
+            case OP_POW:
+                if(over_top >= 2) { stack[over_top-2] = pow(stack[over_top-2], stack[over_top-1]); over_top--; }
                 break;
-
             case OP_ROOT:
-                stack[over_top-1] = sqrt(stack[over_top-1]);
+                if(over_top >= 1) stack[over_top-1] = sqrt(stack[over_top-1]);
                 break;
-
             case OP_SUB:
-                stack[over_top-2] = stack[over_top-2] - stack[over_top-1];
-                over_top--;
+                if(over_top >= 2) { stack[over_top-2] -= stack[over_top-1]; over_top--; }
                 break; 
         }
     }
 
-    result = stack[0];
-    LOG_I("BLOCK_MATH", "Computed result: %lf", result);
-    utils_set_q_val_safe(block, 0, 1);
-    utils_set_q_val_safe(block, 1, result);
-    block_pass_results(block);
+    result = (over_top > 0) ? stack[0] : 0.0;
+    
+    // Set Outputs
+    emu_variable_t v_eno = { .type = DATA_B, .data.b = true };
+    emu_block_set_output(block, &v_eno, 0);
+    LOG_I(TAG, "result %lf", result);
+    emu_variable_t v_res = { .type = DATA_D, .data.d = result };
+    emu_block_set_output(block, &v_res, 1);
     return res;      
 } 
 
+/* ============================================================================
+    HELPERS
+   ============================================================================ */
+
 static inline bool is_equal(double a, double b){
-    return fabs(a-b)<DBL_EPSILON;
+    return fabs(a-b) < DBL_EPSILON;
 }
 
 static inline bool is_zero(double a){
-    return fabs(a)<DBL_EPSILON;
+    return fabs(a) < DBL_EPSILON;
 }
 
 static inline bool is_greater(double a, double b){
-    return fabs(a-b)>DBL_EPSILON;
+    return (a - b) > DBL_EPSILON;
 }
 
 emu_err_t _clear_expression_internals(expression_t* expr){
-    if(expr->code){
-        free(expr->code);
-    }
-    if(expr->constant_table){
-        free(expr->constant_table);
-    }
-    LOG_I("MATH_CLEANUP", "Cleared expression memory");
+    if(expr->code) free(expr->code);
+    if(expr->constant_table) free(expr->constant_table);
     return EMU_OK;
 }
 
-emu_err_t emu_math_block_free_expression(block_handle_t* block){
-    expression_t* expr = (expression_t*)block->extras;
-    if(expr){
+void emu_parse_math_block_free(block_handle_t* block){
+    if(block && block->custom_data){
+        expression_t* expr = (expression_t*)block->custom_data;
         _clear_expression_internals(expr);
         free(expr);
-        LOG_I("MATH_CLEANUP", "Cleared block extras memory");
+        block->custom_data = NULL;
+        LOG_I(TAG, "Cleared math block memory");
     }
-    return EMU_OK;
 }

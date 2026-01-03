@@ -91,7 +91,7 @@ void app_main(void) {
     main_task = xTaskGetCurrentTaskHandle();
     
     emu_parse_source_add(&emu_in_buffer);
-    emu_debug_output_add(&emu_out_buffer);
+    //emu_debug_output_add(&emu_out_buffer);
 
     while(1){
         vTaskDelay(pdMS_TO_TICKS(2000));

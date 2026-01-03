@@ -1,41 +1,40 @@
 import struct
 import re
-from typing import List, Dict, Union, Optional
+from typing import List, Union, Dict
 from dataclasses import dataclass
-from BlockBase import BlockBase, val_to_hex
-from Enums import DataTypes, BlockTypes
-from GlobalReferences import Global_reference
+from enum import IntEnum
+
+from BlockBase import BlockBase, BlockType
+from EmulatorMemory import DataTypes
+from EmulatorMemoryReferences import Global
+from BlocksStorage import BlocksStorage # Do type hintingu
 
 # ==========================================
-# OPCODES I INSTRUKCJE
+# 1. OPCODES I INSTRUKCJE
 # ==========================================
 
-class OpCode:
-    VAR = 0x00      # zmienna
-    ADD = 0x01      # +
-    MUL = 0x02      # *
-    DIV = 0x03      # /
-    SUB = 0x04      # -
-    SQRT = 0x05     # sqrt()
-    POW = 0x06      # pow() lub **
-    SIN = 0x07      # sin()
-    COS = 0x08      # cos()
-    CONST = 0x09    # stała
+class OpCode(IntEnum):
+    VAR   = 0x00      # zmienna (z wejścia bloku)
+    CONST = 0x01      # stała (z tabeli stałych)
+    ADD   = 0x02      # +
+    MUL   = 0x03      # *
+    DIV   = 0x04      # /
+    COS   = 0x05      # cos()
+    SIN   = 0x06      # sin()
+    POW   = 0x07      # pow()
+    ROOT  = 0x08      # sqrt()
+    SUB   = 0x09      # -
 
 @dataclass
 class Instruction:
     opcode: int
-    index: int
-    
-    def __str__(self) -> str:
-        return f"{self.opcode:02X} {self.index:02X}"
+    index: int # Index wejścia (VAR) lub index stałej (CONST)
 
 # ==========================================
-# PARSER WYRAŻEŃ (LOGIKA)
+# 2. PARSER WYRAŻEŃ (LOGIKA)
 # ==========================================
 
 class MathExpression:
-
     def __init__(self, expression: str, block_id: int):
         self.expression = expression.strip()
         self.block_id = block_id 
@@ -120,12 +119,10 @@ class MathExpression:
         match = re.match(r'in_(\d+)', var_name)
         if match:
             val = int(match.group(1))
-            
-            # --- ZABEZPIECZENIE: Index 0 jest dla EN ---
+            # Input 0 is reserved for EN (Enable)
             if val == 0:
-                raise ValueError(f"Error in expr '{self.expression}': 'in_0' is reserved (EN). Use 'in_1' onwards.")
+                raise ValueError(f"Error: 'in_0' is reserved (EN). Use 'in_1' onwards.")
             return val 
-            
         raise ValueError(f"Invalid variable name: {var_name}")
     
     def _rpn_to_instructions(self, rpn: List) -> List[Instruction]:
@@ -141,116 +138,120 @@ class MathExpression:
             elif token == '*': instructions.append(Instruction(OpCode.MUL, 0))
             elif token == '/': instructions.append(Instruction(OpCode.DIV, 0))
             elif token in ['^', 'pow']: instructions.append(Instruction(OpCode.POW, 0))
-            elif token == 'sqrt': instructions.append(Instruction(OpCode.SQRT, 0))
+            elif token == 'sqrt': instructions.append(Instruction(OpCode.ROOT, 0)) # Uwaga na nazwę opcodu
             elif token == 'sin': instructions.append(Instruction(OpCode.SIN, 0))
             elif token == 'cos': instructions.append(Instruction(OpCode.COS, 0))
         return instructions
     
-    def _parse(self):   
+    def _parse(self):
         tokens = self._tokenize(self.expression)
         rpn = self._infix_to_rpn(tokens)
         self.instructions = self._rpn_to_instructions(rpn)
-    
-    def get_message_01(self) -> str:
-        """Message Type 0x01: Constants Table (Doubles grouped by 8 bytes)"""
-        if not self.constants: return ""
-        
-        # Header: BB Type(u8) PacketType(u8)
-        h_prefix = val_to_hex(struct.pack('<BBB', 0xBB, BlockTypes.BLOCK_MATH, 0x01), 1)
-        h_id = val_to_hex(struct.pack('<H', self.block_id), 2)
-        
-        # Count (u8)
-        num = val_to_hex(struct.pack('<B', len(self.constants)), 1)
-        
-        # Doubles list
-        data_parts = []
-        for c in self.constants:
-            d_bytes = struct.pack('<d', c)
-            data_parts.append(val_to_hex(d_bytes, 8))
-        
-        data_hex = " ".join(data_parts)
-        
-        return f"#MATH CONST# {h_prefix} {h_id} {num} {data_hex}"
-    
-    def get_message_02(self) -> str:
-        """Message Type 0x02: Instructions Code"""
-        
-        # Header
-        h_prefix = val_to_hex(struct.pack('<BBB', 0xBB, BlockTypes.BLOCK_MATH, 0x02), 1)
-        h_id = val_to_hex(struct.pack('<H', self.block_id), 2)
-        
-        # Count
-        num = val_to_hex(struct.pack('<B', len(self.instructions)), 1)
-        
-        data_parts = []
-        for i in self.instructions:
-            i_bytes = struct.pack('<BB', i.opcode, i.index)
-            data_parts.append(val_to_hex(i_bytes, 2)) # Grupowanie po 2
-        
-        data_hex = " ".join(data_parts)
-        
-        return f"#MATH CODE# {h_prefix} {h_id} {num} {data_hex}"
-    
-    def __str__(self) -> str:
-        msgs = []
-        if self.constants:
-            msgs.append(self.get_message_01())
-        msgs.append(self.get_message_02())
-        return "\n".join(msgs)
-
 
 # ==========================================
-# KLASA BLOKU MATH
+# 3. GŁÓWNA KLASA BLOKU MATH
 # ==========================================
 
 class BlockMath(BlockBase):
-    def __init__(self, block_idx: int,  expression: str, in_list: List[DataTypes]= None, global_refs: Optional[Dict[int, Global_reference]] = None,):
+    def __init__(self, 
+                 block_idx: int, 
+                 storage: BlocksStorage,
+                 expression: str,
+                 connections: List[Union[Global, None]] = None,
+                 en: Union[Global, None] = None
+                 ):
         
-        super().__init__(block_idx, BlockTypes.BLOCK_MATH)
-
-        # Input EN (Enable)
-        self.in_data_type_table.append(DataTypes.DATA_B)
-        
-        # User inputs
-        if in_list is None:
-            in_list = []
-        for input_type in in_list:
-            self.in_data_type_table.append(input_type)
-    
-        # Outputs [0]=ENO, [1]=Result
-        self.q_data_type_table.append(DataTypes.DATA_B)
-        self.q_data_type_table.append(DataTypes.DATA_D)
-        if global_refs:
-            for inp_idx, g_ref in global_refs.items():
-                if inp_idx >= 16:
-                    raise ValueError(f"BlockLogic {block_idx}: Global ref idx to high: {inp_idx} (max allowed 16)")
-                self.add_global_connection(inp_idx, g_ref)
-
+        # 1. Parsowanie
         self.parser = MathExpression(expression, block_id=block_idx)
-
-        self.__post_init__()
-
-    def get_extra_data(self) -> str:
-        return str(self.parser)
-
-
-# ==========================================
-# TEST
-# ==========================================
-
-if __name__ == "__main__":
-    try:
-        print("--- TEST BlockMath ---")
-        expr_str = "in_1 * 3.14 + 10"
         
-        # Tworzymy blok z 1 dodatkowym wejściem typu I16 (będzie to Input 1)
+        # 2. Przygotowanie wejść
+        if connections is None: connections = []
+            
+        # Input 0: EN
+        # Input 1..N: Połączenia z connections (mapowane na in_1, in_2...)
+        processed_inputs = [en] + connections
+        
+        # Padding dla brakujących wejść
+        max_in_idx = 0
+        for ins in self.parser.instructions:
+            if ins.opcode == OpCode.VAR and ins.index > max_in_idx:
+                max_in_idx = ins.index
+                
+        if len(processed_inputs) <= max_in_idx:
+             processed_inputs.extend([None] * (max_in_idx - len(processed_inputs) + 1))
+
+        super().__init__(
+            block_idx=block_idx,
+            block_type=BlockType.BLOCK_MATH,
+            storage=storage,
+            inputs=processed_inputs,
+            output_defs=[
+                (DataTypes.DATA_B, []), # Output 0: ENO
+                (DataTypes.DATA_D, [])  # Output 1: Result
+            ]
+        )
+
+    def get_custom_data_packet(self) -> List[bytes]:
+        # ... (Bez zmian: generowanie pakietów Const i Code) ...
+        # (Skopiuj implementację get_custom_data_packet z poprzedniej wersji BlockMath.py)
+        # Pamiętaj o imporcie struct
+        packets = []
+        if self.parser.constants:
+            h1 = self._pack_common_header(0x01)
+            c1 = struct.pack('B', len(self.parser.constants))
+            p1 = bytearray()
+            for c in self.parser.constants: p1.extend(struct.pack('<d', c))
+            packets.append(h1 + c1 + p1)
+
+        if self.parser.instructions:
+            h2 = self._pack_common_header(0x02)
+            c2 = struct.pack('B', len(self.parser.instructions))
+            p2 = bytearray()
+            for i in self.parser.instructions: p2.extend(struct.pack('<BB', i.opcode, i.index))
+            packets.append(h2 + c2 + p2)
+        return packets
+
+    def __str__(self):
+        # ... (Formatowanie z komentarzami - bez zmian) ...
+        # Skopiuj __str__ z poprzedniej wersji
+        base_output = self.get_hex_with_comments()
+        lines = [base_output]
+        custom_pkts = self.get_custom_data_packet()
+        for pkt in custom_pkts:
+            subtype = pkt[2] 
+            hex_str = pkt.hex().upper()
+            if subtype == 0x01: lines.append(f"#ID:{self.block_idx} MATH Const Table# {hex_str}")
+            elif subtype == 0x02: lines.append(f"#ID:{self.block_idx} MATH Instructions# {hex_str}")
+        return "\n".join(lines)
+
+# ==========================================
+# TEST SAMODZIELNY
+# ==========================================
+if __name__ == "__main__":
+    from EmulatorMemory import EmulatorMemory
+    
+    mem_test = EmulatorMemory(1)
+    Global.register_memory(mem_test)
+    
+    try:
+        # Wyrażenie: (in_1 * 3.14) + in_2
+        # Input 1: Zmienna globalna "A" (zakładamy, że istnieje w mem_test symulacyjnie)
+        # Input 2: Zmienna globalna "B"
+        
+        mem_test.add("A", DataTypes.DATA_F, 1.0)
+        mem_test.add("B", DataTypes.DATA_F, 2.0)
+        mem_test.recalculate_indices()
+
         blk = BlockMath(
-            block_idx=1, 
-            in_list=[DataTypes.DATA_I16], 
-            expression=expr_str
+            block_idx=10,
+            mem_blocks=mem_test,
+            expression="in_1 * 3.14 + in_2",
+            en=None,
+            inputs_refs=[Global("A"), Global("B")]
         )
         
+        print("--- TEST BLOCK MATH ---")
         print(blk)
-     
+        
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(f"Error: {e}")

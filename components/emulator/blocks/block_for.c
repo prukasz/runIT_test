@@ -1,185 +1,232 @@
 #include "block_for.h"
 #include "emulator_blocks.h"
 #include "emulator_errors.h"
-#include "utils_global_access.h"
-#include "utils_block_in_q_access.h"
-#include "utils_parse.h"
-#include "math.h"
-#include "float.h"
-#include "string.h"
+#include "emulator_variables_acces.h"
+#include "emulator_blocks_functions_list.h" // Tutaj musi byc deklaracja blocks_functions_table
+#include "emulator_loop.h"
+#include "esp_log.h"
+#include <math.h>
+#include <float.h>
+#include <string.h>
+#include <stdlib.h>
 
 static const char* TAG = "BLOCK_FOR";
-#define START_SETTING_MASK  0b00000001
-#define STOP_SETTING_MASK  0b00000010
-#define STEP_SETTING_MASK   0b00000100
 
 // Zmienne globalne emulatora
 extern block_handle_t **emu_block_struct_execution_list; 
 extern uint16_t emu_loop_iterator;
+extern volatile emu_loop_handle_t loop_handle;
+// Definicje indeksów wejść
+#define BLOCK_FOR_IN_START 1
+#define BLOCK_FOR_IN_STOP  2
+#define BLOCK_FOR_IN_STEP  3
+
+/* ========================================================================= */
+/* LOGIKA WYKONAWCZA                                                         */
+/* ========================================================================= */
 
 emu_result_t block_for(block_handle_t *src) {
-    emu_result_t res = EMU_RESULT_OK();
-    bool EN = false;
-    double en_val = 0;
+    emu_result_t res = {.code = EMU_OK};
+    emu_variable_t var;
+    
+    // 1. Synchronizacja: Sprawdź czy wejścia są gotowe
+    if (!emu_block_check_inputs_updated(src)) {
+        res.code = EMU_ERR_BLOCK_INACTIVE;
+        res.notice = true;
+        res.block_idx = src->cfg.block_idx;
+        return res;
+    }
 
-    if (utils_get_in_val_auto(src, 0, &en_val) == EMU_OK) {
-        EN = (bool)en_val;
-    } else {
-        EN = true; 
+    // 2. Sprawdzenie EN (Enable) - Wejście 0
+    bool EN = true;
+    if (src->cfg.in_connected & 0x01){
+        var = mem_get(src->inputs[0], false);
+        if (var.error == EMU_OK) {
+            EN = (emu_var_to_double(var) > 0.5);
+        }else{
+            EN= false;
+        }
     }
+
     if (!EN) {
-        return res; 
+        res.code = EMU_ERR_BLOCK_INACTIVE;
+        res.notice = true;
+        res.block_idx = src->cfg.block_idx;
+        return res;
     }
-    block_for_handle_t* config = (block_for_handle_t*)src->extras;
-    if (!config) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, src->block_idx); //do we leave it here?
-    double temp_val = 0;
+
+    block_for_handle_t* config = (block_for_handle_t*)src->custom_data;
+    if (!config) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, src->cfg.block_idx);
+
+    
+    // Start Value
     double iterator_start = config->start_val;
-    if(utils_get_in_val_auto(src, BLOCK_FOR_IN_START, &temp_val) == EMU_OK) {
-        iterator_start = temp_val;
+    if (src->cfg.in_cnt > BLOCK_FOR_IN_START && src->inputs[BLOCK_FOR_IN_START]) {
+        var = mem_get(src->inputs[BLOCK_FOR_IN_START], false);
+        if (var.error == EMU_OK) iterator_start = emu_var_to_double(var);
     }
+
+    // End Value
     double limit = config->end_val;
-    if (utils_get_in_val_auto(src, BLOCK_FOR_IN_STOP, &temp_val) == EMU_OK) {
-        limit = temp_val;
+    if (src->cfg.in_cnt > BLOCK_FOR_IN_STOP && src->inputs[BLOCK_FOR_IN_STOP]) {
+        var = mem_get(src->inputs[BLOCK_FOR_IN_STOP], false);
+        if (var.error == EMU_OK) limit = emu_var_to_double(var);
     }
+
+    // Step Value
     double step = config->op_step;
-    if (utils_get_in_val_auto(src, BLOCK_FOR_IN_STEP, &temp_val) == EMU_OK) {
-        step = temp_val;
+    if (src->cfg.in_cnt > BLOCK_FOR_IN_STEP && src->inputs[BLOCK_FOR_IN_STEP]) {
+        var = mem_get(src->inputs[BLOCK_FOR_IN_STEP], false);
+        if (var.error == EMU_OK) step = emu_var_to_double(var);
     }
-    LOG_I(TAG, "[%d] For Loop: Start=%.2f, Limit=%.2f, Step=%.2f", src->block_idx, iterator_start, limit, step);
+
+    // 4. Inicjalizacja pętli
     double current_val = iterator_start;
     uint16_t watchdog = 0;
+
+    LOG_I(TAG, "FOR [%d] Start: %.2f End: %.2f Step: %.2f", src->cfg.block_idx, iterator_start, limit, step);
+
     while(1) {
         bool condition_met = false;
+        if(loop_handle->wtd.wtd_triggered){
+            return EMU_RESULT_CRITICAL(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx);
+        }
         
-        // Sprawdzenie warunku
+        // Sprawdzenie warunku końca
         switch (config->condition) {
             case FOR_COND_GT:  condition_met = (current_val > (limit + DBL_EPSILON)); break;
             case FOR_COND_LT:  condition_met = (current_val < (limit - DBL_EPSILON)); break;
             case FOR_COND_GTE: condition_met = (current_val >= (limit - DBL_EPSILON)); break;
             case FOR_COND_LTE: condition_met = (current_val <= (limit + DBL_EPSILON)); break;
-            default: condition_met = false; break;
+            default: break;
         }
 
         if (!condition_met) break;
 
-        // Watchdog
-        watchdog++;
-        if (watchdog > BLOCK_FOR_MAX_CYCLES) {
-            LOG_W(TAG, "[%d] Max cycles exceeded!", src->block_idx);
-            return EMU_RESULT_WARN(EMU_ERR_BLOCK_FOR_TIMEOUT, src->block_idx);
+        // Zabezpieczenie (Watchdog)
+        if (++watchdog > 1000) { 
+            ESP_LOGW(TAG, "[%d] Watchdog triggered! Cycles > 1000", src->cfg.block_idx);
+            return EMU_RESULT_WARN(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx);
         }
-        utils_set_q_val(src, 0, &EN); 
-        utils_set_q_val(src, 1, &current_val); 
-        block_pass_results(src); 
 
+        // Ustawienie wyjść bloku FOR (dostępne dla dzieci w tej iteracji)
+        // Q0 = EN (True)
+        emu_variable_t v_en = { .type = DATA_B, .data.b = true };
+        emu_block_set_output(src, &v_en, 0);
+
+        // Q1 = Iterator (Double)
+        emu_variable_t v_iter = { .type = DATA_D, .data.d = current_val };
+        emu_block_set_output(src, &v_iter, 1);
+        LOG_I(TAG, "executing next time");
+        // --- WYKONANIE ŁAŃCUCHA BLOKÓW (CHILDREN) ---
         for (uint16_t b = 1; b <= config->chain_len; b++) {
-            emu_block_struct_execution_list[src->block_idx + b]->in_set = 0;
+            // Pobieramy dziecko z listy globalnej (następne indeksy po FOR)
+            block_handle_t* child = emu_block_struct_execution_list[src->cfg.block_idx + b];
+            
+            if (child) {
+                emu_block_reset_outputs_status(child);
+                uint8_t child_type = child->cfg.block_type;
+                emu_block_func child_func = blocks_functions_table[child_type];
+                if (child_func) {
+                    res = child_func(child);
+                    if (res.code != EMU_OK && res.code != EMU_ERR_BLOCK_INACTIVE) return res;
+                }
+            }
         }
 
-        for (uint16_t b = 1; b <= config->chain_len; b++) {
-            block_handle_t* child = emu_block_struct_execution_list[src->block_idx + b];
-                res = child->block_function(child);
-                if (res.code != EMU_OK) {return res;}
-        }
-
+        // Aktualizacja licznika pętli
         switch(config->op) {
             case FOR_OP_ADD: current_val += step; break;
             case FOR_OP_SUB: current_val -= step; break;
             case FOR_OP_MUL: current_val *= step; break;
             case FOR_OP_DIV: 
-                if (fabs(step) > DBL_EPSILON) {current_val /= step;} 
+                if (fabs(step) > DBL_EPSILON) current_val /= step; 
                 break;
         }
     }
+
     emu_loop_iterator += config->chain_len;
     return res;
 }
 
-/*************************************************************************************** 
-                                    PARSER
-
-*************************************************************************************** */
-
-static emu_err_t _emu_parse_for_doubles(uint8_t *data, uint16_t len, block_for_handle_t* handle);
-static emu_err_t _emu_parse_for_config(uint8_t *data, uint16_t len, block_for_handle_t* handle);
+/* ========================================================================= */
+/* PARSER                                                                    */
+/* ========================================================================= */
 
 #define CONST_PACKET 0x01
 #define CONFIG_PACKET 0x02
 
-emu_result_t emu_parse_block_for(chr_msg_buffer_t *source, uint16_t block_idx)
-{
-    emu_result_t res = {.code = EMU_OK};
+static emu_err_t _emu_parse_for_doubles(uint8_t *data, uint16_t len, block_for_handle_t* handle) { 
+    LOG_I(TAG, "Parsing for doubles");
+    if (len < 29) return EMU_ERR_INVALID_DATA; // 5 + 3*8
+    size_t offset = 5; 
+    
+    // Używamy memcpy dla bezpieczeństwa przy braku wyrównania pamięci
+    memcpy(&handle->start_val, &data[offset], 8); offset += 8;
+    memcpy(&handle->end_val,   &data[offset], 8); offset += 8;
+    memcpy(&handle->op_step,   &data[offset], 8);
+    
+    return EMU_OK;
+}
+
+static emu_err_t _emu_parse_for_config(uint8_t *data, uint16_t len, block_for_handle_t* handle) {
+    LOG_I(TAG, "Parsing for config");
+    if (len < 9) return EMU_ERR_INVALID_DATA;
+    size_t offset = 5;
+    
+    memcpy(&handle->chain_len, &data[offset], 2); 
+    offset += 2;
+    
+    handle->condition = (block_for_condition_t)data[offset++];
+    handle->op = (block_for_operator_t)data[offset++];
+    
+    return EMU_OK;
+}
+
+emu_result_t emu_parse_block_for(chr_msg_buffer_t *source, block_handle_t *block) {
+    LOG_I(TAG, "Parsing block for");
+    if (!block) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0);
+
+    emu_result_t res = {.code = EMU_OK, .block_idx = block->cfg.block_idx};
     uint8_t *data;
     size_t len;
-    block_handle_t *block_ptr;
     size_t buff_size = chr_msg_buffer_size(source);
-    size_t search_idx = 0;
+    
+    uint16_t target_idx = block->cfg.block_idx;
 
-    while(search_idx < buff_size)
-    {
-        chr_msg_buffer_get(source, search_idx, &data, &len);
+    for (size_t i = 0; i < buff_size; i++) {
+        chr_msg_buffer_get(source, i, &data, &len);
 
-        if (data[0] == 0xbb && data[1] == BLOCK_FOR && (READ_U16(data, 3)==block_idx))
-        {
-            uint16_t block_idx = READ_U16(data, 3);
-            block_ptr = emu_block_struct_execution_list[block_idx];
-            if (block_ptr->extras == NULL) {
-                block_ptr->extras = calloc(1, sizeof(block_for_handle_t));
-                if (!block_ptr->extras) {
-                    res.code = EMU_ERR_NO_MEM;
-                    res.restart = true;
-                    return res;
+        // Header check: [BB] [Type] [SubType] [ID:2]
+        if (len > 3 && data[0] == 0xBB && data[1] == BLOCK_FOR) {
+            
+            uint16_t packet_blk_id;
+            memcpy(&packet_blk_id, &data[3], 2);
+
+            if (packet_blk_id == target_idx) {
+                
+                // Alokacja custom_data jeśli nie istnieje
+                if (block->custom_data == NULL) {
+                    block->custom_data = calloc(1, sizeof(block_for_handle_t));
+                    if (!block->custom_data) {
+                        return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, target_idx);
+                    }
                 }
+                
+                block_for_handle_t* handle = (block_for_handle_t*)block->custom_data;
+
+                if (data[2] == CONST_PACKET) { 
+                    _emu_parse_for_doubles(data, len, handle);
+                }
+                else if (data[2] == CONFIG_PACKET) {
+                    _emu_parse_for_config(data, len, handle);
+                }  
             }
-            block_for_handle_t* handle = (block_for_handle_t*)block_ptr->extras;
-
-            if (data[2] == CONST_PACKET) { 
-                if (_emu_parse_for_doubles(data, len, handle) != EMU_OK) {
-                    res.code = EMU_ERR_INVALID_DATA;
-                    res.restart = true;
-                    return res;
-                }
-            }
-            else if (data[2] == CONFIG_PACKET) {
-                if (_emu_parse_for_config(data, len, handle) != EMU_OK) {
-                    res.code = EMU_ERR_INVALID_DATA;
-                    res.restart = true;
-                    return res;
-                }
-            }  
-            search_idx++;
-        }
-        else {
-            search_idx++;
         }
     }
     return res;
 }
 
-// Helper: Parsowanie Double (Start, End, Step) - MSG TYPE 0x01
-// Format: [Header:5] + [Start:8] + [End:8] + [Step:8]
-static emu_err_t _emu_parse_for_doubles(uint8_t *data, uint16_t len, block_for_handle_t* handle)
-{  
-    size_t offset = 5; 
-    memcpy(&handle->start_val, &data[offset], sizeof(double));
-    offset += sizeof(double);
-    
-    memcpy(&handle->end_val, &data[offset], sizeof(double));
-    offset += sizeof(double);
-    
-    memcpy(&handle->op_step, &data[offset], sizeof(double));
-    LOG_I(TAG, "Start: %lf, End: %lf, Step: %lf", handle->start_val, handle->end_val, handle->op_step);
-    return EMU_OK;
-}
+void emu_parse_block_for_free(block_handle_t *block) {
 
-// Helper: Parsowanie Config (Chain, Cond, Op, Mask) - MSG TYPE 0x02
-// Format: [Header:5] + [Chain:2] + [Cond:1] + [Op:1] + [Mask:1]
-static emu_err_t _emu_parse_for_config(uint8_t *data, uint16_t len, block_for_handle_t* handle)
-{
-    size_t offset = 5;
-    handle->chain_len = READ_U16(data, offset);
-    offset += 2;
-    handle->condition = (block_for_condition_t)data[offset++];
-    handle->op = (block_for_operator_t)data[offset++];
-    return EMU_OK;
 }

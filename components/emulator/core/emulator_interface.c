@@ -8,182 +8,186 @@
 #include "emulator_blocks.h"
 #include "emulator_loop.h"
 #include "emulator_variables.h"
+#include "emulator_variables_acces.h"
 #include "emulator_types.h"
 #include "emulator_parse.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 
-static const char * TAG = "EMULATOR INTERFACE";
+static const char * TAG = "EMU_INTERFACE";
 
-/********************************************/
-/**
-*@brief Data source for parsers 
-*/
-chr_msg_buffer_t *source;
-/**
- * @brief Global emulatr memory struct
- */
-emu_mem_t mem;
-/********************************************/
+/* DATA SOURCES & GLOBALS */
+chr_msg_buffer_t *source = NULL; // Source buffer pointer
 
-
-/**********************************************************************/
-/**
- * @brief This queue is used in ble callback to give orders
- */
+/* ORDERS QUEUE */
 QueueHandle_t emu_interface_orders_queue;
-/**********************************************************************/
 
-/***************************************************************************/
-/*             Functions that are executed when order comes in             */
+/* EXTERNS */
+extern block_handle_t **emu_block_struct_execution_list;
+extern uint16_t emu_block_total_cnt;
 
+/* INTERNAL STATE */
+volatile emu_loop_handle_t loop_handle = NULL;
+
+/* FORWARD DECLARATIONS */
 static emu_loop_handle_t _interface_execute_loop_init(uint64_t period_us);
 static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t loop_handle);
 static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t loop_handle);
 
-/***************************************************************************/
-
-extern block_handle_t **emu_block_struct_execution_list;
-extern uint16_t emu_block_total_cnt;
-
-emu_loop_handle_t loop_handle = NULL;
+/* ============================================================================
+    MAIN INTERFACE TASK
+   ============================================================================ */
 
 void emu_interface_task(void* params){
     emu_result_t res = {.code = EMU_OK};
 
-    ESP_LOGI(TAG, "Emulator interface task created");
-    emu_interface_orders_queue  = xQueueCreate(5, sizeof(emu_order_t));
-    static emu_order_t orders;
-    res = emu_parse_manager(PARSE_RESTART);
+    ESP_LOGI(TAG, "Emulator interface task started");
+    
+    // Create Queue
+    emu_interface_orders_queue = xQueueCreate(10, sizeof(emu_order_t));
+    if (!emu_interface_orders_queue) {
+        ESP_LOGE(TAG, "Failed to create orders queue");
+        vTaskDelete(NULL);
+    }
+
+    static emu_order_t current_order;
+    
+    // Initial Reset
+    emu_parse_manager(PARSE_RESTART);
+    emu_refs_system_init(1000, 5000);
+
     while(1){
-        if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &orders, portMAX_DELAY)){
-            ESP_LOGI(TAG, "Received order: 0x%04X" , orders);
-            switch (orders){    
+        if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &current_order, portMAX_DELAY)){
+            
+            ESP_LOGD(TAG, "Processing order: 0x%04X", current_order);
+            
+            switch (current_order){    
+                
+                // --- 1. VARIABLES (GLOBAL & BLOCK OUTPUTS) ---
                 case ORD_PARSE_VARIABLES:
+                    // Allocate memory contexts (Globals=0, Blocks=1, etc.)
+                    // Packet: [H_SIZES] [CtxID] ...
                     res = emu_parse_manager(PARSE_CREATE_VARIABLES);
                     break;
+
                 case ORD_PARSE_INTO_VARIABLES:
+                    // Fill values into allocated memory
+                    // Can be called multiple times
                     res = emu_parse_manager(PARSE_FILL_VARIABLES);
-                    break;             
-                case ORD_EMU_LOOP_START:
-                    
-                    _interface_execute_loop_start_execution(loop_handle);
-                    //add here check if code can be run
+                    break;            
+
+                // --- 2. BLOCKS ---
+                case ORD_EMU_CREATE_BLOCK_LIST:
+                    // Parse total count [B000] and allocate pointer array
+                    res = emu_parse_manager(PARSE_CREATE_BLOCKS_LIST);
                     break;
+
+                case ORD_EMU_CREATE_BLOCKS:
+                    // Parse config [BB 00] and allocate structs + configure inputs/outputs
+                    res = emu_parse_manager(PARSE_CREATE_BLOCKS);
+                    break;
+                case ORD_EMU_FILL_BLOCKS:
+                    // Parse custom data [BB 01/02] (Math/Logic/For etc.)
+                    // Can be called multiple times
+                    res = emu_parse_manager(PARSE_FILL_BLOCKS);
+                    break;
+
+                // --- 3. LOOP CONTROL ---
                 case ORD_EMU_LOOP_INIT:
-                    loop_handle = _interface_execute_loop_init(1000000);
-                    if(!loop_handle)
-                    {
-                        ESP_LOGE(TAG, "While creating loop error");
+                    // Check if ready and init timer
+                    if (loop_handle) {
+                        ESP_LOGW(TAG, "Loop already initialized");
+                    } else {
+                        loop_handle = _interface_execute_loop_init(1000); // 1s default
                     }
+                    break;
+
+                case ORD_EMU_LOOP_START:
+                    _interface_execute_loop_start_execution(loop_handle);
                     break;
 
                 case ORD_EMU_LOOP_STOP:
                     _interface_execute_loop_stop_execution(loop_handle);
                     break;
 
-                    case ORD_RESET_ALL: 
+                // --- 4. UTILITY ---
+                case ORD_RESET_ALL: 
+                    ESP_LOGI(TAG, "RESET ALL ORDER");
                     _interface_execute_loop_stop_execution(loop_handle);
+                    loop_handle = NULL;
+                    
                     chr_msg_buffer_clear(source);
-                    emu_variables_reset(&mem);
+                    
+                    // Free Blocks
                     emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
-                    emu_block_total_cnt = 0 ;
-                
+                    emu_block_struct_execution_list = NULL;
+                    emu_block_total_cnt = 0;
+                    
+                    // Free Memory Contexts (Helper needed or manual loop)
+                    // TODO: Iterate and free s_mem_contexts
+                    
                     res = emu_parse_manager(PARSE_RESTART);
                     break;
+
                 case ORD_RESET_BLOCKS:
+                    _interface_execute_loop_stop_execution(loop_handle);
                     emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
+                    emu_block_struct_execution_list = NULL;
                     emu_block_total_cnt = 0;
+                    // Also restart parser block stage?
                     break;
+
                 case ORD_RESET_MGS_BUF:
                     ESP_LOGI(TAG, "Clearing Msg buffer");   
                     chr_msg_buffer_clear(source);
                     break;
-                case ORD_EMU_CREATE_BLOCK_LIST:
-                    res = emu_parse_manager(PARSE_CREATE_BLOCKS_LIST);
-                    break;
-                case ORD_EMU_CREATE_BLOCKS:
-                    res = emu_parse_manager(PARSE_CREATE_BLOCKS);
-                    break;
-                case ORD_EMU_FILL_BLOCKS:
-                    res =emu_parse_manager(PARSE_FILL_BLOCKS);
-                    break;
+
                 default:
-                    // Unknown order
+                    ESP_LOGW(TAG, "Unknown order: 0x%04X", current_order);
                     break;
+            }
+
+            if (res.code != EMU_OK && res.abort) {
+                ESP_LOGE(TAG, "Order 0x%04X failed: %d", current_order, res.code);
             }
         }
     }
-};
-
-
-/**
-*@brief Execute order from user: Start loop execution cycle
-*/
-static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t loop_handle){
-    emu_result_t res = {.code = EMU_OK};
-    if (!loop_handle){
-        LOG_E(TAG, "No loop handle provided");
-        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF);
-    }
-    res = emu_loop_start(loop_handle);
-    if(res.code!=EMU_OK){
-        ESP_LOGE(TAG, "While starting loop error: %s", EMU_ERR_TO_STR(res.code));
-        return res;
-    }
-    return res;
-}  
-
-/**
-*@brief Execute order from user: Stop loop execution cycle 
-*/
-static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t loop_handle){
-    emu_result_t res = {.code = EMU_OK};
-    if (!loop_handle){
-        LOG_E(TAG, "No loop handle provided");
-        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF);
-    }
-    res = emu_loop_stop(loop_handle);
-    if(res.code!=EMU_OK){
-        LOG_E(TAG, "While stopping loop error: %s", EMU_ERR_TO_STR(res.code));
-        return res;
-    }
-    return res;
-}   //stop and preserve state (stops after loop ends)
-
-
-
-/**
-*@brief Execute order from user: Create loop timer and emulator body 
-*/
-static emu_loop_handle_t _interface_execute_loop_init(uint64_t period_us){
-    emu_result_t res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
-    if(res.code==EMU_OK){
-        emu_loop_handle_t loop_handle = emu_loop_init(period_us);
-        if (!loop_handle){
-            ESP_LOGE(TAG, "While creating loop error");
-            return NULL;
-        }
-        return loop_handle;
-    }else{
-        ESP_LOGE(TAG, "Can't init loop, first parse code");
-        return NULL;
-    }
-    return NULL;
-}   
-
-
-/** 
-* @brief Add source of data for parser
-*/
-emu_result_t emu_parse_source_add(chr_msg_buffer_t * msg){
-    emu_result_t res = {.code = EMU_OK};
-    if (NULL==msg){
-        ESP_LOGW(TAG, "No buffer provided to assign");
-        res.code = EMU_ERR_NULL_PTR;
-        res.warning = true;
-        return res;   
-    }
-    source = msg;
-    return res;
 }
 
+/* ============================================================================
+    HELPER FUNCTIONS
+   ============================================================================ */
+
+static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t loop_handle){
+    if (!loop_handle) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0);
+    return emu_loop_start(loop_handle);
+}  
+
+static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t loop_handle){
+    if (!loop_handle) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0);
+    return emu_loop_stop(loop_handle);
+}   
+
+static emu_loop_handle_t _interface_execute_loop_init(uint64_t period_us){
+    // 1. Verify if system is ready (parsed & linked)
+    emu_result_t res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
+    
+    if(res.code == EMU_OK){
+        emu_loop_handle_t h = emu_loop_init(period_us);
+        if (!h) {
+            ESP_LOGE(TAG, "Loop init failed");
+            return NULL;
+        }
+        ESP_LOGI(TAG, "Loop initialized");
+        return h;
+    } else {
+        ESP_LOGE(TAG, "Cannot init loop: System not ready/parsed");
+        return NULL;
+    }
+}   
+
+emu_result_t emu_parse_source_add(chr_msg_buffer_t * msg){
+    if (!msg) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0);
+    source = msg;
+    return EMU_RESULT_OK();
+}

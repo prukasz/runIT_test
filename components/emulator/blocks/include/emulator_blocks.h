@@ -2,82 +2,46 @@
 #include "emulator_types.h"
 #include "emulator_interface.h"
 #include "emulator_variables.h"
-#include "utils_global_access.h"
 
-#define SET_BIT16N(var, n)   ((var) |= (uint16_t)(1U << (n)))
-#define _MASK_LEN(n)      ((uint16_t)((1U << (n)) - 1))
-#define GET_LOWER_N(val, n)  ((val) & _MASK_LEN(n))
-#define CHECK_ALL_N(val, n)  (GET_LOWER_N(val, n) == _MASK_LEN(n))
+typedef struct{
+    __attribute((packed))struct{
+        uint16_t block_idx;
+        uint8_t block_type;  
+        uint16_t in_connected;
+        uint8_t in_cnt;      //total inputs count
+        uint8_t q_cnt;       //total outputs count
+    }cfg;
+    void *custom_data; //block specific instructions
+    void **inputs;  // mem_acces_s_t | mem_acces_arr_t
+    emu_mem_instance_iter_t *outputs; // emu_mem_instance_s_t | emu_mem_instance_arr_t
+}block_handle_t;
 
-/**
- * @brief struct handling inputs and outputs one block
-*/  
-typedef struct _block_handle_s block_handle_t;
 
-/*block specific function pointer*/
 typedef emu_result_t (*emu_block_func)(block_handle_t *block);
-
-/*
-* this is list of blocks and it's inputs thatat one output is connected to
-* lists are size of conn_cnt
-*/
-typedef struct {
-    uint16_t* target_blocks_id_list;  //it's pair of block id and it's input number
-    uint8_t*  target_inputs_list;
-    uint8_t   conn_cnt;
-    uint8_t   in_visited;
-} q_connection_t;
+typedef emu_result_t (*emu_block_parse_func)(chr_msg_buffer_t *source, block_handle_t *block);
+typedef void (*emu_block_free_func)(block_handle_t *block);
 
 
 
-struct _block_handle_s{
-    void*           extras;  /*block specific data*/
-    uint8_t global_reference_cnt;
-    global_acces_t   **global_reference;
-    /*we do not use datatype t as it is int16*/
-    uint8_t*   in_data_type_table; /*array of input datatypes (in order)*/
-    void*           in_data;            /*array for all input data*/
-    uint8_t*        in_data_offsets;    /*offsets relative to in_data in bytes*/
-    /*we do not use datatype t as it is int16*/
-    uint8_t*   q_data_type_table;  /*array of outputs datatypes (in order)*/ 
-    void*           q_data;             /*array for all output data*/
-    uint8_t*        q_data_offsets;     /*offsets relative to q_data in bytes*/
-
-    q_connection_t* q_connections_table; /*reference to all block connections*/
-    emu_block_func block_function; /*block function assignent*/
-
-    uint16_t block_idx;          /*id of block (struct)*/
-    block_type_t block_type;    /*type of block (function)*/
-
-    uint8_t in_cnt;             /*count of inputs*/
-    uint16_t in_set;             /*count of outputs*/
-    uint16_t in_used;
-    uint16_t in_global_used;
-
-    uint8_t q_cnt;              /*flags (for debug)*/
-    uint16_t q_set;              /*flags (for debug)*/
-
-    bool is_executed;           /*has block been executed*/
-};
-
+emu_result_t emu_block_set_output(block_handle_t *block, emu_variable_t *var, uint8_t num);
+bool emu_block_check_inputs_updated(block_handle_t *block);
+void emu_block_reset_outputs_status(block_handle_t *block);
 
 /**
- * @brief Pass results from outputs of block to all connected inputs
- */
-void block_pass_results(block_handle_t*  block);
+*@brief free all structs
+*/
+void emu_blocks_free_all(block_handle_t **block_structs, uint16_t num_blocks); 
 
 /**
-*@brief free all structs and functions from functions table
+*@brief free selected block
 */
-void emu_blocks_free_all(block_handle_t ** block_structs, uint16_t num_blocks); 
-
+void emu_block_free(block_handle_t *block);
 
 /**
  *@brief Read total count of blocks
  */
-emu_result_t emu_parse_total_block_cnt(chr_msg_buffer_t *source);
-
+emu_result_t emu_parse_total_block_cnt(chr_msg_buffer_t *source, block_handle_t ***blocks_list, uint16_t *blocks_total_cnt);
 /**
- *@brief Parse universal blocks structs (in cnt q cnt, global conncetionns.... )
+ *@brief Parse and create block
  */
 emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt);

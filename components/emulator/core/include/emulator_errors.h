@@ -51,6 +51,8 @@ typedef enum {
     EMU_ERR_MEM_OUT_OF_BOUNDS       = 0xF004,
     EMU_ERR_MEM_INVALID_DATATYPE    = 0xF005,
     EMU_ERR_NULL_PTR                = 0xF006,
+    EMU_ERR_MEM_INVALID_REF_ID      = 0xF007,
+
 
     /* --------------------------
      * BLOCK SPECIFIC ERRORS (0xB...)
@@ -67,6 +69,8 @@ typedef enum {
     EMU_ERR_BLOCK_USE_INTERNAL_VAR  = 0xB009,
     EMU_ERR_BLOCK_INACTIVE          = 0xB00A,
 
+    EMU_ERR_PACKET_INCOMPLETE, 
+    EMU_ERR_PACKET_NOT_FOUND,
 } emu_err_t;
 
 typedef struct {

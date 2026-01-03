@@ -14,9 +14,8 @@
 typedef struct {
     uint8_t loops_skipped;
     uint8_t max_skipp; 
-    uint8_t wtd_triggered :1;
-    uint8_t wtd_active    :1;
-    uint8_t reserved      :6;
+    volatile bool wtd_triggered ;
+    bool wtd_active    ;
 } emu_wtd_t;
 
 typedef struct {
