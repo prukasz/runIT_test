@@ -24,7 +24,6 @@ typedef enum{
 
 
 
-
 /**
  * @brief Use this function to invoke parsing of certain part of code
  * @note Also can check status of parsing

@@ -231,7 +231,7 @@ async def main():
                 print("Failed to send:", e)
 
             msg_num += 1
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
 
 
 if __name__ == "__main__":

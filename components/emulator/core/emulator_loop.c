@@ -69,7 +69,6 @@ emu_loop_handle_t emu_loop_init(uint64_t period_us){
         .dispatch_method = ESP_TIMER_ISR
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &ctx->timer.timer_handle));
-    xSemaphoreGive(ctx->sem_loop_wtd);
     return (emu_loop_handle_t)ctx;
 }
 
@@ -108,6 +107,7 @@ emu_result_t emu_loop_start(emu_loop_handle_t handle){
         return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF);
     }
     if (should_start_timer) {
+        xSemaphoreTake(ctx->sem_loop_wtd, 0);
         xSemaphoreGive(ctx->sem_loop_start);
         /* Start the hardware timer */
         esp_timer_start_periodic(ctx->timer.timer_handle, ctx->timer.loop_period);

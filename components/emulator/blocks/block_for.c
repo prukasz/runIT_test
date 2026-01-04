@@ -25,71 +25,71 @@ extern volatile emu_loop_handle_t loop_handle;
 /* LOGIKA WYKONAWCZA                                                         */
 /* ========================================================================= */
 
-emu_result_t block_for(block_handle_t *src) {
+emu_result_t block_for(block_handle_t *block) {
     emu_result_t res = {.code = EMU_OK};
     emu_variable_t var;
     
     // 1. Synchronizacja: Sprawdź czy wejścia są gotowe
-    if (!emu_block_check_inputs_updated(src)) {
+    if (!emu_block_check_inputs_updated(block)) {
         res.code = EMU_ERR_BLOCK_INACTIVE;
         res.notice = true;
-        res.block_idx = src->cfg.block_idx;
+        res.block_idx = block->cfg.block_idx;
         return res;
     }
 
-    // 2. Sprawdzenie EN (Enable) - Wejście 0
-    bool EN = true;
-    if (src->cfg.in_connected & 0x01){
-        var = mem_get(src->inputs[0], false);
-        if (var.error == EMU_OK) {
-            EN = (emu_var_to_double(var) > 0.5);
+    bool EN = true; 
+    if (block->inputs[0]){
+        var = mem_get(block->inputs[BLOCK_TIMER_IN_EN], BLOCK_TIMER_IN_EN);
+        if (likely(var.error == EMU_OK)) {
+            EN = (bool)emu_var_to_double(var);
         }else{
-            EN= false;
+            res.code = EMU_ERR_BLOCK_INACTIVE;
+            res.notice = true;
+            res.block_idx = block->cfg.block_idx;
+            return res;
         }
-    }
 
-    if (!EN) {
+    }
+    if(!EN){
         res.code = EMU_ERR_BLOCK_INACTIVE;
         res.notice = true;
-        res.block_idx = src->cfg.block_idx;
+        res.block_idx = block->cfg.block_idx;
         return res;
     }
 
-    block_for_handle_t* config = (block_for_handle_t*)src->custom_data;
-    if (!config) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, src->cfg.block_idx);
 
-    
+    block_for_handle_t* config = (block_for_handle_t*)block->custom_data;
+    if (unlikely(!config)) {return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx);}
+
     // Start Value
     double iterator_start = config->start_val;
-    if (src->cfg.in_cnt > BLOCK_FOR_IN_START && src->inputs[BLOCK_FOR_IN_START]) {
-        var = mem_get(src->inputs[BLOCK_FOR_IN_START], false);
-        if (var.error == EMU_OK) iterator_start = emu_var_to_double(var);
+    if (block->inputs[BLOCK_FOR_IN_START]) {
+        var = mem_get(block->inputs[BLOCK_FOR_IN_START], false);
+        if (likely(var.error == EMU_OK)) {iterator_start = emu_var_to_double(var);}
     }
 
-    // End Value
     double limit = config->end_val;
-    if (src->cfg.in_cnt > BLOCK_FOR_IN_STOP && src->inputs[BLOCK_FOR_IN_STOP]) {
-        var = mem_get(src->inputs[BLOCK_FOR_IN_STOP], false);
-        if (var.error == EMU_OK) limit = emu_var_to_double(var);
+    if (block->inputs[BLOCK_FOR_IN_STOP]) {
+        var = mem_get(block->inputs[BLOCK_FOR_IN_STOP], false);
+        if (likely(var.error == EMU_OK)) {limit = emu_var_to_double(var);}
     }
 
     // Step Value
     double step = config->op_step;
-    if (src->cfg.in_cnt > BLOCK_FOR_IN_STEP && src->inputs[BLOCK_FOR_IN_STEP]) {
-        var = mem_get(src->inputs[BLOCK_FOR_IN_STEP], false);
-        if (var.error == EMU_OK) step = emu_var_to_double(var);
+    if (block->inputs[BLOCK_FOR_IN_STEP]) {
+        var = mem_get(block->inputs[BLOCK_FOR_IN_STEP], false);
+        if (likely(var.error == EMU_OK)) {step = emu_var_to_double(var);}
     }
 
-    // 4. Inicjalizacja pętli
     double current_val = iterator_start;
     uint16_t watchdog = 0;
 
-    LOG_I(TAG, "FOR [%d] Start: %.2f End: %.2f Step: %.2f", src->cfg.block_idx, iterator_start, limit, step);
+    LOG_I(TAG, "FOR [%d] Start: %.2f End: %.2f Step: %.2f", block->cfg.block_idx, iterator_start, limit, step);
 
     while(1) {
         bool condition_met = false;
         if(loop_handle->wtd.wtd_triggered){
-            return EMU_RESULT_CRITICAL(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx);
+            return EMU_RESULT_CRITICAL(EMU_ERR_BLOCK_FOR_TIMEOUT, block->cfg.block_idx);
         }
         
         // Sprawdzenie warunku końca
@@ -103,34 +103,26 @@ emu_result_t block_for(block_handle_t *src) {
 
         if (!condition_met) break;
 
-        // Zabezpieczenie (Watchdog)
-        if (++watchdog > 1000) { 
-            ESP_LOGW(TAG, "[%d] Watchdog triggered! Cycles > 1000", src->cfg.block_idx);
-            return EMU_RESULT_WARN(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx);
-        }
-
         // Ustawienie wyjść bloku FOR (dostępne dla dzieci w tej iteracji)
         // Q0 = EN (True)
         emu_variable_t v_en = { .type = DATA_B, .data.b = true };
-        emu_block_set_output(src, &v_en, 0);
+        emu_block_set_output(block, &v_en, 0);
 
         // Q1 = Iterator (Double)
         emu_variable_t v_iter = { .type = DATA_D, .data.d = current_val };
-        emu_block_set_output(src, &v_iter, 1);
-        LOG_I(TAG, "executing next time");
-        // --- WYKONANIE ŁAŃCUCHA BLOKÓW (CHILDREN) ---
+        emu_block_set_output(block, &v_iter, 1);
+        LOG_I(TAG, "executing loop[%d] time", watchdog);
+
         for (uint16_t b = 1; b <= config->chain_len; b++) {
             // Pobieramy dziecko z listy globalnej (następne indeksy po FOR)
-            block_handle_t* child = emu_block_struct_execution_list[src->cfg.block_idx + b];
+            block_handle_t* child = emu_block_struct_execution_list[block->cfg.block_idx + b];
             
-            if (child) {
-                emu_block_reset_outputs_status(child);
-                uint8_t child_type = child->cfg.block_type;
-                emu_block_func child_func = blocks_functions_table[child_type];
-                if (child_func) {
-                    res = child_func(child);
-                    if (res.code != EMU_OK && res.code != EMU_ERR_BLOCK_INACTIVE) return res;
-                }
+            emu_block_reset_outputs_status(child);
+            uint8_t child_type = child->cfg.block_type;
+            emu_block_func child_func = blocks_functions_table[child_type];
+            if (likely(child_func)) {
+                res = child_func(child);
+                if (unlikely(res.code != EMU_OK && res.code != EMU_ERR_BLOCK_INACTIVE)) {return res;}
             }
         }
 

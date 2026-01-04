@@ -213,15 +213,25 @@ emu_result_t block_math(block_handle_t* block){
     }
     
     emu_variable_t var;
-    bool EN = true;
-    if (block->cfg.in_connected & 0x01){
-        var = mem_get(block->inputs[0], false);
-        if (var.error == EMU_OK) {
-            EN = (emu_var_to_double(var) > 0.5);
+    bool EN = true; 
+    if (block->inputs[0]){
+        var = mem_get(block->inputs[0], 0);
+        if (likely(var.error == EMU_OK)) {
+            EN = (bool)emu_var_to_double(var);
         }else{
-            EN = false;
+            res.code = EMU_ERR_BLOCK_INACTIVE;
+            res.notice = true;
+            res.block_idx = block->cfg.block_idx;
+            return res;
         }
     }
+    if(!EN){
+        res.code = EMU_ERR_BLOCK_INACTIVE;
+        res.notice = true;
+        res.block_idx = block->cfg.block_idx;
+        return res;
+    }
+
 
     expression_t* eval = (expression_t*)block->custom_data;
     double stack[16];

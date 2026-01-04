@@ -6,13 +6,8 @@ Specific enums used in emulator code
 ******************************************/
 #define likely(x)      __builtin_expect(!!(x), 1)
 #define unlikely(x)    __builtin_expect(!!(x), 0)
-/**
- * @brief block type identifier (what block does)
- */
-typedef enum {
-    BLOCK_PASS_IN_OUT = 0x00,
-    BLOCK_PASS_GLOBAL = 0xFA,
-}block_special_packet_t;
+
+
 
 /**
 * @brief Data types used within emulator
@@ -57,23 +52,31 @@ extern const char *DATA_TYPE_TO_STR[9];
 * @brief Orders for emulator interface to execute
 */
 typedef enum {
-    ORD_STOP_BYTES        = 0x0000,    
-    ORD_START_BYTES       = 0xFFFF,
-    ORD_PARSE_INTO_VARIABLES    = 0xDDDD,
-    ORD_START_BLOCKS      = 0x00FF,
-    ORD_H_VARIABLES       = 0xFF00,
-    ORD_PARSE_VARIABLES = 0xEEEE,
-    ORD_RESET_ALL         = 0x0001, 
-    ORD_RESET_BLOCKS      = 0x0002,
-    ORD_RESET_MGS_BUF     = 0x0003, 
-    ORD_PROCESS_CODE      = 0x0020,
-    ORD_CHECK_CODE        = 0x0030,
-    ORD_EMU_LOOP_START      = 0x1000,
-    ORD_EMU_LOOP_STOP     = 0x2000,
-    ORD_EMU_LOOP_INIT     = 0x2137,
-    ORD_EMU_CREATE_BLOCK_LIST = 0xb100,
-    ORD_EMU_CREATE_BLOCKS     = 0xb200,
-    ORD_EMU_FILL_BLOCKS       = 0xb300
+    /********PARSER ORDERS **************/
+    ORD_CREATE_CONTEXT        = 0xFFFF,  //Create context with provided size
+    ORD_PARSE_VARIABLES       = 0xEEEE,  //Parse variables types and arrays sizes
+    ORD_PARSE_VARIABLES_DATA  = 0xDDDD,  //Fill created variables with provided data
+    ORD_EMU_CREATE_BLOCK_LIST = 0xb100,  //Create list for number of provided blocks (Total blocks in code)
+    ORD_EMU_CREATE_BLOCKS     = 0xb200,  //Create blocks (Inputs, Outputs, Type, Custom data)
+    ORD_CHECK_CODE            = 0x0030,  //Check code completeness before start (once after parsing finish)
+
+    /********RESET ORDERS  ***************/
+    ORD_RESET_ALL             = 0x0001,  //Brings emulator to startup state, provides way to eaisly send new code
+    ORD_RESET_BLOCKS          = 0x0002,  //Reset all blocks and theirs data
+    ORD_RESET_MGS_BUF         = 0x0003,  //Clear msg buffer
+    
+    /********LOOP CONTROL****************/
+    ORD_EMU_LOOP_START     = 0x1000, //start loop / resume 
+    ORD_EMU_LOOP_STOP      = 0x2000, //stop loop aka pause
+    ORD_EMU_LOOP_INIT      = 0x3000, //init loop first time 
+
+    /********DEBUG OPTIONS **************/
+    ORD_EMU_INIT_WITH_DBG  = 0x3333, //init loop with debug
+    ORD_EMU_SET_PERIOD     = 0x4000, //change period of loop
+    ORD_EMU_RUN_ONCE       = 0x5000, //Run one cycle and wait for next order
+    ORD_EMU_RUN_WITH_DEBUG = 0x6000, //Run with debug (Dump after each cycle)
+    ORD_EMU_RUN_ONE_STEP   = 0x7000, //Run one block / one step (With debug)
+
 }emu_order_t;
 
 
@@ -82,8 +85,9 @@ typedef enum {
 * @attention Each packet must start with emu_header_t or be single emu_order_t
 */
 typedef enum{
-    EMU_H_VAR_ORD    = 0xFFFF,
-    EMU_H_VAR_START  = 0xFF00,
+    //Context
+    EMU_H_CONTEXT_CFG  = 0xFF00,
+
     EMU_H_VAR_ARR_1D = 0xFF01,
     EMU_H_VAR_ARR_2D = 0xFF02,
     EMU_H_VAR_ARR_3D = 0xFF03,
@@ -112,32 +116,34 @@ typedef enum{
 }emu_header_t;
 
 typedef enum{
-    //[HEADER][9x][UINT16_T TOTAL_CNT_OF_SLOTS] [9x] [UINT16_T TOTAL_CNT_OF_INSTANCE],[9x] [UINT16_T TOTAL_CNT_OF_EXTRA_SPACE] 
+    //[HEADER][ctx_id][9x][UINT16_T TOTAL_CNT_OF_SLOTS] [9x] [UINT16_T TOTAL_CNT_OF_INSTANCE],[9x] [UINT16_T TOTAL_CNT_OF_EXTRA_SPACE] 
     VAR_H_SIZES = 0xFF00,
-    //[HEADER][9x][UINT16_T scalar_cnt]
+    //[HEADER][ctx_id][9x][UINT16_T scalar_cnt](in enum order)
     VAR_H_SCALAR_CNT = 0xFF01,
-    //[HEADER]N*([uint32_t  dims_cnt: 4 uint32_t  target_type : 4;uint32_t start_idx:24;] [Nx][uint8_t idx] )
+    //[HEADER][ctx_id]N*([uint8_t dimscnt][uint8_t type][uint8_t idx])
     VAR_H_ARR = 0xFF02,
-    //[HEADER], [ui16_t idx] [data], [ui16_t idx] [data], [ui16_t idx] [data] .. 
-    VAR_H_DATA_S_UI8 = 0x0F10,
+
+    /*******************ARRAYS AND SCALARS DATA**************************************** */
+    //[HEADER][ctx_id], [ui16_t idx] [data], [ui16_t idx] [data], [ui16_t idx] [data] .. 
+    VAR_H_DATA_S_UI8  = 0x0F10,
     VAR_H_DATA_S_UI16 = 0x0F20,
     VAR_H_DATA_S_UI32 = 0x0F30,
-    VAR_H_DATA_S_I8 = 0x0F40,
-    VAR_H_DATA_S_I16 = 0x0F50,
-    VAR_H_DATA_S_I32 = 0x0F60,
-    VAR_H_DATA_S_F = 0x0F70,
-    VAR_H_DATA_S_D = 0x0F80,
-    VAR_H_DATA_S_B = 0x0F90,
-    //[HEADER], [ui16_t idx,][ui16_t in_arr_idx_offset][data](till end of packet)
-    VAR_H_DATA_ARR_UI8 = 0xFFF0,
+    VAR_H_DATA_S_I8   = 0x0F40,
+    VAR_H_DATA_S_I16  = 0x0F50,
+    VAR_H_DATA_S_I32  = 0x0F60,
+    VAR_H_DATA_S_F    = 0x0F70,
+    VAR_H_DATA_S_D    = 0x0F80,
+    VAR_H_DATA_S_B    = 0x0F90,
+    //[HEADER][ctx_id], [ui16_t idx,][ui16_t in_arr_idx_offset][data](till end of packet)
+    VAR_H_DATA_ARR_UI8  = 0xFFF0,
     VAR_H_DATA_ARR_UI16 = 0xFFF1,
     VAR_H_DATA_ARR_UI32 = 0xFFF2,
-    VAR_H_DATA_ARR_I8 = 0xFFF3,
-    VAR_H_DATA_ARR_I16 = 0xFFF4,
-    VAR_H_DATA_ARR_I32 = 0xFFF5,
-    VAR_H_DATA_ARR_F = 0xFFF6,
-    VAR_H_DATA_ARR_D = 0xFFF7,
-    VAR_H_DATA_ARR_B = 0xFFF8,
+    VAR_H_DATA_ARR_I8   = 0xFFF3,
+    VAR_H_DATA_ARR_I16  = 0xFFF4,
+    VAR_H_DATA_ARR_I32  = 0xFFF5,
+    VAR_H_DATA_ARR_F    = 0xFFF6,
+    VAR_H_DATA_ARR_D    = 0xFFF7,
+    VAR_H_DATA_ARR_B    = 0xFFF8,
 }emu_variables_headers_t;
 
 /**

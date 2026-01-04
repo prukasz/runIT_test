@@ -70,7 +70,7 @@ void emu_interface_task(void* params){
                     res = emu_parse_manager(PARSE_CREATE_VARIABLES);
                     break;
 
-                case ORD_PARSE_INTO_VARIABLES:
+                case ORD_PARSE_VARIABLES_DATA:
                     // Fill values into allocated memory
                     // Can be called multiple times
                     res = emu_parse_manager(PARSE_FILL_VARIABLES);
@@ -98,7 +98,7 @@ void emu_interface_task(void* params){
                     if (loop_handle) {
                         ESP_LOGW(TAG, "Loop already initialized");
                     } else {
-                        loop_handle = _interface_execute_loop_init(100000); // 1s default
+                        loop_handle = _interface_execute_loop_init(1000000); // 1s default
                     }
                     break;
 

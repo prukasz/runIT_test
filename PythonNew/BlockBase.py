@@ -15,10 +15,7 @@ class BlockType(IntEnum):
     BLOCK_CMP   = 3 # Logic
     BLOCK_FOR   = 8
     BLOCK_TIMER = 9
-    
-    # Dodaj mapowanie, jeśli używasz innych ID w C
-    BLOCK_ADD   = 1 # Alias dla kompatybilności wstecznej
-    BLOCK_LOGIC = 3 # Alias
+    BLOCK_LOGIC = 3 
 
 class BlockOutputProxy:
     def __init__(self, block_idx: int):

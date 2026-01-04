@@ -7,6 +7,8 @@ from BlockFor import BlockFor, ForCondition, ForOperator
 from BlockMath import BlockMath
 from BlockLogic import BlockLogic
 from FullDump import FullDump
+from BlockTimer import BlockTimer, TimerType
+
 
 if __name__ == "__main__":
     print("=== ROZPOCZĘCIE GENEROWANIA ZŁOŻONEGO TESTU ===\n")
@@ -28,7 +30,7 @@ if __name__ == "__main__":
     mem_glob.add("Multiplier", DataTypes.DATA_F, 2.5)   # Mnożnik
     mem_glob.add("BaseOffset", DataTypes.DATA_F, 10.0)  # Stały dodatek
     mem_glob.add("AlarmThreshold", DataTypes.DATA_UI8, 200) # Próg alarmowy
-    mem_glob.add("settings",  DataTypes.DATA_UI16, [10,20,999], [3])
+    mem_glob.add("settings",  DataTypes.DATA_UI32, [10,20,999999], [3])
     mem_glob.add("limit", DataTypes.DATA_UI32, 50) #loop
     
     # Przeliczenie indeksów (niezbędne przed użyciem w blokach)
@@ -42,13 +44,18 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     print("--- Tworzenie struktury bloków ---\n")
 
-    # --- BLOK 100: FOR LOOP ---
-    # Pętla wykonuje się 5 razy (0.0 do 4.0).
-    # Chain Len = 2 -> oznacza, że bloki o ID 101 i 102 będą wykonywane w każdej iteracji.
-    blk_loop = BlockFor(
+    blk_timer = BlockTimer(
         block_idx=0,
         storage=storage,
+        timer_type=TimerType.TON,
+        pt =3000
+    )
+
+    blk_loop = BlockFor(
+        block_idx=1,
+        storage=storage,
         chain_len=2,
+        en=blk_timer.out[0],
         start=0.0,
         limit=Global("settings")[2],
         step=1.0,
@@ -62,7 +69,7 @@ if __name__ == "__main__":
     #   1. blk_loop.out[1] -> Iterator (Double)
     #   2. Global("Multiplier") -> Zmienna Globalna
     blk_scale = BlockMath(
-        block_idx=1,
+        block_idx=2,
         storage=storage,
         expression="in_1 * in_2",
         en=blk_loop.out[0],
@@ -72,13 +79,8 @@ if __name__ == "__main__":
         ]
     )
 
-    # --- BLOK 102: MATH (Wewnątrz pętli - Krok 2) ---
-    # Działanie: Wynik = Wynik_z_101 + BaseOffset
-    # Inputs:
-    #   1. blk_scale.out[1] -> Wynik poprzedniego bloku
-    #   2. Global("BaseOffset") -> Zmienna Globalna
     blk_offset = BlockMath(
-        block_idx=2,
+        block_idx=3,
         storage=storage,
         en=blk_scale.out[0],
         expression="in_1 + in_2",
@@ -94,7 +96,7 @@ if __name__ == "__main__":
     #   1. blk_offset.out[1] -> Wynik ostatniej operacji w pętli
     #   2. Global("AlarmThreshold")
     blk_alarm = BlockLogic(
-        block_idx=3,
+        block_idx=4,
         storage=storage,
         expression="in_1 > in_2",
         connections=[

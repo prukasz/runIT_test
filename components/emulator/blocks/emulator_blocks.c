@@ -11,19 +11,6 @@
 extern emu_mem_t* s_mem_contexts[];
 static const char* TAG = "EMU_BLOCKS";
 
-// Helper Macros
-#ifndef LOG_E
-#define LOG_E(tag, fmt, ...) ESP_LOGE(tag, fmt, ##__VA_ARGS__)
-#endif
-#ifndef LOG_I
-#define LOG_I(tag, fmt, ...) ESP_LOGI(tag, fmt, ##__VA_ARGS__)
-#endif
-#ifndef LOG_W
-#define LOG_W(tag, fmt, ...) ESP_LOGW(tag, fmt, ##__VA_ARGS__)
-#endif
-#ifndef LOG_D
-#define LOG_D(tag, fmt, ...) ESP_LOGD(tag, fmt, ##__VA_ARGS__)
-#endif
 
 // Definicje nagłówków protokołu
 #define EMU_H_BLOCK_CNT     0xB000
@@ -233,7 +220,7 @@ bool emu_block_check_inputs_updated(block_handle_t *block) {
             mem_acces_s_t *access_node = (mem_acces_s_t*)block->inputs[i];
             
             if (unlikely(!access_node)) {
-                return false; // If connected bit is set but input is null -> error
+                return false;
             }
 
             emu_mem_t *mem = s_mem_contexts[access_node->reference_id];

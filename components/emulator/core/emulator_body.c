@@ -35,7 +35,6 @@ void emu_body_loop_task(void* params){
     while(1){
         if(xSemaphoreTake(loop_ctx->sem_loop_start, portMAX_DELAY) == pdTRUE) {
             int64_t start_time = esp_timer_get_time();
-
             emu_execute_code(emu_block_struct_execution_list, emu_block_total_cnt, loop_ctx);
             int64_t end_time = esp_timer_get_time();
             ESP_LOGI(TAG, "loop completed in %lld us", (end_time - start_time));
@@ -56,7 +55,7 @@ static inline emu_result_t emu_execute_code(block_handle_t **block_struct_list, 
         emu_block_reset_outputs_status(block_struct_list[emu_loop_iterator]);
         if(loop_handle->wtd.wtd_triggered == 0){
             res = blocks_functions_table[block_struct_list[emu_loop_iterator]->cfg.block_type](block_struct_list[emu_loop_iterator]);
-            if (res.code != EMU_OK){
+            if (res.code != EMU_OK && res.code != EMU_ERR_BLOCK_INACTIVE){
                 ESP_LOGE(TAG, "Block %d (error block idx: %d) failed during execution, error: %s", emu_loop_iterator, res.block_idx,  EMU_ERR_TO_STR(res.code));  
                 return res;
             }

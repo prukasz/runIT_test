@@ -10,8 +10,9 @@ idf_component_register(
         "core/emulator_errors.c"
         "core/emulator_variables_acces.c"
         "blocks/block_math.c"
-        "blocks/block_logic"
-        "blocks/block_for"
+        "blocks/block_logic.c"
+        "blocks/block_for.c"
+        "blocks/block_timer.c"
 
     INCLUDE_DIRS 
         "blocks/include"
