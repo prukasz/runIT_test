@@ -1,4 +1,5 @@
 #include "emulator_variables_acces.h"
+#include "emulator_blocks.h"
 #include "emulator_types.h"
 #include "emulator_errors.h"
 #include "esp_log.h"
@@ -10,15 +11,6 @@ static const char *TAG_VARS = "EMU_VARS";
 static const char *TAG_REF  = "EMU_REF";
 static const char *TAG      = "EMU_MEM";
 
-// Helper Macros
-#ifndef LOG_E
-#define LOG_E(tag, fmt, ...) ESP_LOGE(tag, fmt, ##__VA_ARGS__)
-#endif
-#ifndef LOG_I
-#define LOG_I(tag, fmt, ...) ESP_LOGI(tag, fmt, ##__VA_ARGS__)
-#endif
-
- 
 // ============================================================================
 // POOL MANAGEMENT (For References)
 // ============================================================================
@@ -98,11 +90,9 @@ static void mem_pool_acces_arr_destroy(mem_pool_acces_arr_t *pool) {
 
 extern emu_mem_t* s_mem_contexts[];
 
-// Inline instance getter using LUT
 __attribute__((always_inline)) inline emu_mem_instance_iter_t _mem_get_instance(emu_mem_t *mem, uint8_t type, uint16_t idx) {
     emu_mem_instance_iter_t iter = {0};
     if (mem && idx < mem->instances_cnt[type]) {
-        // Direct access via array
         iter.raw = mem->instances[type][idx];
     }
     return iter;
@@ -118,9 +108,9 @@ __attribute((always_inline)) static inline emu_err_t _resolve_mem_offset(void *a
     uint16_t target_idx  = access.single->target_idx;
 
     *out_type = target_type;
-    emu_mem_t *target_mem = s_mem_contexts[access.single->reference_id]; // Direct access
+    emu_mem_t *target_mem = s_mem_contexts[access.single->reference_id]; 
     
-    LOG_I(TAG, "Resolving acces to ctx %d...", access.single->reference_id);
+    LOG_D(TAG, "Resolving acces to ctx %d, type %d, idx %d", access.single->reference_id, target_type, target_idx);
 
     emu_mem_instance_iter_t meta;
     meta.raw = (uint8_t*)target_mem->instances[target_type][target_idx];
@@ -150,13 +140,10 @@ __attribute((always_inline)) static inline emu_err_t _resolve_mem_offset(void *a
             if (unlikely(idx_var.error)) {return idx_var.error;}
 
             index_val = (uint32_t)emu_var_to_double(idx_var);
-        } 
-        else {     
-            index_val = acc_arr->indices[i].static_idx;
-        }
+        }else{index_val = acc_arr->indices[i].static_idx;}
 
         if (unlikely(index_val >= instance_arr->dim_sizes[i])) {
-            LOG_E(TAG, "Array Index OOB Dim %d: %ld >= %d", i, (long)index_val, instance_arr->dim_sizes[i]);
+            LOG_E(TAG, "Array Index OOB Dim %d: %ld >= %d", i, index_val, instance_arr->dim_sizes[i]);
             return EMU_ERR_MEM_OUT_OF_BOUNDS; 
         }
 
@@ -186,6 +173,7 @@ emu_variable_t mem_get(void *global_access_node, bool by_reference) {
     
     if (unlikely(!global_access_node)) {
         res.error = EMU_ERR_NULL_PTR;
+        LOG_E(TAG_VARS, "Null node provided");
         return res;
     }
 
@@ -193,8 +181,8 @@ emu_variable_t mem_get(void *global_access_node, bool by_reference) {
     emu_mem_t *mem = s_mem_contexts[header->reference_id];
     
     if (unlikely(!mem)) {
-        LOG_E(TAG_VARS, "Invalid Ref ID %d", header->reference_id);
         res.error = EMU_ERR_MEM_INVALID_REF_ID;
+        LOG_E(TAG_VARS, "Invalid Ref ID %d", header->reference_id);
         return res;
     }
 
@@ -203,16 +191,16 @@ emu_variable_t mem_get(void *global_access_node, bool by_reference) {
 
     emu_err_t err = _resolve_mem_offset(global_access_node, &offset, &type);
     if (unlikely(err != EMU_OK)) { 
-        // LOG_E(TAG_VARS, "Resolve offset error %s", EMU_ERR_TO_STR(err));
-        res.error = err; 
-        return res; 
+        res.error = err;
+        LOG_E(TAG_VARS, "_resolve_mem_offset failed: %s", EMU_ERR_TO_STR(err));
+        return res;
     }
 
     void *pool = mem->data_pools[type];
     if (unlikely(!pool)) { 
+        res.error = EMU_ERR_NULL_PTR;
         LOG_E(TAG_VARS, "Pool null for Type %s, ctx %d", DATA_TYPE_TO_STR[type], header->reference_id);
-        res.error = EMU_ERR_MEM_INVALID_DATATYPE; 
-        return res; 
+        return res;
     }
 
     res.type = type;
@@ -228,7 +216,10 @@ emu_variable_t mem_get(void *global_access_node, bool by_reference) {
             case DATA_F:    res.reference.f   = &((float*)pool)[offset]; break;
             case DATA_D:    res.reference.d   = &((double*)pool)[offset]; break;
             case DATA_B:    res.reference.b   = &((bool*)pool)[offset]; break;
-            default:        res.error = EMU_ERR_MEM_INVALID_DATATYPE;
+            default: 
+                res.error = EMU_ERR_MEM_INVALID_DATATYPE;
+                LOG_E(TAG_VARS, "Invalid Type %d (ref acces)", type);
+                return res;
         }
     } else {
         res.by_reference = 0;
@@ -242,28 +233,26 @@ emu_variable_t mem_get(void *global_access_node, bool by_reference) {
             case DATA_F:    res.data.f   = ((float*)pool)[offset]; break;
             case DATA_D:    res.data.d   = ((double*)pool)[offset]; break;
             case DATA_B:    res.data.b   = ((bool*)pool)[offset]; break;
-            default:        res.error = EMU_ERR_MEM_INVALID_DATATYPE;
+            default: 
+                res.error = EMU_ERR_MEM_INVALID_DATATYPE;
+                LOG_E(TAG_VARS, "Invalid Type %d (direct acces)", type);
+                return res;
         }
     }
     return res;
 }
 
-emu_err_t mem_set(void *global_access_node, emu_variable_t val) {
+emu_result_t mem_set(void *global_access_node, emu_variable_t val) {
     mem_acces_s_t *header = (mem_acces_s_t*)global_access_node;
     
-    // Check context (Optional, mem_get handles it)
-    if (!s_mem_contexts[header->reference_id]) {
-        LOG_E(TAG_VARS, "Invalid Context %d", header->reference_id);
-        return EMU_ERR_MEM_INVALID_REF_ID;
+    if (unlikely(!s_mem_contexts[header->reference_id])) {
+        EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, 0xFFFF, TAG_VARS, "Invalid Ref ID %d", header->reference_id);
     }
 
     emu_variable_t dest = mem_get(global_access_node, true);
     
-    if (dest.error != EMU_OK) return dest.error;
-    if (!dest.by_reference) {
-        LOG_E(TAG_VARS, "Can't set value, dest not ref");
-        return EMU_ERR_MEM_INVALID_DATATYPE;
-    }
+    if (unlikely(dest.error != EMU_OK)){EMU_RETURN_CRITICAL(dest.error, 0xFFFF, TAG_VARS, "mem_get failed: %s", EMU_ERR_TO_STR(dest.error));}
+    if (unlikely(!dest.by_reference)) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, 0xFFFF, TAG_VARS, "Can't set value, dest not by ref");}
 
     double src_val = emu_var_to_double(val);
     double rnd = (dest.type < DATA_F) ? round(src_val) : src_val;
@@ -275,17 +264,15 @@ emu_err_t mem_set(void *global_access_node, emu_variable_t val) {
         case DATA_I8:   *dest.reference.i8  = CLAMP_CAST(rnd, INT8_MIN, INT8_MAX, int8_t); break;
         case DATA_I16:  *dest.reference.i16 = CLAMP_CAST(rnd, INT16_MIN, INT16_MAX, int16_t); break;
         case DATA_I32:  *dest.reference.i32 = CLAMP_CAST(rnd, INT32_MIN, INT32_MAX, int32_t); break;
-        
         case DATA_F:    *dest.reference.f   = (float)src_val; break;
         case DATA_D:    *dest.reference.d   = src_val; break;
-        
         case DATA_B:    *dest.reference.b   = (src_val != 0.0); break;
         
-        default:        return EMU_ERR_MEM_INVALID_DATATYPE;
+        default: EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, 0xFFFF, TAG_VARS, "Invalid Type %d", dest.type);
     }
-    return EMU_OK; 
+    LOG_D(TAG,"set value %lf", src_val);
+    return EMU_RESULT_OK(); 
 }
-
 
 
 // ============================================================================
@@ -296,20 +283,19 @@ static mem_pool_acces_s_t s_scalar_pool;
 static mem_pool_acces_arr_t  s_arena_pool;
 static bool s_is_initialized = false;
 
-void emu_refs_system_init(size_t max_scalars, size_t arena_bytes) {
+emu_result_t emu_refs_system_init(size_t max_scalars, size_t arena_bytes) {
     if (s_is_initialized) emu_refs_system_free();
-    
-    if (mem_pool_access_scalar_create(&s_scalar_pool, sizeof(mem_acces_s_t), max_scalars, "REF_SCAL") != EMU_OK) {
-        LOG_E(TAG_REF, "Scalar Pool Fail");
-        return;
+    emu_err_t err;
+    if ((err=mem_pool_access_scalar_create(&s_scalar_pool, sizeof(mem_acces_s_t), max_scalars, "REF_SCAL")) != EMU_OK) {
+        EMU_RETURN_CRITICAL(err, 0xFFFF, TAG_REF, "Scalar Pool Fail");
     }
     if (!mem_pool_acces_arr_create(&s_arena_pool, arena_bytes, "REF_ARR")) {
-        LOG_E(TAG_REF, "Arena Pool Fail");
         mem_pool_acces_scalar_destroy(&s_scalar_pool);
-        return;
+        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, 0xFFFF, TAG_REF, "Arena Pool Fail");
     }
     s_is_initialized = true;
     LOG_I(TAG_REF, "Init: Scalars=%d, Arena=%d bytes", (int)max_scalars, (int)arena_bytes);
+    return EMU_RESULT_OK(); // Added OK return for non-void function
 }
 
 void emu_refs_system_free(void) {
@@ -321,10 +307,10 @@ void emu_refs_system_free(void) {
     }
 }
 
-static void* _parse_node_recursive(uint8_t **cursor, size_t *len) {
+static emu_err_t _parse_node_recursive(uint8_t **cursor, size_t *len, void **out_node) {
     if (*len < 3) {
-        LOG_E(TAG_REF, "Incomplete header");
-        return NULL;
+        LOG_E(TAG_REF, "Incomplete header (len=%d)", (int)*len);
+        return EMU_ERR_PACKET_INCOMPLETE;
     }
     uint8_t h = (*cursor)[0];
     uint8_t dims = h & 0x0F;
@@ -333,10 +319,11 @@ static void* _parse_node_recursive(uint8_t **cursor, size_t *len) {
     uint16_t idx; memcpy(&idx, &(*cursor)[1], 2);
     *cursor += 3; *len -= 3;
 
+    //scalar
     if (dims == 0) {
         if (*len < 1) {
             LOG_E(TAG_REF, "Scalar: Incomplete config byte");
-            return NULL;
+            return EMU_ERR_PACKET_INCOMPLETE;
         }
         uint8_t ref_byte = (*cursor)[0];
         *cursor += 1; *len -= 1;
@@ -344,7 +331,7 @@ static void* _parse_node_recursive(uint8_t **cursor, size_t *len) {
         mem_acces_s_t *n = (mem_acces_s_t*)mem_pool_acces_scalar_alloc(&s_scalar_pool);
         if (!n) {
             LOG_E(TAG_REF, "Scalar Pool Exhausted!");
-            return NULL;
+            return EMU_ERR_NO_MEM;
         }
         
         n->dims_cnt = 0; 
@@ -352,11 +339,14 @@ static void* _parse_node_recursive(uint8_t **cursor, size_t *len) {
         n->target_idx = idx;
         n->reference_id = ref_byte & 0x0F;
         
-        return n;
+        *out_node = n; // Set output
+        return EMU_OK;
+
     } else {
+        // --- ARRAY ---
         if (*len < 1) {
             LOG_E(TAG_REF, "Array: Incomplete config byte");
-            return NULL;
+            return EMU_ERR_PACKET_INCOMPLETE;
         }
         uint8_t config_byte = (*cursor)[0];
         *cursor += 1; *len -= 1;
@@ -364,8 +354,8 @@ static void* _parse_node_recursive(uint8_t **cursor, size_t *len) {
         size_t size = sizeof(mem_acces_arr_t) + (dims * sizeof(idx_u));
         mem_acces_arr_t *n = (mem_acces_arr_t*)mem_pool_acces_arr_alloc(&s_arena_pool, size);
         if (!n) {
-            LOG_E(TAG_REF, "Arena Pool Exhausted!");
-            return NULL;
+            LOG_E(TAG_REF, "Ref Arena Exhausted! Need %d bytes", (int)size);
+            return EMU_ERR_NO_MEM;
         }
         
         n->dims_cnt = dims; 
@@ -376,18 +366,22 @@ static void* _parse_node_recursive(uint8_t **cursor, size_t *len) {
 
         for (int i = 0; i < dims; i++) {
             if (IDX_IS_DYNAMIC(n, i)) {
-                n->indices[i].next_node = _parse_node_recursive(cursor, len);
-                if (!n->indices[i].next_node) return NULL; 
+                // We pass the address of the pointer in the struct union
+                emu_err_t err = _parse_node_recursive(cursor, len, &n->indices[i].next_node);
+                if (err != EMU_OK) return err; // Propagate error immediately
             } else { 
+                // STATIC INDEX
                 if (*len < 2) {
-                    LOG_E(TAG_REF, "Array: Incomplete static index");
-                    return NULL;
+                    LOG_E(TAG_REF, "Array: Incomplete static index (Dim %d)", i);
+                    return EMU_ERR_PACKET_INCOMPLETE;
                 }
                 memcpy(&n->indices[i].static_idx, *cursor, 2); 
                 *cursor += 2; *len -= 2; 
             }
         }
-        return n;
+        
+        *out_node = n; // Set output
+        return EMU_OK;
     }
 }
 
@@ -403,11 +397,9 @@ emu_result_t emu_parse_block_inputs(chr_msg_buffer_t *source, block_handle_t *bl
                 if (r_idx < block->cfg.in_cnt) {
                     uint8_t *ptr = &data[5]; size_t pl_len = len - 5;
                     LOG_I(TAG, "Parsing Input %d for block %d", r_idx, b_idx);
-                    block->inputs[r_idx] = _parse_node_recursive(&ptr, &pl_len);
-                    if (!block->inputs[r_idx]) {
-                        LOG_E(TAG_REF, "Parse Failed Block %d Input %d", b_idx, r_idx);
-                        return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_DATA, i);
-                    }
+                    
+                    emu_err_t err = _parse_node_recursive(&ptr, &pl_len, &block->inputs[r_idx]);
+                    if (err != EMU_OK) {EMU_RETURN_CRITICAL(err, i,TAG_REF, "Parse Failed Block %d Input %d: %s", b_idx, r_idx, EMU_ERR_TO_STR(err));}
                 }
             }
         }
@@ -430,7 +422,7 @@ emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *b
                 
                 if (r_idx < block->cfg.q_cnt) {
                     uint8_t *ptr = &data[5]; 
-                    if ((len - 5) < 4) return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_DATA, i);
+                    if ((len - 5) < 4) EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, i, TAG_REF, "Invalid packet size");
 
                     uint8_t h = ptr[0];
                     uint8_t type = (h >> 4) & 0x0F;
@@ -442,19 +434,13 @@ emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *b
                     uint8_t ref_id = config_byte & 0x0F;
                     LOG_I(TAG, "Parsing Output %d for block %d", r_idx, b_idx);
                     emu_mem_t *target_mem = s_mem_contexts[ref_id];
-                    if (!target_mem) {
-                        LOG_E(TAG_REF, "Invalid Ctx ID %d", ref_id);
-                        return EMU_RESULT_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, i);
-                    }
+                    if (!target_mem) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, i,TAG_REF, "Invalid Ctx ID %d", ref_id);}
 
                     emu_mem_instance_iter_t meta = _mem_get_instance(target_mem, type, target_idx);
-                    if (meta.raw == NULL) {
-                        LOG_E(TAG_REF, "Meta NULL Ctx:%d T:%d I:%d", ref_id, type, target_idx);
-                        return EMU_RESULT_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, i);
-                    }
-
+                    if (meta.raw == NULL) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, i, TAG_REF, "Meta NULL Ctx:%d T:%d I:%d", ref_id, type, target_idx);}
                     block->outputs[r_idx].raw = meta.raw;
-                    LOG_I(TAG, "Block %d Output %d linked to MemInst %p", b_idx, r_idx, meta.raw);
+
+                    LOG_D(TAG, "Block %d Output %d linked to MemInst %p", b_idx, r_idx, meta.raw);
                 }
             }
         }

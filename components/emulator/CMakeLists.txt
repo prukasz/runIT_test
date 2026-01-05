@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS 
         "blocks/emulator_blocks.c"
-        "blocks/emulator_blocks_functions_list.c"
+        "blocks/blocks_functions_list.c"
         "core/emulator_interface.c"
         "core/emulator_body.c"
         "core/emulator_loop.c"
@@ -13,6 +13,7 @@ idf_component_register(
         "blocks/block_logic.c"
         "blocks/block_for.c"
         "blocks/block_timer.c"
+        "blocks/block_set.c"
 
     INCLUDE_DIRS 
         "blocks/include"

@@ -4,10 +4,12 @@ from typing import List, Union, Dict
 from dataclasses import dataclass
 from enum import IntEnum
 
-from BlockBase import BlockBase, BlockType
-from EmulatorMemory import DataTypes
-from EmulatorMemoryReferences import Global
-from BlocksStorage import BlocksStorage # Do type hintingu
+from BlockBase import BlockBase
+from EmulatorMemory import EmulatorMemory
+from EmulatorMemoryReferences import Ref
+from BlocksStorage import BlocksStorage 
+from Enums import emu_types_t, block_type_t, emu_block_header_t
+
 
 # ==========================================
 # 1. OPCODES I INSTRUKCJE
@@ -157,8 +159,8 @@ class BlockMath(BlockBase):
                  block_idx: int, 
                  storage: BlocksStorage,
                  expression: str,
-                 connections: List[Union[Global, None]] = None,
-                 en: Union[Global, None] = None
+                 connections: List[Union[Ref, None]] = None,
+                 en: Union[Ref, None] = None
                  ):
         
         # 1. Parsowanie
@@ -182,29 +184,26 @@ class BlockMath(BlockBase):
 
         super().__init__(
             block_idx=block_idx,
-            block_type=BlockType.BLOCK_MATH,
+            block_type=block_type_t.BLOCK_MATH,
             storage=storage,
             inputs=processed_inputs,
             output_defs=[
-                (DataTypes.DATA_B, []), # Output 0: ENO
-                (DataTypes.DATA_D, [])  # Output 1: Result
+                (emu_types_t.DATA_B, []), # Output 0: ENO
+                (emu_types_t.DATA_D, [])  # Output 1: Result
             ]
         )
 
     def get_custom_data_packet(self) -> List[bytes]:
-        # ... (Bez zmian: generowanie pakietów Const i Code) ...
-        # (Skopiuj implementację get_custom_data_packet z poprzedniej wersji BlockMath.py)
-        # Pamiętaj o imporcie struct
         packets = []
         if self.parser.constants:
-            h1 = self._pack_common_header(0x01)
+            h1 = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CONST.value)
             c1 = struct.pack('B', len(self.parser.constants))
             p1 = bytearray()
             for c in self.parser.constants: p1.extend(struct.pack('<d', c))
             packets.append(h1 + c1 + p1)
 
         if self.parser.instructions:
-            h2 = self._pack_common_header(0x02)
+            h2 = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CUSTOM.value)
             c2 = struct.pack('B', len(self.parser.instructions))
             p2 = bytearray()
             for i in self.parser.instructions: p2.extend(struct.pack('<BB', i.opcode, i.index))
@@ -212,16 +211,14 @@ class BlockMath(BlockBase):
         return packets
 
     def __str__(self):
-        # ... (Formatowanie z komentarzami - bez zmian) ...
-        # Skopiuj __str__ z poprzedniej wersji
         base_output = self.get_hex_with_comments()
         lines = [base_output]
         custom_pkts = self.get_custom_data_packet()
         for pkt in custom_pkts:
             subtype = pkt[2] 
             hex_str = pkt.hex().upper()
-            if subtype == 0x01: lines.append(f"#ID:{self.block_idx} MATH Const Table# {hex_str}")
-            elif subtype == 0x02: lines.append(f"#ID:{self.block_idx} MATH Instructions# {hex_str}")
+            if subtype == emu_block_header_t.EMU_H_BLOCK_PACKET_CONST.value: lines.append(f"#ID:{self.block_idx} MATH Const Table# {hex_str}")
+            elif subtype == emu_block_header_t.EMU_H_BLOCK_PACKET_CUSTOM.value: lines.append(f"#ID:{self.block_idx} MATH Instructions# {hex_str}")
         return "\n".join(lines)
 
 # ==========================================
@@ -231,15 +228,15 @@ if __name__ == "__main__":
     from EmulatorMemory import EmulatorMemory
     
     mem_test = EmulatorMemory(1)
-    Global.register_memory(mem_test)
+    Ref.register_memory(mem_test)
     
     try:
         # Wyrażenie: (in_1 * 3.14) + in_2
         # Input 1: Zmienna globalna "A" (zakładamy, że istnieje w mem_test symulacyjnie)
         # Input 2: Zmienna globalna "B"
         
-        mem_test.add("A", DataTypes.DATA_F, 1.0)
-        mem_test.add("B", DataTypes.DATA_F, 2.0)
+        mem_test.add("A", emu_types_t.DATA_F, 1.0)
+        mem_test.add("B", emu_types_t.DATA_F, 2.0)
         mem_test.recalculate_indices()
 
         blk = BlockMath(
@@ -247,7 +244,7 @@ if __name__ == "__main__":
             mem_blocks=mem_test,
             expression="in_1 * 3.14 + in_2",
             en=None,
-            inputs_refs=[Global("A"), Global("B")]
+            inputs_refs=[Ref("A"), Ref("B")]
         )
         
         print("--- TEST BLOCK MATH ---")

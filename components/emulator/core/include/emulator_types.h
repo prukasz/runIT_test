@@ -1,36 +1,23 @@
 #pragma once
 #include <stdint.h>
-
-/******************************************
-Specific enums used in emulator code
-******************************************/
 #define likely(x)      __builtin_expect(!!(x), 1)
 #define unlikely(x)    __builtin_expect(!!(x), 0)
 
 
+#define TYPES_COUNT 9 
 
 /**
 * @brief Data types used within emulator
 */
-#define TYPES_COUNT 9 
 typedef enum{
-    //uint8_t
     DATA_UI8  = 0,
-    //uint16_t
     DATA_UI16 = 1,
-    //uint32_t
     DATA_UI32 = 2,
-    //int8_t
     DATA_I8   = 3,
-    //int16_t
     DATA_I16  = 4,
-    //int32_t
     DATA_I32  = 5,
-    //float
     DATA_F    = 6,
-    //double
     DATA_D    = 7,
-    //bool
     DATA_B    = 8
 }data_types_t;
 
@@ -46,7 +33,17 @@ static const uint8_t TYPE_SIZES[TYPES_COUNT] = {
     1  // DATA_B
     };
 
-extern const char *DATA_TYPE_TO_STR[9];
+static const char *DATA_TYPE_TO_STR[9] = {
+    "DATA_UI8",
+    "DATA_UI16",
+    "DATA_UI32",
+    "DATA_I8",
+    "DATA_I16",
+    "DATA_I32",
+    "DATA_F",
+    "DATA_D",
+    "DATA_B"
+};
 
 /**
 * @brief Orders for emulator interface to execute
@@ -82,38 +79,18 @@ typedef enum {
 
 /**
 * @brief Block packet header
-* @attention Each packet must start with emu_header_t or be single emu_order_t
+* @attention Each packet must start with emu_block_header_t or be single emu_order_t
 */
 typedef enum{
-    //Context
-    EMU_H_CONTEXT_CFG  = 0xFF00,
+    EMU_H_BLOCK_CNT       = 0xB000,
+    EMU_H_BLOCK_START     = 0xBB,
 
-    EMU_H_VAR_ARR_1D = 0xFF01,
-    EMU_H_VAR_ARR_2D = 0xFF02,
-    EMU_H_VAR_ARR_3D = 0xFF03,
-    EMU_H_VAR_ARR_UI8 = 0xFF10,
-    EMU_H_VAR_ARR_UI16 = 0xFF20,
-    EMU_H_VAR_ARR_UI32 = 0xFF30,
-    EMU_H_VAR_ARR_I8 = 0xFF40,
-    EMU_H_VAR_ARR_I16 = 0xFF50,
-    EMU_H_VAR_ARR_I32 = 0xFF60,
-    EMU_H_VAR_ARR_F = 0xFF70,
-    EMU_H_VAR_ARR_D = 0xFF80,
-    EMU_H_VAR_ARR_B = 0xFF90,
-    EMU_H_VAR_SCAL_UI8 = 0xFF11,    //single varialbes
-    EMU_H_VAR_SCAL_UI16 = 0xFF21,
-    EMU_H_VAR_SCAL_UI32 = 0xFF31,
-    EMU_H_VAR_SCAL_I8 = 0xFF41,
-    EMU_H_VAR_SCAL_I16 = 0xFF51,
-    EMU_H_VAR_SCAL_I32 = 0xFF61,
-    EMU_H_VAR_SCAL_F = 0xFF71,
-    EMU_H_VAR_SCAL_D = 0xFF81,
-    EMU_H_VAR_SCAL_B = 0xFF91,
-    EMU_H_BLOCK_CNT   = 0xB000,
-    EMU_H_BLOCK_PACKET= 0xBB,
-    EMU_H_BLOCK_START_G_ACCES = 0xF0,
-    EMU_H_BLOCK_START_G_ACCES_MASK = 0xEF
-}emu_header_t;
+    EMU_H_BLOCK_PACKET_IN_START  = 0xF0,
+    EMU_H_BLOCK_PACKET_OUT_START = 0xE0,
+    EMU_H_BLOCK_PACKET_CFG       = 0x00,
+    EMU_H_BLOCK_PACKET_CONST     = 0x01,
+    EMU_H_BLOCK_PACKET_CUSTOM    = 0x02,
+}emu_block_header_t;
 
 typedef enum{
     //[HEADER][ctx_id][9x][UINT16_T TOTAL_CNT_OF_SLOTS] [9x] [UINT16_T TOTAL_CNT_OF_INSTANCE],[9x] [UINT16_T TOTAL_CNT_OF_EXTRA_SPACE] 
@@ -163,7 +140,7 @@ typedef enum {
 */
 typedef enum{
     BLOCK_MATH = 0x01,
-    BLOCK_SET_GLOBAL = 0x02,
+    BLOCK_SET = 0x02,
     BLOCK_LOGIC = 0x03,
     BLOCK_FOR = 0x08,
     BLOCK_TIMER = 0x09,

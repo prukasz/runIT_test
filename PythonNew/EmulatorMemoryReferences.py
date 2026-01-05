@@ -2,7 +2,6 @@ import struct
 from dataclasses import dataclass, field
 from typing import List, Optional, Union, Any
 
-# ... (Klasa AccessNode bez zmian) ...
 @dataclass
 class AccessNode:
     is_array: bool
@@ -13,7 +12,6 @@ class AccessNode:
     indices: List[Any] = field(default_factory=list)
 
     def to_bytes(self) -> bytes:
-        # ... (Twoja implementacja z poprzedniego kroku, jest poprawna) ...
         payload = bytearray()
         header = ((self.type_id & 0x0F) << 4) | (self.dims_cnt & 0x0F)
         payload.append(header)
@@ -34,15 +32,14 @@ class AccessNode:
         return bytes(payload)
 
 
-class Global:
-    """Builder class for creating references."""
+class Ref:
+    """Builder class for creating references"""
     
-    # ZMIANA: Lista pamięci zamiast jednej zmiennej
     _memories: List[Any] = [] 
 
     @classmethod
     def register_memory(cls, mem):
-        """Dodaj kontekst pamięci do przeszukiwania."""
+        """Add new context"""
         cls._memories.append(mem)
 
     @classmethod
@@ -54,12 +51,12 @@ class Global:
         self.ref_id = ref_id
         self.indices = []
 
-    def __getitem__(self, items) -> 'Global':
+    def __getitem__(self, items) -> 'Ref':
         if not isinstance(items, tuple): items = (items,)
         for item in items:
             if isinstance(item, int): self.indices.append((False, item))
-            elif isinstance(item, Global): self.indices.append((True, item))
-            elif isinstance(item, str): self.indices.append((True, Global(item)))
+            elif isinstance(item, Ref): self.indices.append((True, item))
+            elif isinstance(item, str): self.indices.append((True, Ref(item)))
             else: raise ValueError(f"Invalid index type: {type(item)}")
         return self
 
@@ -67,8 +64,7 @@ class Global:
         target_var = None
         found_in_ctx = -1
 
-        # ZMIANA: Przeszukujemy wszystkie zarejestrowane pamięci
-        for mem in Global._memories:
+        for mem in Ref._memories:
             if self.alias in mem.alias_map:
                 target_var = mem.alias_map[self.alias]
                 found_in_ctx = mem.context_id
@@ -79,33 +75,28 @@ class Global:
             print(f"[WARN] Unknown alias '{self.alias}'. Using dummy.")
             return AccessNode(False, 0, 0, 0, 0)
 
-        # Opcjonalny Check: Czy ref_id w żądaniu zgadza się z kontekstem zmiennej?
-        # Np. jeśli block.out[0] wymusza ref_id=1, a zmienna jest w ctx=1 -> OK.
-        # Jeśli Global("Var") ma domyślne ref_id=0, a zmienna jest w ctx=0 -> OK.
-        # W zaawansowanym systemie możemy tutaj nadpisać self.ref_id = found_in_ctx
         
-        # WAŻNE: Aktualizujemy ref_id na podstawie faktycznego położenia zmiennej,
-        # chyba że użytkownik wyraźnie wymusił co innego.
-        # Tutaj zakładamy, że znaleziona zmienna determinuje ref_id.
         final_ref_id = self.ref_id 
         if final_ref_id != found_in_ctx:
-             # print(f"[INFO] Auto-correcting RefID for {self.alias}: {self.ref_id} -> {found_in_ctx}")
-             final_ref_id = found_in_ctx
-
+            final_ref_id = found_in_ctx
+        
+        #node content
         type_id = target_var.dtype.value
         var_idx = target_var.index
         dims_cnt = len(self.indices)
         
+        #Neseted indices
         processed_indices = []
         for is_dyn, val in self.indices:
             if is_dyn: processed_indices.append((True, val.build()))
             else: processed_indices.append((False, val))
 
+        #Return full node
         return AccessNode(
             is_array=(dims_cnt > 0),
             type_id=type_id,
             idx=var_idx,
-            ref_id=final_ref_id, # Używamy skorygowanego lub wymuszonego ID
+            ref_id=final_ref_id,
             dims_cnt=dims_cnt,
             indices=processed_indices
         )

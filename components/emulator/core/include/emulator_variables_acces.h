@@ -3,7 +3,8 @@
 #include "stdbool.h"
 #include "emulator_errors.h"
 #include "emulator_variables.h"
-#include "emulator_blocks.h"
+
+typedef struct block_handle_s block_handle_t;
 
 typedef union {
         uint16_t static_idx;
@@ -49,15 +50,18 @@ typedef union {
  * @return value
  */
 emu_variable_t mem_get(void * global_access_x, bool by_reference);
-emu_err_t mem_set(void * global_access_x, emu_variable_t value);
+emu_result_t mem_set(void * global_access_x, emu_variable_t value);
 emu_mem_instance_iter_t mem_get_instance(void *access_node);
 emu_mem_instance_iter_t _mem_get_instance(emu_mem_t *mem, uint8_t type, uint16_t idx);
 
-void emu_refs_system_init(size_t max_scalar_nodes, size_t arena_size_bytes);
+emu_result_t emu_refs_system_init(size_t max_scalar_nodes, size_t arena_size_bytes);
 void emu_refs_system_free(void);
 emu_result_t emu_parse_block_inputs(chr_msg_buffer_t *source, block_handle_t *block);
 emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *block);
 
+/**
+ * @brief Get double from any type
+ */
 static inline double emu_var_to_double(emu_variable_t v) {
     if (v.by_reference) {
         switch (v.type) {

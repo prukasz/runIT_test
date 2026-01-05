@@ -32,9 +32,9 @@ typedef struct {
     double *constant_table;
 } logic_expression_t;
 
-emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, block_handle_t *block);
-emu_result_t emu_logic_block_free_expression(block_handle_t* block);
-
+emu_result_t block_logic_parse(chr_msg_buffer_t *source, block_handle_t *block);
+void block_logic_free(block_handle_t* block);
+emu_result_t block_logic_verify(block_handle_t *block);
 
 /****************************************************************************
                             CMP BLOCK

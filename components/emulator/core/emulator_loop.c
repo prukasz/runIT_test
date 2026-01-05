@@ -4,13 +4,11 @@
 #include "emulator_body.h"
 #include "emulator_parse.h"
 #include "string.h"
-
-/***********************************************************
-In this file loop timer is created and managed
-Simple loop watchdog implemented in timer callback
-*************************************************************/
+#include "esp_timer.h"
+#include "esp_log.h"
 
 static const char *TAG = "EMULATOR_LOOP";
+
 /**
 *@brief loop tick speed 
 */
@@ -43,59 +41,86 @@ static void IRAM_ATTR loop_tick_intr_handler(void *arg) {
 }
 
 
-emu_loop_handle_t emu_loop_init(uint64_t period_us){
-    emu_loop_ctx_t *ctx = calloc(1, sizeof(emu_loop_ctx_t));
-    if(!ctx){
-        ESP_LOGE(TAG, "Failed to allocate memory for loop context");
-        return NULL;
+emu_result_t emu_loop_init(uint64_t period_us, emu_loop_handle_t *out_handle) {
+    if (!out_handle) {
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle pointer is NULL");
     }
+    emu_loop_ctx_t *ctx = calloc(1, sizeof(emu_loop_ctx_t));
+    if (!ctx) {
+        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, 0xFFFF, TAG, "Failed to allocate context");
+    }
+
+    // Default settings
     ctx->wtd.max_skipp = 2;
     ctx->wtd.wtd_active = 1;
     ctx->wtd.wtd_triggered = 0;
+    
     ctx->timer.loop_period = period_us;
     ctx->timer.loop_status = LOOP_CREATED;
+    
     ctx->sem_loop_start = xSemaphoreCreateBinary();
     ctx->sem_loop_wtd = xSemaphoreCreateBinary();
-    if(!ctx->sem_loop_start || !ctx->sem_loop_wtd) {
-        ESP_LOGE(TAG, "Failed to create semaphores");
+
+    if (!ctx->sem_loop_start || !ctx->sem_loop_wtd) {
         free(ctx);
-        return NULL;
+        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, 0xFFFF, TAG, "Failed to create semaphores");
     }
-    xTaskCreate(emu_body_loop_task, "EMU_LOOP", stack_depth, (void*)ctx, 4, NULL);
+
+    // Create Task
+    BaseType_t task_res = xTaskCreate(emu_body_loop_task, "EMU_LOOP", stack_depth, (void*)ctx, 4, NULL);
+    if (task_res != pdPASS) {
+        free(ctx);
+        EMU_RETURN_CRITICAL(EMU_ERR_MEM_ALLOC, 0xFFFF, TAG, "Failed to create loop task");
+    }
+
+    // Create Timer
     const esp_timer_create_args_t timer_args = {
         .callback = &loop_tick_intr_handler,
         .arg = (void*)ctx,
         .name = "EMU_TIMER",
         .dispatch_method = ESP_TIMER_ISR
     };
-    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &ctx->timer.timer_handle));
-    return (emu_loop_handle_t)ctx;
+    
+    esp_err_t err = esp_timer_create(&timer_args, &ctx->timer.timer_handle);
+    if (err != ESP_OK) {
+        // Cleanup would be complex here (deleting task), usually critical failure
+        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Timer create failed: %d", err);
+    }
+
+    // Do NOT give sem_loop_wtd here. It starts empty.
+    
+    *out_handle = (emu_loop_handle_t)ctx;
+    return EMU_RESULT_OK();
 }
 
 
-emu_result_t emu_loop_start(emu_loop_handle_t handle){
+emu_result_t emu_loop_start(emu_loop_handle_t handle) {
     if (!handle) {
-        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF);
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
     }
+    
     emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
+    
     emu_result_t res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
     if (res.code != EMU_OK) {
-        ESP_LOGE(TAG, "Cannot start loop: Validation failed: %s", EMU_ERR_TO_STR(res.code));
-        return res;
+        LOG_E(TAG, "Start denied: %s", EMU_ERR_TO_STR(res.code));
+        return res; 
     }
+
     bool should_start_timer = false;
+
     if (ctx->timer.loop_status == LOOP_CREATED) {
-        ESP_LOGI(TAG, "Starting loop (First Time)");
+        LOG_I(TAG, "Starting loop (First Time)");
         ctx->timer.loop_status = LOOP_RUNNING;
         should_start_timer = true;
     }
     else if (ctx->timer.loop_status == LOOP_STOPPED) {
-        ESP_LOGI(TAG, "Resuming loop (From Stopped)");
+        LOG_I(TAG, "Resuming loop (From Stopped)");
         ctx->timer.loop_status = LOOP_RUNNING;
         should_start_timer = true;
     }
     else if (ctx->timer.loop_status == LOOP_HALTED) {
-        ESP_LOGI(TAG, "Resuming loop (From Halted)");
+        LOG_I(TAG, "Resuming loop (From Halted)");
         /* Reset WTD flags on resume */
         ctx->wtd.wtd_triggered = 0;
         ctx->wtd.loops_skipped = 0;
@@ -103,107 +128,109 @@ emu_result_t emu_loop_start(emu_loop_handle_t handle){
         should_start_timer = true;
     }
     else {
-        ESP_LOGW(TAG, "Loop start requested but state is %d (Already Running?)", ctx->timer.loop_status);
-        return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF);
+        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Loop start requested but state is %d", ctx->timer.loop_status);
     }
+
     if (should_start_timer) {
         xSemaphoreTake(ctx->sem_loop_wtd, 0);
         xSemaphoreGive(ctx->sem_loop_start);
-        /* Start the hardware timer */
         esp_timer_start_periodic(ctx->timer.timer_handle, ctx->timer.loop_period);
     }
+    
     return EMU_RESULT_OK();
 }
 
 emu_result_t emu_loop_stop(emu_loop_handle_t handle) {
     if (!handle) {
-        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF);
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
     }
     emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
 
     if (ctx->timer.loop_status != LOOP_RUNNING) {
-        ESP_LOGW(TAG, "Attempted to stop loop, but state is %d (Not Running)", ctx->timer.loop_status);
-        return EMU_RESULT_WARN(EMU_ERR_INVALID_STATE, 0xFFFF);
+        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Attempted to stop loop, but state is %d (Not Running)", ctx->timer.loop_status);
     }
 
     ESP_LOGI(TAG, "Stopping loop");
     ctx->timer.loop_status = LOOP_STOPPED;
 
-    if (esp_timer_stop(ctx->timer.timer_handle) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to stop hardware timer");
-        ctx->timer.loop_status = LOOP_HALTED;
-        return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF);
+    if (unlikely(esp_timer_stop(ctx->timer.timer_handle)) != ESP_OK) {
+        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Failed to stop hardware timer");
     }
     return EMU_RESULT_OK();
 }
 
-void emu_loop_set_period(emu_loop_handle_t handle, uint64_t period_us) {
+emu_result_t emu_loop_set_period(emu_loop_handle_t handle, uint64_t period_us) {
     if (!handle) {
-        ESP_LOGE(TAG, "set_period called with NULL handle");
-        return;
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
     }
 
     emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
+    bool was_clamped = false;
 
-    //clamp to limits
     if (period_us > LOOP_PERIOD_MAX) {
-        ESP_LOGW(TAG, "Requested period %llu us too slow, clamping to %d us", period_us, LOOP_PERIOD_MAX);
+        LOG_W(TAG, "Clamping period %llu -> %d us (Too Slow)", period_us, LOOP_PERIOD_MAX);
         period_us = LOOP_PERIOD_MAX;
+        was_clamped = true;
     } 
     else if (period_us < LOOP_PERIOD_MIN) {
-        ESP_LOGW(TAG, "Requested period %llu us too fast, clamping to %d us", period_us, LOOP_PERIOD_MIN);
+        LOG_W(TAG, "Clamping period %llu -> %d us (Too Fast)", period_us, LOOP_PERIOD_MIN);
         period_us = LOOP_PERIOD_MIN;
+        was_clamped = true;
     }
 
     uint64_t old_period = ctx->timer.loop_period;
     ctx->timer.loop_period = period_us;
 
-    /*Apply Immediately if Running */
     if (ctx->timer.loop_status == LOOP_RUNNING) {
         esp_timer_stop(ctx->timer.timer_handle);
-        esp_timer_start_periodic(ctx->timer.timer_handle, ctx->timer.loop_period);
-        ESP_LOGI(TAG, "Loop period updated live: %llu -> %llu us", old_period, ctx->timer.loop_period);
+        
+        esp_err_t err = esp_timer_start_periodic(ctx->timer.timer_handle, ctx->timer.loop_period);
+        if (err != ESP_OK) {
+            ctx->timer.loop_status = LOOP_HALTED;
+            EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Failed to restart timer: %d", err);
+        }
+        
+        LOG_I(TAG, "Period updated live: %llu -> %llu us", old_period, ctx->timer.loop_period);
     } else {
-        ESP_LOGI(TAG, "Loop period config updated: %llu -> %llu us (Will apply on next start)", old_period, ctx->timer.loop_period);
+        LOG_I(TAG, "Period config updated: %llu -> %llu us (Next start)", old_period, ctx->timer.loop_period);
     }
+
+    if (was_clamped) {
+        EMU_RETURN_WARN(EMU_ERR_BLOCK_OUT_OF_RANGE, 0xFFFF, TAG, "Period value clamped");
+    }
+
+    return EMU_RESULT_OK();
 }
 
 emu_result_t emu_loop_run_once(emu_loop_handle_t handle) {
-    if (!handle) {
-        return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF);
+    if (!handle) { 
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
     }
 
     emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
 
     if (ctx->timer.loop_status == LOOP_RUNNING) {
-        ESP_LOGW(TAG, "Cannot run_once while loop is RUNNING. Stop it first.");
-        return EMU_RESULT_WARN(EMU_ERR_INVALID_STATE, 0xFFFF);
+        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Cannot run_once while loop is RUNNING. Stop it first");
     }
 
     emu_result_t res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
     if (res.code != EMU_OK) {
+        LOG_E(TAG, "Run Once denied: %s", EMU_ERR_TO_STR(res.code));
         return res; 
     }
 
-    if (xSemaphoreTake(ctx->sem_loop_wtd, pdMS_TO_TICKS(100)) != pdTRUE) {
-        ESP_LOGE(TAG, "Run Once failed: System is busy or WTD semaphore unavailable");
-        return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF);
-    }
     xSemaphoreGive(ctx->sem_loop_start);
-    //We manually check wtd
+
     if (xSemaphoreTake(ctx->sem_loop_wtd, pdMS_TO_TICKS(ctx->wtd.max_skipp *loop_period_us)) == pdTRUE) {
 
-        xSemaphoreGive(ctx->sem_loop_wtd);
-    
         ctx->timer.loop_counter++;
         ctx->timer.time += ctx->timer.loop_period/1000;
         return EMU_RESULT_OK();
+
     } else {
         ctx->wtd.wtd_triggered = 1;
         ctx->timer.loop_status = LOOP_HALTED;
-        ESP_LOGE(TAG, "One loop wtd triggered, loop took to long to execute");
-        return EMU_RESULT_CRITICAL(EMU_ERR_BLOCK_FOR_TIMEOUT, 0xFFFF);
+        EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_WTD_TRIGGERED, 0xFFFF, TAG, "One loop wtd triggered, loop took to long to execute");
     }
+    return EMU_RESULT_OK();
 }
-
-

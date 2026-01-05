@@ -1,7 +1,7 @@
 #include "block_logic.h"
 #include "emulator_errors.h"
 #include "emulator_variables_acces.h"
-#include "emulator_blocks.h" // For emu_block_set_output, etc.
+#include "emulator_blocks.h" 
 #include "esp_log.h"
 #include <math.h>
 #include <float.h>
@@ -25,11 +25,12 @@ static emu_err_t _clear_logic_expression_internals(logic_expression_t* expr);
     PARSING LOGIC
    ============================================================================ */
 
-emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, block_handle_t *block)
+emu_result_t block_logic_parse(chr_msg_buffer_t *source, block_handle_t *block)
 {
-    if (!block) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0);
+    // Użycie makra bez słowa 'return' (makro zawiera return)
+    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "NULL block pointer");
 
-    emu_result_t res = {.code = EMU_OK};
+    emu_result_t res = EMU_RESULT_OK();
     uint8_t *data;
     size_t len;
     
@@ -42,7 +43,6 @@ emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, block_handle_t *blo
     {
         chr_msg_buffer_get(source, search_idx, &data, &len);
 
-        // Header check: [BB] [Type] [Subtype] [ID:2]
         if (len > 3 && data[0] == 0xBB && data[1] == BLOCK_LOGIC && data[2] == 0x02)
         {
             uint16_t packet_blk_id;
@@ -52,20 +52,18 @@ emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, block_handle_t *blo
             {
                 LOG_I(TAG, "Detected Logic Expression header for block %d", block_idx);
                 
-                // Allocate custom_data if needed
                 if (!block->custom_data) {
                     block->custom_data = calloc(1, sizeof(logic_expression_t));
                     if(!block->custom_data){
-                        ESP_LOGE(TAG, "No memory for logic custom_data");
-                        return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                        // Makro loguje błąd i zwraca wynik
+                        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "No memory for logic custom_data");
                     }
                 }
 
                 size_t const_msg_cnt = 1;
                 if(_emu_parse_logic_expr(source, search_idx, (logic_expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
-                    ESP_LOGE(TAG, "Logic Expr parse error block %d", block_idx);
-                    emu_logic_block_free_expression(block);
-                    return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                    block_logic_free(block);
+                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "Logic Expr parse error");
                 }
             }
         }
@@ -89,14 +87,13 @@ emu_result_t emu_parse_block_logic(chr_msg_buffer_t *source, block_handle_t *blo
                 
                 if (!block->custom_data) {
                      block->custom_data = calloc(1, sizeof(logic_expression_t));
-                     if(!block->custom_data) return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                     if(!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "No memory for logic custom_data");
                 }
 
                 size_t const_msg_cnt = 1;
                 if(_emu_parse_logic_const(source, search_idx, (logic_expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
-                     ESP_LOGE(TAG, "Error parsing constants for logic block %d", block_idx);
-                     emu_logic_block_free_expression(block);
-                     return EMU_RESULT_CRITICAL(EMU_ERR_NO_MEM, block_idx);
+                     block_logic_free(block);
+                     EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "Error parsing constants");
                 }
             }
         }
@@ -192,17 +189,10 @@ static emu_err_t _emu_parse_logic_const_msg(uint8_t *data, uint16_t len, size_t 
    ============================================================================ */
 
 emu_result_t block_logic(block_handle_t* block) {
-    emu_result_t res = {.code = EMU_OK};
-    
-    // 1. Check Input Synchronization
+    // 1. Sprawdzenie aktywności (Notice)
     if (!emu_block_check_inputs_updated(block)) {
-        res.code = EMU_ERR_BLOCK_INACTIVE;
-        res.notice = true;
-        res.block_idx = block->cfg.block_idx;
-        return res;
+        EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");
     }
-
-    if (!block->custom_data) return EMU_RESULT_CRITICAL(EMU_ERR_NULL_PTR, 0);
 
     logic_expression_t* eval = (logic_expression_t*)block->custom_data;
     double stack[16]; 
@@ -214,15 +204,11 @@ emu_result_t block_logic(block_handle_t* block) {
           
         switch (ins->op) {
             case CMP_OP_VAR: {
-                // Fetch variable using Context Aware mem_get
                 emu_variable_t var = mem_get(block->inputs[ins->input_index], false);
-                
-                if (var.error == EMU_OK) {
-                    // Convert whatever type we got to logic double (0.0 or 1.0 representation)
+                if (likely(var.error == EMU_OK)) {
                     stack[over_top++] = emu_var_to_double(var);
                 } else {
-                    stack[over_top++] = 0.0;
-                    ESP_LOGW(TAG, "Input %d access error: %d", ins->input_index, var.error);
+                    EMU_RETURN_CRITICAL(var.error, block->cfg.block_idx, TAG, "Input acces error: %s", EMU_ERR_TO_STR(var.error));
                 }
                 break;
             }
@@ -251,7 +237,6 @@ emu_result_t block_logic(block_handle_t* block) {
                 if (over_top >= 2) {
                     val_b = stack[--over_top];
                     val_a = stack[--over_top];
-                    // Using epsilon for float equality check
                     stack[over_top++] = bool_to_double(fabs(val_a - val_b) < DBL_EPSILON);
                 }
                 break;
@@ -296,20 +281,23 @@ emu_result_t block_logic(block_handle_t* block) {
                 break;
 
             default:
-                ESP_LOGE(TAG, "Unknown opcode: %d", ins->op);
-                return EMU_RESULT_CRITICAL(EMU_ERR_INVALID_DATA, block->cfg.block_idx);
+                EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, block->cfg.block_idx, TAG, "Invalid instruction: %d", ins->op);
         }
     }
 
-    // Logic Result (Boolean)
     bool final_bool = (over_top > 0) ? is_true(stack[0]) : false;
     
     // Set Output 0 (Result)
     emu_variable_t v_out = { .type = DATA_B };
     v_out.data.b = final_bool;
     
-    LOG_I(TAG, "CMP RESULT: %s", final_bool ? "TRUE" : "FALSE");
-    emu_block_set_output(block, &v_out, 0);
+    
+    
+    emu_result_t res = emu_block_set_output(block, &v_out, 0);
+    if (unlikely(res.code != EMU_OK)) {
+        EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output acces error: %s", EMU_ERR_TO_STR(res.code));
+    }
+    LOG_I(TAG, "[%d]result: %s", block->cfg.block_idx, final_bool ? "TRUE" : "FALSE");
     return res;
 }
 
@@ -328,14 +316,23 @@ static emu_err_t _clear_logic_expression_internals(logic_expression_t* expr){
     return EMU_OK;
 }
 
-emu_result_t emu_logic_block_free_expression(block_handle_t* block){
-    emu_result_t res = {.code = EMU_OK};
+void block_logic_free(block_handle_t* block){
     if(block && block->custom_data){
         logic_expression_t* expr = (logic_expression_t*)block->custom_data;
         _clear_logic_expression_internals(expr);
         free(expr);
         block->custom_data = NULL;
-        LOG_I(TAG, "Cleared logic block data");
+        LOG_D(TAG, "Cleared logic block data");
     }
-    return res;
+    return;
+}
+
+emu_result_t block_logic_verify(block_handle_t *block) {
+    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, "BLOCK_LOGIC", "Custom Data is NULL %d", block->cfg.block_idx);}
+    logic_expression_t *data = (logic_expression_t*)block->custom_data;
+    if (data->count == 0) {EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, "BLOCK_LOGIC", "Empty expression (count=0) %d", block->cfg.block_idx);}
+
+    if (data->count > 0 && data->code == NULL) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, "BLOCK_LOGIC", "Code pointer is NULL, %d", block->cfg.block_idx);}
+
+    return EMU_RESULT_OK();
 }

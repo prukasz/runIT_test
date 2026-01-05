@@ -1,14 +1,16 @@
 import struct
 import re
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union
 from dataclasses import dataclass
 from enum import IntEnum
 
 # Importy bazowe
-from BlockBase import BlockBase, BlockType
-from EmulatorMemory import EmulatorMemory, DataTypes
-from EmulatorMemoryReferences import Global
+from BlockBase import BlockBase
+from EmulatorMemory import EmulatorMemory
+from EmulatorMemoryReferences import Ref
 from BlocksStorage import BlocksStorage
+from Enums import emu_types_t, block_type_t, emu_block_header_t
+
 
 # =============================================================================
 # 1. OPCODES I INSTRUKCJE LOGICZNE
@@ -41,11 +43,9 @@ class LogicExpression:
     def __init__(self, expression: str, block_id: int):
         self.expression = expression.strip()
         self.block_id = block_id
-        
         self.constants: List[float] = [] 
         self.const_map: Dict[float, int] = {} 
         self.instructions: List[Instruction] = []
-        
         self._parse()
     
     def _tokenize(self, expr: str) -> List[Union[str, float]]:
@@ -169,8 +169,8 @@ class BlockLogic(BlockBase):
                  block_idx: int, 
                  storage: BlocksStorage,
                  expression: str,
-                 connections: List[Union[Global, None]] = None,
-                 en: Union[Global, None] = None
+                 connections: List[Union[Ref, None]] = None,
+                 en: Union[Ref, None] = None
                  ):
         
         self.parser = LogicExpression(expression, block_id=block_idx)
@@ -188,12 +188,12 @@ class BlockLogic(BlockBase):
 
         super().__init__(
             block_idx=block_idx,
-            block_type=BlockType.BLOCK_CMP, # Zmieniono nazwę w enum na BLOCK_CMP/LOGIC
+            block_type=block_type_t.BLOCK_LOGIC,
             storage=storage,
             inputs=processed_inputs,
             output_defs=[
-                (DataTypes.DATA_B, []), # Output 0: ENO
-                (DataTypes.DATA_B, [])  # Output 1: Result (Bool)
+                (emu_types_t.DATA_B, []), # Output 0: ENO
+                (emu_types_t.DATA_B, [])  # Output 1: Result (Bool)
             ]
         )
 
@@ -201,14 +201,14 @@ class BlockLogic(BlockBase):
     def get_custom_data_packet(self) -> List[bytes]:
         packets = []
         if self.parser.constants:
-            h1 = self._pack_common_header(0x01)
+            h1 = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CONST.value)
             c1 = struct.pack('B', len(self.parser.constants))
             p1 = bytearray()
             for c in self.parser.constants: p1.extend(struct.pack('<d', c))
             packets.append(h1 + c1 + p1)
 
         if self.parser.instructions:
-            h2 = self._pack_common_header(0x02)
+            h2 = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CUSTOM.value)
             c2 = struct.pack('B', len(self.parser.instructions))
             p2 = bytearray()
             for i in self.parser.instructions: p2.extend(struct.pack('<BB', i.opcode, i.index))
@@ -222,8 +222,8 @@ class BlockLogic(BlockBase):
         for pkt in custom_pkts:
             subtype = pkt[2] 
             hex_str = pkt.hex().upper()
-            if subtype == 0x01: lines.append(f"#ID:{self.block_idx} LOGIC Const Table# {hex_str}")
-            elif subtype == 0x02: lines.append(f"#ID:{self.block_idx} LOGIC Instructions# {hex_str}")
+            if subtype ==emu_block_header_t.EMU_H_BLOCK_PACKET_CONST.value: lines.append(f"#ID:{self.block_idx} LOGIC Const Table# {hex_str}")
+            elif subtype ==emu_block_header_t.EMU_H_BLOCK_PACKET_CUSTOM.value: lines.append(f"#ID:{self.block_idx} LOGIC Instructions# {hex_str}")
         return "\n".join(lines)
 
 # =============================================================================
@@ -234,11 +234,11 @@ if __name__ == "__main__":
     
     # Setup testowy
     mem_test = EmulatorMemory(1)
-    Global.register_memory(mem_test)
+    Ref.register_memory(mem_test)
     
     try:
-        mem_test.add("SensorA", DataTypes.DATA_F, 15.0)
-        mem_test.add("SensorB", DataTypes.DATA_F, 0.0)
+        mem_test.add("SensorA", emu_types_t.DATA_F, 15.0)
+        mem_test.add("SensorB", emu_types_t.DATA_F, 0.0)
         mem_test.recalculate_indices()
 
         # Wyrażenie: (in_1 > 10) && (in_2 == 0)
@@ -248,7 +248,7 @@ if __name__ == "__main__":
             block_idx=5, 
             mem_blocks=mem_test,
             expression=expr_str,
-            inputs_refs=[Global("SensorA"), Global("SensorB")]
+            inputs_refs=[Ref("SensorA"), Ref("SensorB")]
         )
         
         print("--- TEST BLOCK LOGIC ---")

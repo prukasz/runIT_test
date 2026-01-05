@@ -1,5 +1,6 @@
 #pragma once 
 #include "stdint.h"
+#include "esp_log.h"
 //comment to disable excess logging 
 //#define ENABLE_LOGGING 1
 
@@ -12,15 +13,55 @@
     #define LOG_W(tag, fmt, ...) ESP_LOGW(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
     #define LOG_D(tag, fmt, ...) ESP_LOGD(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
 #else
-    #define LOG_I(tag, fmt, ...) do {} while(0)
-    #define LOG_E(tag, fmt, ...) do {} while(0)
-    #define LOG_W(tag, fmt, ...) do {} while(0)
-    #define LOG_D(tag, fmt, ...) do {} while(0)
+    #define LOG_I(tag, fmt, ...) ((void)0)
+    #define LOG_E(tag, fmt, ...) ((void)0)
+    #define LOG_W(tag, fmt, ...) ((void)0)
+    #define LOG_D(tag, fmt, ...) ((void)0)
 #endif
 
-/**
-* @brief Emulator scope error codes
-*/
+// --- MACROS THAT LOG AND RETURN AUTOMATICALLY ---
+
+// Usage: EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "Msg");
+// (Do NOT put 'return' before this macro!)
+#define EMU_RETURN_CRITICAL(_code, _block_id, _tag, _fmt, ...) \
+    do { \
+        LOG_E(_tag, _fmt, ##__VA_ARGS__); \
+        return (emu_result_t){ \
+            .code = _code, \
+            .block_idx = _block_id, \
+            .abort = 1 \
+        }; \
+    } while(0)
+
+// Usage: EMU_RETURN_WARN(...)
+#define EMU_RETURN_WARN(_code, _block_id, _tag, _fmt, ...) \
+    do { \
+        LOG_W(_tag, _fmt, ##__VA_ARGS__); \
+        return (emu_result_t){ \
+            .code = _code, \
+            .block_idx = _block_id, \
+            .warning = 1 \
+        }; \
+    } while(0)
+
+// Usage: EMU_RETURN_NOTICE(...)
+#define EMU_RETURN_NOTICE(_code, _block_id, _tag, _fmt, ...) \
+    do { \
+        LOG_I(_tag, _fmt, ##__VA_ARGS__); \
+        return (emu_result_t){ \
+            .code = _code, \
+            .block_idx = _block_id, \
+            .notice = 1 \
+        }; \
+    } while(0)
+
+// Standard OK (No logging, used normally)
+#define EMU_RESULT_OK() \
+    (emu_result_t){ \
+        .code = EMU_OK, \
+        .block_idx = 0xFFFF, \
+    }
+
 typedef enum {
     EMU_OK = 0,
 
@@ -31,14 +72,12 @@ typedef enum {
     EMU_ERR_INVALID_STATE           = 0xE001,
     EMU_ERR_INVALID_ARG             = 0xE002,
     EMU_ERR_INVALID_DATA            = 0xE003,
-    EMU_ERR_ORD_START               = 0xE004,
     EMU_ERR_ORD_CANNOT_EXECUTE      = 0xE005,
-    EMU_ERR_ORD_STOP                = 0xE006,
-    EMU_ERR_ORD_START_BLOCKS        = 0xE007,
     EMU_ERR_PARSE_INVALID_REQUEST   = 0xE008,
     EMU_ERR_DENY                    = 0xE009,
-    EMU_ERR_NOT_FOUND               = 0xE00A,
+    EMU_ERR_PACKET_NOT_FOUND        = 0xE00A,
     EMU_ERR_UNLIKELY                = 0xEFFF,
+    EMU_ERR_PACKET_INCOMPLETE       = 0xE00B,
 
     /* --------------------------
      * MEMORY ERRORS (0xF...)
@@ -57,7 +96,6 @@ typedef enum {
     /* --------------------------
      * BLOCK SPECIFIC ERRORS (0xB...)
      * -------------------------- */
-    
     EMU_ERR_BLOCK_DIV_BY_ZERO       = 0xB001, 
     EMU_ERR_BLOCK_OUT_OF_RANGE      = 0xB002, 
     EMU_ERR_BLOCK_INVALID_PARAM     = 0xB003, 
@@ -68,9 +106,10 @@ typedef enum {
     EMU_ERR_BLOCK_WTD_TRIGGERED     = 0xB008,
     EMU_ERR_BLOCK_USE_INTERNAL_VAR  = 0xB009,
     EMU_ERR_BLOCK_INACTIVE          = 0xB00A,
+    
+    EMU_ERR_WTD_TRIGGERED           = 0xA000,
+    
 
-    EMU_ERR_PACKET_INCOMPLETE, 
-    EMU_ERR_PACKET_NOT_FOUND,
 } emu_err_t;
 
 typedef struct {
@@ -81,38 +120,11 @@ typedef struct {
     uint8_t     restart : 1;
     uint8_t     warning : 1; 
     uint8_t     notice  : 1;
-    uint8_t     reserved: 4; // Padding
+    uint8_t    _reserved: 4; // Padding
     
 } emu_result_t;
 
 const char* EMU_ERR_TO_STR(emu_err_t err_code);
+const char* EMU_ORDER_TO_STR(uint16_t order);
 
-#define EMU_RESULT_CRITICAL(_code, _block_id) \
-    (emu_result_t){ \
-        .code = _code, \
-        .block_idx = _block_id, \
-        .abort = 1 \
-    }
-
-#define EMU_RESULT_WARN(_code, _block_id) \
-    (emu_result_t){ \
-        .code = _code, \
-        .block_idx = _block_id, \
-        .warning = 1 \
-    }
-
-#define EMU_RESULT_OK() \
-    (emu_result_t){ \
-        .code = EMU_OK, \
-        .block_idx = 0xFFFF, \
-    }
-
-
-#define EMU_RETURN_ON_ERROR(expr) ({ \
-    emu_err_t _err = (expr);           \
-    if (_err != EMU_OK) return _err;   \
-    EMU_OK; \
-})
-
-extern const char *DATA_TYPE_TO_STR[9];
 

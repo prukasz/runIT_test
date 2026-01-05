@@ -1,6 +1,6 @@
 import sys
-from EmulatorMemory import EmulatorMemory, DataTypes
-from EmulatorMemoryReferences import Global
+from EmulatorMemory import EmulatorMemory, emu_types_t as DataTypes
+from EmulatorMemoryReferences import Ref
 from BlocksStorage import BlocksStorage
 from BlockBase import BlockBase
 from BlockFor import BlockFor, ForCondition, ForOperator
@@ -8,6 +8,7 @@ from BlockMath import BlockMath
 from BlockLogic import BlockLogic
 from FullDump import FullDump
 from BlockTimer import BlockTimer, TimerType
+from BlockSet import BlockSet
 
 
 if __name__ == "__main__":
@@ -16,22 +17,22 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     # 1. SETUP PAMIĘCI
     # -------------------------------------------------------------------------
-    Global.clear_memories()
+    Ref.clear_memories()
     
     # Konteksty pamięci
     mem_glob = EmulatorMemory(context_id=0) # Globalne
     mem_blk  = EmulatorMemory(context_id=1) # Wyjścia bloków
     
     # Rejestracja dla buildera referencji
-    Global.register_memory(mem_glob)
-    Global.register_memory(mem_blk)
+    Ref.register_memory(mem_glob)
+    Ref.register_memory(mem_blk)
 
     # Definicja zmiennych globalnych (Parametry symulacji)
-    mem_glob.add("Multiplier", DataTypes.DATA_F, 2.5)   # Mnożnik
-    mem_glob.add("BaseOffset", DataTypes.DATA_F, 10.0)  # Stały dodatek
+    mem_glob.add("Multiplier", DataTypes.DATA_F, 4)   # Mnożnik
+    mem_glob.add("RESULT", DataTypes.DATA_F, 10.0)  # Stały dodatek
     mem_glob.add("AlarmThreshold", DataTypes.DATA_UI8, 200) # Próg alarmowy
-    mem_glob.add("settings",  DataTypes.DATA_UI32, [10,20,999999], [3])
-    mem_glob.add("limit", DataTypes.DATA_UI32, 50) #loop
+    mem_glob.add("settings",  DataTypes.DATA_UI32, [10,20,999], [3])
+    mem_glob.add("limit", DataTypes.DATA_UI32, 2) #loop
     
     # Przeliczenie indeksów (niezbędne przed użyciem w blokach)
     mem_glob.recalculate_indices()
@@ -54,10 +55,10 @@ if __name__ == "__main__":
     blk_loop = BlockFor(
         block_idx=1,
         storage=storage,
-        chain_len=2,
+        chain_len=4,
         en=blk_timer.out[0],
         start=0.0,
-        limit=Global("settings")[2],
+        limit=Ref("settings")[Ref("limit")],
         step=1.0,
         condition=ForCondition.LT,
         operator=ForOperator.ADD
@@ -75,20 +76,34 @@ if __name__ == "__main__":
         en=blk_loop.out[0],
         connections=[
             blk_loop.out[1],      # in_1: Iterator pętli
-            Global("Multiplier")  # in_2: Globalny parametr
+            Ref("Multiplier")  # in_2: Globalny parametr
         ]
+    )
+    blk_save = BlockSet(
+        block_idx=3,
+        storage=storage,
+        target=Ref("RESULT"),
+        value=blk_scale.out[1]
     )
 
     blk_offset = BlockMath(
-        block_idx=3,
+        block_idx=4,
         storage=storage,
         en=blk_scale.out[0],
-        expression="in_1 + in_2",
+        expression="in_1 * in_2",
         connections=[
-            blk_scale.out[1],     # in_1: Wynik mnożenia
-            Global("BaseOffset")  # in_2: Offset
+            Ref("RESULT"), # in_1: Wynik mnożenia
+            Ref("limit")  # in_2: Offset
         ]
     )
+
+    blk_save2 = BlockSet(
+        block_idx=5,
+        storage=storage,
+        target=Ref("RESULT"),
+        value=blk_offset.out[1]
+    )
+
 
     # --- BLOK 200: LOGIC (Poza pętlą) ---
     # Działanie: Sprawdza czy ostatni wynik > AlarmThreshold
@@ -96,12 +111,12 @@ if __name__ == "__main__":
     #   1. blk_offset.out[1] -> Wynik ostatniej operacji w pętli
     #   2. Global("AlarmThreshold")
     blk_alarm = BlockLogic(
-        block_idx=4,
+        block_idx=6,
         storage=storage,
         expression="in_1 > in_2",
         connections=[
             blk_offset.out[1],       # in_1: Końcowy wynik obliczeń
-            Global("AlarmThreshold") # in_2: Próg
+            Ref("AlarmThreshold") # in_2: Próg
         ]
     )
 

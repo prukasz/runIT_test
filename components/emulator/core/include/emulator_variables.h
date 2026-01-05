@@ -74,7 +74,7 @@
     } emu_variable_t;
 
 
-    void emu_mem_free_context(emu_mem_t *mem);
+    void emu_mem_free_contexts();
     emu_mem_t* _get_mem_context(uint8_t id);
 
     emu_result_t emu_mem_alloc_context(uint8_t context_id, 

@@ -48,9 +48,9 @@ emu_result_t emu_loop_stop(emu_loop_handle_t handle);
 /**
 * @brief create loop and emulator body_loop_task
 */
-emu_loop_handle_t emu_loop_init(uint64_t period_us);
+emu_result_t emu_loop_init(uint64_t period_us, emu_loop_handle_t *out_handle);
 
 /** 
 *@brief set emulator tickrate
 */
-void emu_loop_set_period(emu_loop_handle_t handle, uint64_t period_us); 
+emu_result_t emu_loop_set_period(emu_loop_handle_t handle, uint64_t period_us); 

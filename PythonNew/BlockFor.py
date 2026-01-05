@@ -1,13 +1,11 @@
 import struct
-from typing import Union, List, Optional
+from typing import Union, List
 from enum import IntEnum
-
-# Importy z Twoich plików bazowych
-from BlockBase import BlockBase, BlockType
-from EmulatorMemory import EmulatorMemory, DataTypes
-from EmulatorMemoryReferences import Global
+from BlockBase import BlockBase
+from EmulatorMemory import EmulatorMemory
+from EmulatorMemoryReferences import Ref
 from BlocksStorage import BlocksStorage
-
+from Enums import emu_types_t, block_type_t, emu_block_header_t
 # =============================================================================
 # 1. ENUMY DLA BLOKU FOR (ZGODNE Z KODEM C)
 # =============================================================================
@@ -33,12 +31,12 @@ class BlockFor(BlockBase):
                  block_idx: int, 
                  storage: BlocksStorage,
                  chain_len: int,
-                 start: Union[float, int, Global, None] = 0.0,
-                 limit: Union[float, int, Global, None] = 0.0,
-                 step: Union[float, int, Global, None] = 1.0,
+                 start: Union[float, int, Ref, None] = 0.0,
+                 limit: Union[float, int, Ref, None] = 0.0,
+                 step: Union[float, int, Ref, None] = 1.0,
                  condition: ForCondition = ForCondition.LT,
                  operator: ForOperator = ForOperator.ADD,
-                 en: Union[Global, None] = None):
+                 en: Union[Ref, None] = None):
         
         self.config_start = 0.0
         self.config_limit = 0.0
@@ -55,7 +53,7 @@ class BlockFor(BlockBase):
             if isinstance(arg, (int, float)):
                 cfg_val = float(arg)
                 inp_ref = None # Wejście nieużywane, wartość z configu
-            elif isinstance(arg, Global):
+            elif isinstance(arg, Ref):
                 cfg_val = 0.0  # Placeholder w configu
                 inp_ref = arg  # Wejście używane (referencja)
             
@@ -67,12 +65,12 @@ class BlockFor(BlockBase):
 
         super().__init__(
             block_idx=block_idx,
-            block_type=BlockType.BLOCK_FOR,
+            block_type=block_type_t.BLOCK_FOR,
             storage=storage,
             inputs=processed_inputs,
             output_defs=[
-                (DataTypes.DATA_B, []), # Output 0: ENO
-                (DataTypes.DATA_D, [])  # Output 1: Iterator
+                (emu_types_t.DATA_B, []), # Output 0: ENO
+                (emu_types_t.DATA_D, [])  # Output 1: Iterator
             ]
         )
         
@@ -83,12 +81,12 @@ class BlockFor(BlockBase):
     def get_custom_data_packet(self) -> List[bytes]:
         packets = []
         # Packet 1: Doubles (01)
-        h1 = self._pack_common_header(0x01)
+        h1 = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CONST.value)
         p1 = struct.pack('<ddd', self.config_start, self.config_limit, self.config_step)
         packets.append(h1 + p1)
 
         # Packet 2: Config (02)
-        h2 = self._pack_common_header(0x02)
+        h2 = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CUSTOM.value)
         p2 = struct.pack('<HBB', self.chain_len, int(self.condition), int(self.operator))
         packets.append(h2 + p2)
         return packets
@@ -110,11 +108,11 @@ if __name__ == "__main__":
     from EmulatorMemory import EmulatorMemory
     
     # 1. Przygotowanie środowiska (tak jak w main.py)
-    Global.clear_memories()
+    Ref.clear_memories()
     mem_test = EmulatorMemory(1)
     
     # KLUCZOWE: Rejestracja pamięci, aby Global() widział zmienne 50_q0, 50_q1
-    Global.register_memory(mem_test)
+    Ref.register_memory(mem_test)
     
     try:
         # 2. Tworzenie bloku (To dodaje zmienne do mem_test)

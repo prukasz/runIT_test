@@ -25,8 +25,9 @@ typedef struct{
     double *constant_table;
 } expression_t;
 
-emu_result_t emu_parse_block_math(chr_msg_buffer_t *source, block_handle_t *block);
-void emu_parse_block_math_free(block_handle_t* block);
+emu_result_t block_math_parse(chr_msg_buffer_t *source, block_handle_t *block);
+void block_math_free(block_handle_t* block);
+emu_result_t block_math_verify(block_handle_t *block);
 
 
 

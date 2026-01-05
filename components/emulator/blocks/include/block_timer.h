@@ -47,4 +47,6 @@ typedef struct {
 ****************************************************************************/
 emu_result_t block_timer(block_handle_t *block);
 
-emu_result_t emu_parse_block_timer(chr_msg_buffer_t *source, block_handle_t *block);
+emu_result_t block_timer_parse(chr_msg_buffer_t *source, block_handle_t *block);
+void block_timer_free(block_handle_t *block);
+emu_result_t block_timer_verify(block_handle_t *block);

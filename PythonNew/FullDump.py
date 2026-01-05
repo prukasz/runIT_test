@@ -27,7 +27,7 @@ class Order(IntEnum):
     ORD_RESET_MGS_BUF         = 0x0003 
     
     # Loop Execution
-    ORD_EMU_LOOP_INIT         = 0x2137
+    ORD_EMU_LOOP_INIT         = 0x3000
     ORD_EMU_LOOP_START        = 0x1000
     ORD_EMU_LOOP_STOP         = 0x2000
 

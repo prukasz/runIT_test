@@ -1,11 +1,13 @@
 import struct
-from typing import Union, List, Optional, Any
+from typing import Union, List
 from enum import IntEnum
 
-from BlockBase import BlockBase, BlockType
-from EmulatorMemory import EmulatorMemory, DataTypes
-from EmulatorMemoryReferences import Global
+from BlockBase import BlockBase
+from EmulatorMemory import EmulatorMemory
+from EmulatorMemoryReferences import Ref
 from BlocksStorage import BlocksStorage # Do type hintingu
+from Enums import emu_types_t, block_type_t, emu_block_header_t
+
 
 class TimerType(IntEnum):
     TON = 0x01 # Turn On Delay
@@ -20,14 +22,13 @@ class BlockTimer(BlockBase):
                  block_idx: int, 
                  storage: BlocksStorage,
                  timer_type: TimerType = TimerType.TON, 
-                 pt: Union[int, float, Global, None] = 1000,
-                 en: Union[Global, None] = None,
-                 rst: Union[Global, None] = None):
+                 pt: Union[int, float, Ref, None] = 1000,
+                 en: Union[Ref, None] = None,
+                 rst: Union[Ref, None] = None):
         
         self.config_pt = 0
         self.timer_type = timer_type
         
-        # Przygotowanie wejść
         # [0] EN (Enable)
         # [1] PT (Preset Time)
         # [2] RST (Reset)
@@ -35,12 +36,11 @@ class BlockTimer(BlockBase):
         processed_inputs[0] = en
         processed_inputs[2] = rst
 
-        # Logika dla PT (Stała vs Global)
         if isinstance(pt, (int, float)):
             self.config_pt = int(pt)
-            processed_inputs[1] = None # Wejście nieużywane, wartość brana z configu
-        elif isinstance(pt, Global):
-            self.config_pt = 0 # Wartość domyślna w configu (ignorowana przez C jeśli jest wejście)
+            processed_inputs[1] = None 
+        elif isinstance(pt, Ref):
+            self.config_pt = 0 
             processed_inputs[1] = pt
         else:
             self.config_pt = 0
@@ -48,33 +48,31 @@ class BlockTimer(BlockBase):
 
         super().__init__(
             block_idx=block_idx,
-            block_type=BlockType.BLOCK_TIMER, # Upewnij się, że masz to w enumie w BlockBase
+            block_type=block_type_t.BLOCK_TIMER,
             storage=storage,
             inputs=processed_inputs,
             output_defs=[
-                (DataTypes.DATA_B, []),    # Output 0: Q (Bool)
-                (DataTypes.DATA_UI32, [])  # Output 1: ET (Elapsed Time ms)
+                (emu_types_t.DATA_B, []),    # Output 0: Q (Bool)
+                (emu_types_t.DATA_UI32, [])  # Output 1: ET (Elapsed Time ms)
             ]
         )
 
     def get_custom_data_packet(self) -> List[bytes]:
         """
-        Generuje pakiet konfiguracyjny timera.
         Format C: [BB] [Type] [01] [ID_L] [ID_H] [TimerType:1] [DefaultPT:4]
         """
         packets = []
         
         # Header: BB BlockType Subtype(01) BlockID
-        header = self._pack_common_header(0x01)
+        header = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CONST.value)
         
-        # Payload: TimerType(1B) DefaultPT(4B Little Endian)
+        # Payload:TimerType(1B) + cfg PT
         payload = struct.pack('<BI', int(self.timer_type), self.config_pt)
         
         packets.append(header + payload)
         return packets
 
     def __str__(self):
-        """Formatowanie z komentarzami"""
         base_output = self.get_hex_with_comments()
         lines = [base_output]
         
@@ -82,7 +80,6 @@ class BlockTimer(BlockBase):
         if custom_pkts:
             hex_str = custom_pkts[0].hex().upper()
             lines.append(f"#ID:{self.block_idx} TIMER Config (Type/PT)# {hex_str}")
-            
         return "\n".join(lines)
 
 # ==========================================
@@ -93,7 +90,7 @@ if __name__ == "__main__":
     
     # Setup testowy
     mem_blk = EmulatorMemory(1)
-    Global.register_memory(mem_blk)
+    Ref.register_memory(mem_blk)
     storage = BlocksStorage(mem_blk)
     
     try:
@@ -103,7 +100,7 @@ if __name__ == "__main__":
             storage=storage,
             timer_type=TimerType.TON,
             pt=5000,
-            en=Global("StartButton") # Zakładamy, że ta zmienna istnieje
+            en=Ref("StartButton") # Zakładamy, że ta zmienna istnieje
         )
         
         # Przykład 2: Timer z czasem ze zmiennej (TOF)
@@ -111,9 +108,9 @@ if __name__ == "__main__":
             block_idx=11,
             storage=storage,
             timer_type=TimerType.TOF,
-            pt=Global("DelaySettings"),
+            pt=Ref("DelaySettings"),
             en=blk_ton.out[0], # Kaskada
-            rst=Global("ResetCmd")
+            rst=Ref("ResetCmd")
         )
         
         mem_blk.recalculate_indices()

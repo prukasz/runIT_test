@@ -1,37 +1,29 @@
 import struct
 from typing import List, Tuple, Optional, Any, Union
-from enum import IntEnum
+from Enums import emu_types_t, block_type_t, emu_block_header_t
 
-from EmulatorMemory import EmulatorMemory, DataTypes
-from EmulatorMemoryReferences import Global
+from EmulatorMemory import EmulatorMemory
+from EmulatorMemoryReferences import Ref
 
 # Cykliczny import workaround (dla type hinting)
 # from BlocksStorage import BlocksStorage 
 
-class BlockType(IntEnum):
-    BLOCK_NONE  = 0
-    BLOCK_MATH  = 1
-    BLOCK_SET_GLOBAL = 2
-    BLOCK_CMP   = 3 # Logic
-    BLOCK_FOR   = 8
-    BLOCK_TIMER = 9
-    BLOCK_LOGIC = 3 
 
 class BlockOutputProxy:
     def __init__(self, block_idx: int):
         self.block_idx = block_idx
 
-    def __getitem__(self, idx: int) -> Global:
+    def __getitem__(self, idx: int) -> Ref:
         alias = f"{self.block_idx}_q{idx}"
-        return Global(alias, ref_id=1)
+        return Ref(alias, ref_id=1)
 
 class BlockBase:
     def __init__(self, 
                  block_idx: int, 
-                 block_type: BlockType,
+                 block_type: block_type_t,
                  storage: Any,
-                 inputs: List[Union[Global, Any]],
-                 output_defs: List[Tuple[DataTypes, List[int]]]
+                 inputs: List[Union[Ref, Any]],
+                 output_defs: List[Tuple[emu_types_t, List[int]]]
                  ):
         
         self.block_idx = block_idx
@@ -39,29 +31,28 @@ class BlockBase:
         self.inputs = inputs
         self.output_defs = output_defs
         
-        # 1. Rejestracja wyjść
+        #Outputs Registration
         self.q_cnt = len(output_defs)
         for i, (dtype, dims) in enumerate(output_defs):
             alias = f"{block_idx}_q{i}"
             storage.mem_blocks.add(alias, dtype, 0, dims=dims)
 
-        # 2. Rejestracja bloku
         storage.add_block(self)
 
-        # 3. Maska (obliczana na podstawie inputs, nie connections!)
         self.in_cnt = len(inputs)
         self.in_connected_mask = 0
         for i, inp in enumerate(inputs):
             if inp is not None:
                 self.in_connected_mask |= (1 << i)
 
+        #outputs connection(for others)
         self.out = BlockOutputProxy(block_idx)
 
     def _pack_common_header(self, subtype: int) -> bytes:
-        return struct.pack("<BBBH", 0xBB, self.block_type, subtype, self.block_idx)
+        return struct.pack("<BBBH", emu_block_header_t.EMU_H_BLOCK_START.value, self.block_type, subtype, self.block_idx)
 
     def get_definition_packet(self) -> bytes:
-        header = self._pack_common_header(0x00)
+        header = self._pack_common_header(emu_block_header_t.EMU_H_BLOCK_PACKET_CFG.value)
         payload = struct.pack("<BHB", self.in_cnt, self.in_connected_mask, self.q_cnt)
         return header + payload
 
@@ -70,9 +61,9 @@ class BlockBase:
         for i in range(self.q_cnt):
             alias = f"{self.block_idx}_q{i}"
             try:
-                ref_node = Global(alias).build()
+                ref_node = Ref(alias).build()
                 node_bytes = ref_node.to_bytes()
-                subtype = 0xE0 + i
+                subtype = emu_block_header_t.EMU_H_BLOCK_PACKET_OUT_START.value + i
                 packets.append(self._pack_common_header(subtype) + node_bytes)
             except Exception as e:
                 print(f"[ERROR] Block {self.block_idx} Output {i}: {e}")
@@ -85,7 +76,7 @@ class BlockBase:
             try:
                 access_node = inp.build()
                 node_bytes = access_node.to_bytes()
-                subtype = 0xF0 + i
+                subtype = emu_block_header_t.EMU_H_BLOCK_PACKET_IN_START.value + i
                 packets.append(self._pack_common_header(subtype) + node_bytes)
             except Exception as e:
                 print(f"[ERROR] Block {self.block_idx} Input {i}: {e}")
@@ -107,7 +98,7 @@ class BlockBase:
             hex_str = pkt.hex().upper()
             # Pobierz indeks z bajtu subtype (offset 2)
             subtype = pkt[2]
-            idx = subtype - 0xE0
+            idx = subtype - emu_block_header_t.EMU_H_BLOCK_PACKET_OUT_START.value
             lines.append(f"#ID:{self.block_idx} Out[{idx}]# {hex_str}")
 
         # 3. Inputs (F0...)
@@ -115,7 +106,7 @@ class BlockBase:
             hex_str = pkt.hex().upper()
             # Pobierz indeks z bajtu subtype (offset 2)
             subtype = pkt[2]
-            idx = subtype - 0xF0
+            idx = subtype - emu_block_header_t.EMU_H_BLOCK_PACKET_IN_START.value
             lines.append(f"#ID:{self.block_idx} In[{idx}]# {hex_str}")
 
         return "\n".join(lines)
@@ -129,9 +120,9 @@ class BlockBase:
                 # Możemy spróbować zgadnąć typ custom packetu
                 subtype = pkt[2]
                 hex_str = pkt.hex().upper()
-                if subtype == 0x01:
+                if subtype == emu_block_header_t.EMU_H_BLOCK_PACKET_CONST.value:
                     suffix = "Const/Limits"
-                elif subtype == 0x02:
+                elif subtype == emu_block_header_t.EMU_H_BLOCK_PACKET_CUSTOM.value:
                     suffix = "Code/Settings"
                 else:
                     suffix = f"Custom[{subtype:02X}]"
