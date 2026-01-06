@@ -289,11 +289,11 @@ emu_result_t block_logic(block_handle_t* block) {
     
     // Set Output 0 (Result)
     emu_variable_t v_out = { .type = DATA_B };
-    v_out.data.b = final_bool;
-    
-    
-    
+    v_out.data.b = true;
     emu_result_t res = emu_block_set_output(block, &v_out, 0);
+    v_out.data.b = final_bool;
+    res = emu_block_set_output(block, &v_out, 1);
+
     if (unlikely(res.code != EMU_OK)) {
         EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output acces error: %s", EMU_ERR_TO_STR(res.code));
     }

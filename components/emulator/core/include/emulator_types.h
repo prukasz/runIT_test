@@ -33,17 +33,7 @@ static const uint8_t TYPE_SIZES[TYPES_COUNT] = {
     1  // DATA_B
     };
 
-static const char *DATA_TYPE_TO_STR[9] = {
-    "DATA_UI8",
-    "DATA_UI16",
-    "DATA_UI32",
-    "DATA_I8",
-    "DATA_I16",
-    "DATA_I32",
-    "DATA_F",
-    "DATA_D",
-    "DATA_B"
-};
+extern const char *DATA_TYPE_TO_STR[9];
 
 /**
 * @brief Orders for emulator interface to execute
@@ -142,6 +132,8 @@ typedef enum{
     BLOCK_MATH = 0x01,
     BLOCK_SET = 0x02,
     BLOCK_LOGIC = 0x03,
+    BLOCK_COUNTER = 0x04,
+    BLOCK_CLOCK = 0x05,
     BLOCK_FOR = 0x08,
     BLOCK_TIMER = 0x09,
 }block_type_t;

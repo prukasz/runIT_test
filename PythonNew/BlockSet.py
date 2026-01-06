@@ -14,7 +14,7 @@ class BlockSet(BlockBase):
         
         if not isinstance(target, Ref):
             raise ValueError(f"BlockSet ID {block_idx}: Target (Input 0) must be a Reference (Ref), got {type(target)}")
-        if target.ref_id != 1:
+        if target.ref_id != 0:
              print(f"[WARNING] BlockSet ID {block_idx}: Target Ref ID is {target.ref_id}, expected 1 (Global)")
 
         super().__init__(

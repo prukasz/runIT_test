@@ -7,7 +7,7 @@
 /*Aviable operations*/
 typedef enum {
     CMP_OP_VAR      = 0x00, 
-    CMP_OP_CONST    = 0x09, 
+    CMP_OP_CONST    = 0x01, 
 
     CMP_OP_GT       = 0x10, // >
     CMP_OP_LT       = 0x11, // <

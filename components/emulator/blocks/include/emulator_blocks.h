@@ -77,6 +77,45 @@ __attribute((always_inline)) static inline bool emu_block_check_inputs_updated(b
     return true;
 }
 
+__attribute((always_inline)) static inline bool emu_block_check_input_updated(block_handle_t *block, uint8_t num){
+    if (unlikely(!block || num >= block->cfg.in_cnt)) {return false;}
+    if ((block->cfg.in_connected >> num) & 0x01) {
+        mem_acces_s_t *access_node = (mem_acces_s_t*)block->inputs[num];
+        if (unlikely(!access_node)) {return false;}
+        emu_mem_t *mem = s_mem_contexts[access_node->reference_id];
+        if (unlikely(!mem)) return false; 
+        emu_mem_instance_iter_t meta;
+        meta.raw = (uint8_t*)mem->instances[access_node->target_type][access_node->target_idx];
+        if (unlikely(meta.raw == NULL)) {LOG_E(_TAG2, "NULL instance");return false;}
+        if (meta.single->updated == 0) {return false;}
+        else{return true;}
+    }
+    return false;
+}
+__attribute((always_inline)) static inline bool emu_block_check_en(block_handle_t *block, uint8_t num) {
+    if (unlikely(!block || num >= block->cfg.in_cnt)) {return false;}
+    if ((block->cfg.in_connected >> num) & 0x01) {
+        mem_acces_s_t *access_node = (mem_acces_s_t*)block->inputs[num];
+        if (unlikely(!access_node)) {return false;}
+        emu_mem_t *mem = s_mem_contexts[access_node->reference_id];
+        if (unlikely(!mem)) return false; 
+        emu_mem_instance_iter_t meta;
+        meta.raw = (uint8_t*)mem->instances[access_node->target_type][access_node->target_idx];
+        if (unlikely(meta.raw == NULL)) {LOG_E(_TAG2, "NULL instance");return false;}
+        if (meta.single->updated == 0) {return false;}
+        else{
+            emu_variable_t var = mem_get(block->inputs[num], false);
+            if (likely(var.error == EMU_OK)) {
+                return (emu_var_to_double(var) > 0.5);
+            }
+        }
+    }
+    return false;
+}
+    
+
+
+
 __attribute((always_inline)) static inline emu_result_t emu_block_set_output(block_handle_t *block, emu_variable_t *var, uint8_t num) {
     if (unlikely(!block || !var)) {
         EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, num, _TAG2, "NULL block or var pointer");

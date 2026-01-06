@@ -9,6 +9,17 @@
 
 static const char *TAG = "EMU_VARIABLES";
 
+const char *DATA_TYPE_TO_STR[9] = {
+    "DATA_UI8",
+    "DATA_UI16",
+    "DATA_UI32",
+    "DATA_I8",
+    "DATA_I16",
+    "DATA_I32",
+    "DATA_F",
+    "DATA_D",
+    "DATA_B"
+};
 
 #define MAX_MEM_CONTEXTS 8 
 emu_mem_t* s_mem_contexts[MAX_MEM_CONTEXTS] = {NULL};

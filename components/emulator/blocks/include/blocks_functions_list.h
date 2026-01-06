@@ -4,6 +4,8 @@
 #include "block_set.h"
 #include "block_for.h"
 #include "block_timer.h"
+#include "block_counter.h"
+#include "block_clock.h"
 
 extern emu_block_func blocks_main_functions_table[255];
 extern emu_block_parse_func emu_block_parsers_table[255];

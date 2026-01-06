@@ -1,7 +1,3 @@
-/*
- * components.zip/emulator/blocks/block_for.c
- */
-
 #include "block_for.h"
 #include "emulator_blocks.h"
 #include "emulator_errors.h"
