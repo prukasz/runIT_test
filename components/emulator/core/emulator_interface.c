@@ -55,7 +55,7 @@ void emu_interface_task(void* params){
     
     // Initial Reset
     emu_parse_manager(PARSE_RESTART);
-    emu_refs_system_init(1000, 5000);
+    emu_access_system_init(1000, 5000);
 
     while(1){
         if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &current_order, portMAX_DELAY)){

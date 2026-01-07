@@ -4,6 +4,7 @@ from EmulatorMemoryReferences import Ref
 from BlocksStorage import BlocksStorage
 from BlockLogic import BlockLogic
 from BlockClock import BlockClock
+from BlockMath import BlockMath
 from BlockCounter import BlockCounter, CounterConfig
 from BlockSet import BlockSet
 from FullDump import FullDump
@@ -28,6 +29,7 @@ if __name__ == "__main__":
     # Zmienne globalne
     mem_glob.add("x", DataTypes.DATA_F, 0.0) # Zmienna sterująca / licznik pętli
     mem_glob.add("en", DataTypes.DATA_B, True) # Zmienna sterująca
+    mem_glob.add("array", DataTypes.DATA_UI32, [3]+99*[0], [100])
     
     # Przeliczenie indeksów globalnych
     mem_glob.recalculate_indices()
@@ -54,6 +56,7 @@ if __name__ == "__main__":
         ]
     )
 
+
     # --- BLOK 1: CLOCK ---
     # Generuje impulsy, dopóki Logic zwraca True.
     # EN = blk_logic.out[0] (Wynik porównania)
@@ -62,7 +65,7 @@ if __name__ == "__main__":
         block_idx=1,
         storage=storage,
         enable=blk_logic.out[1], 
-        period_ms=10000.0,
+        period_ms=1000.0,
         width_ms=100.0
     )
 
@@ -72,32 +75,38 @@ if __name__ == "__main__":
         storage=storage,
         condition = ForCondition.LT,
         start=0,
-        limit=100,
+        limit=1000,
         step=1,
         chain_len=2,
         en=blk_clock.out[0]
     )
 
-    blk_counter = BlockCounter(
+
+    blk_math = BlockMath(
         block_idx=3,
         storage=storage,
-        cu=blk_for.out[0],
-        reset=False,        # Stała False
-        step=1.0,           # Krok
-        start_val=0.0,      # Start od 0
-        limit_max=1000,
-        cfg_mode=CounterConfig.CFG_ON_RISING # Zliczanie impulsów (Counter)
+        expression="in_1*in_2",
+        en=blk_for.out[1],
+        connections=[Ref("array"), Ref("x")]
     )
 
-    # --- BLOK 3: SET ---
-    # Przepisuje wartość licznika do zmiennej globalnej "x".
-    # To zamyka pętlę sprzężenia zwrotnego: x rośnie -> Logic sprawdza x -> Clock działa -> Counter rośnie -> Set aktualizuje x.
-    blk_set = BlockSet(
+    blk_math = BlockMath(
         block_idx=4,
         storage=storage,
-        target=Ref("x"),
-        value=blk_counter.out[1] # CV (Current Value)
+        expression="in_1",
+        en=blk_for.out[1],
+        connections=[Ref("array")]
     )
+    
+    # blk_set2 = BlockSet(
+    #     block_idx=5,
+    #     storage=storage,
+    #     target=Ref("x"),
+    #     value=blk_math.out[1] # CV (Current Value))
+    # )
+
+    
+
 
     # -------------------------------------------------------------------------
     # 3. FINALIZACJA

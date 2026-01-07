@@ -9,13 +9,18 @@
 
 static const char* TAG = "BLOCK_CLOCK";
 
-// Inputs
-#define CLK_IN_EN      0
+typedef struct {
+    double   default_period;
+    double   default_width;
+    uint64_t start_time_ms; // 
+    bool     prev_en;       //
+} block_clock_handle_t;
+
+#define CLK_IN_EN      0 //If input is updated and true then block will activate
 #define CLK_IN_PERIOD  1
 #define CLK_IN_WIDTH   2
-
-// Outputs
 #define CLK_OUT_Q      0
+
 
 extern emu_loop_handle_t loop_handle; 
 
@@ -23,9 +28,7 @@ emu_result_t block_clock(block_handle_t *block) {
 
     block_clock_handle_t *data = (block_clock_handle_t*)block->custom_data;
 
-    bool en = emu_block_check_en(block, CLK_IN_EN);
-
-    LOG_I(TAG, "EN %d", en);
+    bool en = emu_block_check_and_get_en(block, CLK_IN_EN);
     if (!en) {
         data->prev_en = false;
         emu_variable_t v_out = { .type = DATA_B, .data.b = false };
@@ -34,18 +37,11 @@ emu_result_t block_clock(block_handle_t *block) {
         return EMU_RESULT_OK();
     }
 
-    
     double period = data->default_period;
-    if (block->inputs[CLK_IN_PERIOD] && emu_block_check_input_updated(block, CLK_IN_PERIOD)) {
-        emu_variable_t v = mem_get(block->inputs[CLK_IN_PERIOD], false);
-        if (likely(v.error == EMU_OK)) period = emu_var_to_double(v);
-    }
+    if(emu_check_updated(block, CLK_IN_PERIOD)){MEM_GET(&period, block->inputs[CLK_IN_PERIOD]);}
 
     double width = data->default_width;
-    if (block->inputs[CLK_IN_WIDTH] && emu_block_check_input_updated(block, CLK_IN_WIDTH)) {
-        emu_variable_t v = mem_get(block->inputs[CLK_IN_WIDTH], false);
-        if (likely(v.error == EMU_OK)) width = emu_var_to_double(v);
-    }
+    if(emu_check_updated(block, CLK_IN_WIDTH)){MEM_GET(&width, block->inputs[CLK_IN_WIDTH]);}
 
     if (period < 1.0) period = 1.0; 
     if (width < 0.0) width = 0.0;

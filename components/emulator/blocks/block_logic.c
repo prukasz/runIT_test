@@ -190,25 +190,27 @@ static emu_err_t _emu_parse_logic_const_msg(uint8_t *data, uint16_t len, size_t 
 
 emu_result_t block_logic(block_handle_t* block) {
     // 1. Sprawdzenie aktywności (Notice)
-    if (!emu_block_check_inputs_updated(block)) {
-        EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");
-    }
+    // if (!emu_block_check_inputs_updated(block)) {
+    //     EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");
+    // }
+    
+    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
 
     logic_expression_t* eval = (logic_expression_t*)block->custom_data;
     double stack[16]; 
     int8_t over_top = 0;
     double val_a, val_b; 
-
+    double tmp;
+    emu_result_t res;
     for (int8_t i = 0; i < eval->count; i++) {
         logic_instruction_t *ins = &(eval->code[i]);
           
         switch (ins->op) {
             case CMP_OP_VAR: {
-                emu_variable_t var = mem_get(block->inputs[ins->input_index], false);
-                if (likely(var.error == EMU_OK)) {
-                    stack[over_top++] = emu_var_to_double(var);
+                if (likely(!(res.code=MEM_GET(&tmp, block->inputs[ins->input_index])))) {
+                    stack[over_top++] = tmp;
                 } else {
-                    EMU_RETURN_CRITICAL(var.error, block->cfg.block_idx, TAG, "Input acces error: %s", EMU_ERR_TO_STR(var.error));
+                    EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Input acces error: %s", EMU_ERR_TO_STR(res.code));
                 }
                 break;
             }
@@ -290,7 +292,7 @@ emu_result_t block_logic(block_handle_t* block) {
     // Set Output 0 (Result)
     emu_variable_t v_out = { .type = DATA_B };
     v_out.data.b = true;
-    emu_result_t res = emu_block_set_output(block, &v_out, 0);
+    res = emu_block_set_output(block, &v_out, 0);
     v_out.data.b = final_bool;
     res = emu_block_set_output(block, &v_out, 1);
 

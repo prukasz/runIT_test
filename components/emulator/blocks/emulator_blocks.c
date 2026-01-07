@@ -150,7 +150,7 @@ emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t **blocks_l
             }
 
             if (block->cfg.q_cnt > 0 && block->outputs == NULL) {
-                block->outputs = (emu_mem_instance_iter_t*)calloc(block->cfg.q_cnt, sizeof(emu_mem_instance_iter_t));
+                block->outputs = (void**)calloc(block->cfg.q_cnt, sizeof(void*));
                 if (!block->outputs) EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, blk_idx, TAG, "Outputs alloc failed");
             }
 
@@ -222,7 +222,7 @@ emu_result_t emu_parse_blocks_verify_all(block_handle_t **blocks_list, uint16_t 
             }
 
             for (uint8_t q_idx = 0; q_idx < block->cfg.q_cnt; q_idx++) {
-                if (block->outputs[q_idx].raw == NULL) {
+                if (block->outputs[q_idx] == NULL) {
                     EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, i, TAG, "Block %d Output %d is NULL (not linked to memory)", (int)i, q_idx);
                 }
             }
@@ -235,6 +235,50 @@ emu_result_t emu_parse_blocks_verify_all(block_handle_t **blocks_list, uint16_t 
             res = verify_func(block);
         }
         if (res.code != EMU_OK && res.abort){EMU_RETURN_CRITICAL(res.code, i, TAG, "Block content verify failed for block %d", i);}
+    }
+    return EMU_RESULT_OK();
+}
+
+emu_result_t emu_parse_block_inputs(chr_msg_buffer_t *source, block_handle_t *block) {
+    uint8_t *data; size_t len, b_size = chr_msg_buffer_size(source);
+    
+    for (size_t i = 0; i < b_size; i++) {
+        chr_msg_buffer_get(source, i, &data, &len);
+        if (len > 5 && data[0] == 0xBB && data[2] >= 0xF0) {
+            uint16_t b_idx; memcpy(&b_idx, &data[3], 2);
+            if (b_idx == block->cfg.block_idx){
+                uint8_t r_idx = data[2] - 0xF0;
+                if (r_idx < block->cfg.in_cnt) {
+                    uint8_t *ptr = &data[5]; size_t pl_len = len - 5;
+                    LOG_I(TAG, "Parsing Input %d for block %d", r_idx, b_idx);
+                    
+                    emu_err_t err = mem_access_parse_node_recursive(&ptr, &pl_len, &block->inputs[r_idx]);
+                    if (err != EMU_OK) {EMU_RETURN_CRITICAL(err, i,TAG_REF, "Parse Failed Block %d Input %d: %s", b_idx, r_idx, EMU_ERR_TO_STR(err));}
+                }
+            }
+        }
+    }
+    return EMU_RESULT_OK();
+}
+
+emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *block) {
+    uint8_t *data; size_t len, b_size = chr_msg_buffer_size(source);
+    
+    for (size_t i = 0; i < b_size; i++) {
+        chr_msg_buffer_get(source, i, &data, &len);
+        if (len > 5 && data[0] == 0xBB && data[2] >= 0xE0) {
+            uint16_t b_idx; memcpy(&b_idx, &data[3], 2);
+            if (b_idx == block->cfg.block_idx){
+                uint8_t r_idx = data[2] - 0xE0;
+                if (r_idx < block->cfg.q_cnt) {
+                    uint8_t *ptr = &data[5]; size_t pl_len = len - 5;
+                    LOG_I(TAG, "Parsing Input %d for block %d", r_idx, b_idx);
+                    
+                    emu_err_t err = mem_access_parse_node_recursive(&ptr, &pl_len, &block->outputs[r_idx]);
+                    if (err != EMU_OK) {EMU_RETURN_CRITICAL(err, i,TAG_REF, "Parse Failed Block %d Input %d: %s", b_idx, r_idx, EMU_ERR_TO_STR(err));}
+                }
+            }
+        }
     }
     return EMU_RESULT_OK();
 }

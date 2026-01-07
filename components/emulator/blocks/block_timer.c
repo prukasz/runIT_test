@@ -27,31 +27,15 @@ emu_result_t block_timer(block_handle_t *block) {
     block_timer_t* data = (block_timer_t*)block->custom_data;
     emu_variable_t var;
     emu_result_t res = EMU_RESULT_OK();
-    
-    bool IN = true; 
-    if (block->inputs[0]){
-        var = mem_get(block->inputs[BLOCK_TIMER_IN_EN], false);
-        if (likely(var.error == EMU_OK)) {
-            IN = (bool)emu_var_to_double(var);
-        }else{
-            EMU_RETURN_CRITICAL(var.error, block->cfg.block_idx, TAG, "Input acces error (EN) %s", EMU_ERR_TO_STR(var.error));
-        }
-    }
-    
+
+    bool IN = emu_block_check_and_get_en(block, BLOCK_TIMER_IN_EN);
+
     // RST (Reset)
     bool RST = false;
-    if(block->inputs[BLOCK_TIMER_IN_RST]){
-        var = mem_get(block->inputs[BLOCK_TIMER_IN_RST], false);
-        if (likely(var.error == EMU_OK)) {RST = (bool)emu_var_to_double(var);}
-        else{EMU_RETURN_CRITICAL(var.error, block->cfg.block_idx, TAG, "Input acces error (RST) %s", EMU_ERR_TO_STR(var.error));}
-    }
-    
+    if(emu_check_updated(block, BLOCK_TIMER_IN_RST)){MEM_GET(&RST, block->inputs[BLOCK_TIMER_IN_RST]);}
+
     uint32_t PT = data->default_pt; 
-    if (block->inputs[BLOCK_TIMER_IN_PT]){
-        var = mem_get(block->inputs[BLOCK_TIMER_IN_PT], false);
-        if (var.error == EMU_OK) {PT = (uint32_t)emu_var_to_double(var);}
-        else{EMU_RETURN_CRITICAL(var.error, block->cfg.block_idx, TAG, "Input acces error (PT) %s", EMU_ERR_TO_STR(var.error));}
-    }
+    if(emu_check_updated(block, BLOCK_TIMER_IN_PT)){MEM_GET(&PT, block->inputs[BLOCK_TIMER_IN_PT]);}
 
     block_timer_type_t type = data->type;
 

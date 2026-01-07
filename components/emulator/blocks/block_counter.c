@@ -28,23 +28,16 @@ emu_result_t block_counter(block_handle_t *block) {
     emu_result_t res;
     emu_variable_t var;
 
-    if (block->inputs[IN_3_STEP] && emu_block_check_input_updated(block, IN_3_STEP)) {
-        var = mem_get(block->inputs[IN_3_STEP], false);
-        if (likely(var.error == EMU_OK)) data->step = emu_var_to_double(var);
-    }
-    // MAX
-    if (block->inputs[IN_4_LIMIT_MAX] && emu_block_check_input_updated(block, IN_4_LIMIT_MAX)) {
-        var = mem_get(block->inputs[IN_4_LIMIT_MAX], false);
-        if (likely(var.error == EMU_OK)) data->max = emu_var_to_double(var);
-    }
-    // MIN
-    if (block->inputs[IN_5_LIMIT_MIN] && emu_block_check_input_updated(block, IN_5_LIMIT_MIN)) {
-        var = mem_get(block->inputs[IN_5_LIMIT_MIN], false);
-        if (likely(var.error == EMU_OK)) data->min = emu_var_to_double(var);
-    }
+    if (emu_check_updated(block, IN_3_STEP)) {MEM_GET(&data->step, block->inputs[IN_3_STEP]);}
+
+
+    if (emu_check_updated(block, IN_4_LIMIT_MAX)) {MEM_GET(&data->max, block->inputs[IN_4_LIMIT_MAX]);}
+    
+    if (emu_check_updated(block, IN_5_LIMIT_MIN)) {MEM_GET(&data->min, block->inputs[IN_5_LIMIT_MIN]);}
+
 
     // RESET (Priority 1)
-    if (emu_block_check_en(block, IN_2_RESET)) {
+    if (emu_block_check_and_get_en(block, IN_2_RESET)) {
             data->current_val = data->start;
             data->prev_ctu = false; // Clear edge detection state
             data->prev_ctd = false;
@@ -53,8 +46,7 @@ emu_result_t block_counter(block_handle_t *block) {
 
     // CTU
     
-
-    if (emu_block_check_en(block, IN_0_CTU)) {
+    if (emu_block_check_and_get_en(block, IN_0_CTU)) {
         
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctu){
@@ -62,18 +54,18 @@ emu_result_t block_counter(block_handle_t *block) {
                 data->prev_ctu = true;
                 if (data->current_val > data->max) data->current_val = data->max;
                 goto finish; // CTU handled, skip CTD
-            }    
+            }  
         }else{
             data->current_val += data->step;
             if (data->current_val > data->max) data->current_val = data->max;
             data->prev_ctu = true;
             goto finish;
         }
-    }else{
-        data->prev_ctu = false;
-    }
+        }else{
+            data->prev_ctu = false;
+        }
 
-        if (emu_block_check_en(block, IN_0_CTU)) {
+        if (emu_block_check_and_get_en(block, IN_1_CTD)) {
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctd){
                 data->current_val -= data->step;
@@ -87,14 +79,15 @@ emu_result_t block_counter(block_handle_t *block) {
             data->prev_ctd = true;
             goto finish;
         }
-    }else{
-        data->prev_ctu = false;
-    }
-
+        }else{
+            data->prev_ctu = false;
+        }
+LOG_I(TAG, "FU");
 return EMU_RESULT_OK();
 finish: 
-    LOG_I(TAG, "CURRENT, START, STEP, MAX, MIN: %lf, %lf, %lf, %lf, %lf", data->current_val, start, data->step, data->max, data->min);
+    //LOG_I(TAG, "CURRENT, START, STEP, MAX, MIN: %lf, %lf, %lf, %lf, %lf", data->current_val, start, data->step, data->max, data->min);
     // OUT_0: ENO (True/Active)
+    LOG_I(TAG, "Setting outputs in counter block");
     emu_variable_t v_eno = { .type = DATA_B, .data.b = true };
     res = emu_block_set_output(block, &v_eno, OUT_0_ENO);
     if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Set ENO Error");

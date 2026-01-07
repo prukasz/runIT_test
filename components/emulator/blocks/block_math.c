@@ -198,29 +198,20 @@ emu_result_t block_math(block_handle_t* block){
     emu_result_t res = {.code = EMU_OK};
     
     if (!emu_block_check_inputs_updated(block)) {EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
-
-    emu_variable_t var;
-    bool EN = true; 
-    if (block->inputs[0]){
-        var = mem_get(block->inputs[0], 0);
-        if (likely(var.error == EMU_OK)) {
-            EN = (bool)emu_var_to_double(var);
-            if(!EN){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
-        }else{EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
-    }
+    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
     
-
+    emu_variable_t var;
     expression_t* eval = (expression_t*)block->custom_data;
+    //double inputs[16]
     double stack[16];
     int over_top = 0;
     double result = 0;
-
+    double tmp = 0;
     for(uint16_t i = 0; i < eval->count; i++){
         instruction_t *ins = &(eval->code[i]);
         switch(ins->op){
             case OP_VAR: {
-                emu_variable_t v = mem_get(block->inputs[ins->input_index], false);
-                double tmp = emu_var_to_double(v);
+                MEM_GET(&tmp, block->inputs[ins->input_index]);
                 if(over_top < 16) stack[over_top++] = tmp;
                 break;
             }

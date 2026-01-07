@@ -49,7 +49,7 @@ void emu_mem_free_contexts() {
             for (uint8_t i = 0; i < TYPES_COUNT; i++) {
                 if (mem->data_pools[i]) { free(mem->data_pools[i]); mem->data_pools[i] = NULL; }
                 if (mem->instances[i])  { free(mem->instances[i]);  mem->instances[i] = NULL; }
-                if (mem->arenas[i])     { free(mem->arenas[i]);     mem->arenas[i] = NULL; }
+                if (mem->instances_arenas[i])     { free(mem->instances_arenas[i]);     mem->instances_arenas[i] = NULL; }
                 mem->instances_cnt[i] = 0;
             }
         }
@@ -102,8 +102,8 @@ emu_result_t emu_mem_alloc_context(uint8_t context_id,
             
             size_t arena_size = (cnt * sizeof(emu_mem_instance_s_t)) + total_dims[i];
 
-            mem->arenas[i] = calloc(1, arena_size);
-            if (mem->arenas[i] == NULL) {
+            mem->instances_arenas[i] = calloc(1, arena_size);
+            if (mem->instances_arenas[i] == NULL) {
                 res.code = EMU_ERR_NO_MEM;
                 LOG_E(TAG, "Arena alloc failed type %d (%d bytes)", i, (int)arena_size);
                 goto error;
@@ -200,11 +200,11 @@ emu_result_t emu_mem_parse_create_scalar_instances(chr_msg_buffer_t *source) {
                 
                 if (scalar_cnt == 0) continue;
 
-                if (!mem->arenas[type] || !mem->instances[type]) {
+                if (!mem->instances_arenas[type] || !mem->instances[type]) {
                     EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, i, TAG, "Scalar Cnt: Arena/Table missing for Type %d Ctx %d", type, ctx_id);
                 }
 
-                uint8_t *arena_cursor = (uint8_t*)mem->arenas[type];
+                uint8_t *arena_cursor = (uint8_t*)mem->instances_arenas[type];
                 void **instance_table = mem->instances[type];
 
                 for (int k = 0; k < scalar_cnt; k++) {
@@ -214,16 +214,16 @@ emu_result_t emu_mem_parse_create_scalar_instances(chr_msg_buffer_t *source) {
                     
                     meta->dims_cnt     = 0;    
                     meta->target_type  = type;       
-                    meta->reference_id = ctx_id; 
+                    meta->context_id = ctx_id; 
                     meta->updated      = 1;      
                     meta->start_idx    = k;       
-                    
+                    LOG_I("TAG", "Ctx %d: Created SCALAR of Type %s", ctx_id, DATA_TYPE_TO_STR[type]);
                     arena_cursor += sizeof(emu_mem_instance_s_t);
                 }
                 
-                mem->next_data_idx[type] = scalar_cnt;
+                mem->next_data_pools_idx[type] = scalar_cnt;
                 mem->next_instance_idx[type] = scalar_cnt;
-                mem->arena_offset[type] = scalar_cnt * sizeof(emu_mem_instance_s_t);
+                mem->instances_arenas_offset[type] = scalar_cnt * sizeof(emu_mem_instance_s_t);
                     
                 LOG_I(TAG, "Ctx %d: Created %d SCALARS of Type %s", ctx_id, scalar_cnt, DATA_TYPE_TO_STR[type]);
             } 
@@ -276,8 +276,8 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
                 }
 
                 uint32_t instance_idx = mem->next_instance_idx[target_type];
-                uint32_t data_idx     = mem->next_data_idx[target_type];  
-                uint8_t *arena_cursor = (uint8_t*)mem->arenas[target_type] + mem->arena_offset[target_type];
+                uint32_t data_idx     = mem->next_data_pools_idx[target_type];  
+                uint8_t *arena_cursor = (uint8_t*)mem->instances_arenas[target_type] + mem->instances_arenas_offset[target_type];
 
                 if (instance_idx >= mem->instances_cnt[target_type]) {
                     EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, i, TAG, "Max instances reached for type %d", target_type);
@@ -288,7 +288,7 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
                 emu_mem_instance_arr_t *meta = (emu_mem_instance_arr_t*)arena_cursor;
                 meta->dims_cnt     = dims_cnt;
                 meta->target_type  = target_type;
-                meta->reference_id = ctx_id;
+                meta->context_id = ctx_id;
                 meta->updated      = 1;
                 meta->start_idx    = data_idx;
 
@@ -299,9 +299,9 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
                     total_elements *= dim_size;
                 }
 
-                mem->next_data_idx[target_type]     += total_elements; 
+                mem->next_data_pools_idx[target_type]     += total_elements; 
                 mem->next_instance_idx[target_type]++;
-                mem->arena_offset[target_type]      += sizeof(emu_mem_instance_arr_t) + dims_cnt;
+                mem->instances_arenas_offset[target_type]      += sizeof(emu_mem_instance_arr_t) + dims_cnt;
 
                 LOG_I(TAG, "Ctx %d: Created ARRAY Type %d (Dims:%d, Elems:%ld)", 
                       ctx_id, target_type, dims_cnt, total_elements);

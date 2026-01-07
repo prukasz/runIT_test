@@ -33,45 +33,24 @@ emu_result_t block_for(block_handle_t *src) {
     emu_result_t res = {.code = EMU_OK};
     emu_variable_t var;
     
-    // 1. Walidacja wejść (Status)
-    if (!emu_block_check_inputs_updated(src)) {
-        EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, src->cfg.block_idx, TAG, "Block is inactive (Inputs not ready)");
-    }
 
-    // 2. Wejście EN (Input 0)
-    bool EN = true;
-    var = mem_get(src->inputs[0], false);
-    if (var.error == EMU_OK) {
-        EN = (emu_var_to_double(var) > 0.5);
-    } else {
-        EN = false;
-    }
+    bool EN = emu_block_check_and_get_en(src, 0);
     
-    if (!EN) {
-        EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, src->cfg.block_idx, TAG, "Block Disabled (EN=0)");
-    }
+    if (!EN) {EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, src->cfg.block_idx, TAG, "Block Disabled (EN=0)");}
 
     block_for_handle_t* config = (block_for_handle_t*)src->custom_data;
     if (!config) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, src->cfg.block_idx, TAG, "No custom data");
 
     // 3. Pobieranie parametrów (Start / Stop / Step)
     double iterator_start = config->start_val;
-    if (src->cfg.in_cnt > BLOCK_FOR_IN_START && src->inputs[BLOCK_FOR_IN_START]) {
-        var = mem_get(src->inputs[BLOCK_FOR_IN_START], false);
-        if (var.error == EMU_OK) iterator_start = emu_var_to_double(var);
-    }
+    if (emu_check_updated(src, BLOCK_FOR_IN_START)){MEM_GET(&iterator_start, src->inputs[BLOCK_FOR_IN_START]);}
 
     double limit = config->end_val;
-    if (src->cfg.in_cnt > BLOCK_FOR_IN_STOP && src->inputs[BLOCK_FOR_IN_STOP]) {
-        var = mem_get(src->inputs[BLOCK_FOR_IN_STOP], false);
-        if (var.error == EMU_OK) limit = emu_var_to_double(var);
-    }
+    if (emu_check_updated(src, BLOCK_FOR_IN_STOP)){MEM_GET(&limit, src->inputs[BLOCK_FOR_IN_STOP]);}
+
 
     double step = config->op_step;
-    if (src->cfg.in_cnt > BLOCK_FOR_IN_STEP && src->inputs[BLOCK_FOR_IN_STEP]) {
-        var = mem_get(src->inputs[BLOCK_FOR_IN_STEP], false);
-        if (var.error == EMU_OK) step = emu_var_to_double(var);
-    }
+    if (emu_check_updated(src, BLOCK_FOR_IN_STEP)){MEM_GET(&step, src->inputs[BLOCK_FOR_IN_STEP]);}
 
     // 4. Inicjalizacja Pętli
     double current_val = iterator_start;
