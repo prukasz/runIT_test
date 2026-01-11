@@ -1,5 +1,29 @@
-#include "emulator_errors.h"
-#include "emulator_types.h" 
+#include "types_info.h"
+#include <stdbool.h>
+
+const uint8_t DATA_TYPE_SIZES[DATA_TYPES_CNT] = {
+    sizeof(uint8_t),  // UI8
+    sizeof(uint16_t), // UI16
+    sizeof(uint32_t), // UI32
+    sizeof(int8_t),   // I8
+    sizeof(int16_t),  // I16
+    sizeof(int32_t),  // I32
+    sizeof(float),    // F
+    sizeof(double),   // D
+    sizeof(bool)      // B
+};
+
+const char *EMU_DATATYPE_TO_STR[9] = {
+    "DATA_UI8",
+    "DATA_UI16",
+    "DATA_UI32",
+    "DATA_I8",
+    "DATA_I16",
+    "DATA_I32",
+    "DATA_F",
+    "DATA_D",
+    "DATA_B"
+};
 
 /**
  * @brief Return string representation of emu_err_t code
@@ -52,7 +76,7 @@ const char* EMU_ERR_TO_STR(emu_err_t err_code) {
 /**
  * @brief Return string representation of emu_order_t code
  */
-const char* EMU_ORDER_TO_STR(uint16_t order) {
+const char* EMU_ORDER_TO_STR(emu_order_t order) {
     switch (order) {
         // --- PARSER ORDERS ---
         case ORD_CREATE_CONTEXT:        return "ORD_CREATE_CONTEXT";

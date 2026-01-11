@@ -1,6 +1,6 @@
 #pragma once
 #include "emulator_variables_acces.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include <stdint.h>
 #include <stdbool.h>
 

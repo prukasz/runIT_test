@@ -2,30 +2,15 @@
 #include "emulator_types.h"
 #include "emulator_interface.h"
 #include "emulator_variables.h"
+#include "emulator_logging.h"
 #include "emulator_variables_acces.h"
 #include "esp_log.h" 
 
-typedef struct block_handle_s block_handle_t;
-struct block_handle_s {
-    __attribute((packed)) struct {
-        uint16_t block_idx;
-        uint8_t block_type;  
-        uint16_t in_connected;
-        uint8_t in_cnt;
-        uint8_t q_cnt;
-    } cfg;
-    void *custom_data;
-    void **inputs;
-    void **outputs;
-};
 
-//Unified functions for parse / execution / free
 typedef emu_result_t (*emu_block_func)(block_handle_t *block);
 typedef emu_result_t (*emu_block_parse_func)(chr_msg_buffer_t *source, block_handle_t *block);
 typedef void (*emu_block_free_func)(block_handle_t *block);
 typedef emu_result_t (*emu_block_verify_func)(block_handle_t *block);
-
-
 /**
  * @brief Reset all blocks in list
  */
@@ -40,6 +25,7 @@ emu_result_t emu_parse_blocks_total_cnt(chr_msg_buffer_t *source, block_handle_t
  * @brief Parse blocks/block and it's content using provided functions
  */
 emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t ** blocks_list, uint16_t blocks_total_cnt);
+   
 
 emu_result_t emu_parse_blocks_verify_all(block_handle_t **blocks_list, uint16_t blocks_total_cnt);
 
@@ -146,11 +132,11 @@ __attribute((always_inline)) static inline bool emu_block_check_true_and_updated
 
 __attribute((always_inline)) static inline emu_result_t emu_block_set_output(block_handle_t *block, emu_variable_t *var, uint8_t num) {
     if (unlikely(!block || !var)) {
-        EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, num, _TAG2, "NULL block or var pointer");
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_block_set_output, block->cfg.block_idx, 0, "set output", "Null prt");
     }
     
     if (unlikely(num >= block->cfg.q_cnt)) {
-        EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, num, _TAG2, "Invalid Output Index");
+        EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_emu_block_set_output, block->cfg.block_idx, 0, "set output", "num exceeds total outs");
     }
     
     return mem_set(block->outputs[num], *var);

@@ -1,6 +1,6 @@
 #pragma once 
 #include "emulator_blocks.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 
 typedef enum{
     FOR_COND_GT       = 0x01, // >

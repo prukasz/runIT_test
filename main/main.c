@@ -10,7 +10,6 @@
 #include "emulator_loop.h"
 #include "emulator_interface.h"
 #include "emulator_types.h"
-#include "emulator_debug.h"
 
 
 

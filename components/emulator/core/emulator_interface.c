@@ -3,7 +3,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "emulator_interface.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include "emulator_body.h"
 #include "emulator_blocks.h"
 #include "emulator_loop.h"
@@ -27,13 +27,13 @@ extern block_handle_t **emu_block_struct_execution_list;
 extern uint16_t emu_block_total_cnt;
 
 /* INTERNAL STATE */
-emu_loop_handle_t loop_handle = NULL;
+emu_loop_handle_t loop_handle;
 
 /* FORWARD DECLARATIONS */
 // Fixed return type to match implementation
 static emu_result_t _interface_execute_loop_init(uint64_t period_us, emu_loop_handle_t *out_handle);
-static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t loop_handle);
-static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t loop_handle);
+static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t *loop_handle);
+static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t *loop_handle);
 
 /* ============================================================================
     MAIN INTERFACE TASK
@@ -90,32 +90,32 @@ void emu_interface_task(void* params){
                 // --- 3. LOOP CONTROL ---
                 case ORD_EMU_LOOP_INIT:
                     // Check if ready and init timer
-                    if (loop_handle) {
-                        ESP_LOGW(TAG, "Loop already initialized");
-                    } else {
-                        // Fixed call to match updated signature (returns result, handle via ptr)
-                        _interface_execute_loop_init(1000000, &loop_handle); 
-                    }
+                    // if (loop_handle) {
+                    //     ESP_LOGW(TAG, "Loop already initialized");
+                    // } else {
+                    //     // Fixed call to match updated signature (returns result, handle via ptr)
+                    //     _interface_execute_loop_init(1000000, &loop_handle); 
+                    // }
                     break;
 
                 case ORD_EMU_LOOP_START:
-                    _interface_execute_loop_start_execution(loop_handle);
+                    //_interface_execute_loop_start_execution(loop_handle);
                     break;
 
                 case ORD_EMU_LOOP_STOP:
-                    _interface_execute_loop_stop_execution(loop_handle);
+                    //_interface_execute_loop_stop_execution(loop_handle);
                     break;
 
                 // --- 4. UTILITY ---
                 case ORD_RESET_ALL: 
                     ESP_LOGI(TAG, "RESET ALL ORDER");
-                    _interface_execute_loop_stop_execution(loop_handle);
-                    loop_handle = NULL;
+                    //_interface_execute_loop_stop_execution(loop_handle);
+                    //loop_handle = NULL;
                     
                     chr_msg_buffer_clear(source);
                     
                     // Free Blocks
-                    emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
+                    //emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
                     emu_block_struct_execution_list = NULL;
                     emu_block_total_cnt = 0;
                     emu_mem_free_contexts();
@@ -123,8 +123,8 @@ void emu_interface_task(void* params){
                     break;
 
                 case ORD_RESET_BLOCKS:
-                    _interface_execute_loop_stop_execution(loop_handle);
-                    emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
+                    //_interface_execute_loop_stop_execution(loop_handle);
+                    //emu_blocks_free_all(emu_block_struct_execution_list, emu_block_total_cnt);
                     emu_block_struct_execution_list = NULL;
                     emu_block_total_cnt = 0;
                     // Also restart parser block stage?
@@ -154,13 +154,13 @@ void emu_interface_task(void* params){
     HELPER FUNCTIONS
    ============================================================================ */
 
-static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t loop_handle){
-    if (!loop_handle){EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Handle is NULL");}
+static emu_result_t _interface_execute_loop_start_execution(emu_loop_handle_t *loop_handle){
+    //if (!loop_handle){EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Handle is NULL");}
     return emu_loop_start(loop_handle);
 }  
 
-static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t loop_handle){
-    if (!loop_handle) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Handle is NULL");}
+static emu_result_t _interface_execute_loop_stop_execution(emu_loop_handle_t *loop_handle){
+    //if (!loop_handle) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Handle is NULL");}
     return emu_loop_stop(loop_handle);
 }   
 
@@ -177,12 +177,13 @@ static emu_result_t _interface_execute_loop_init(uint64_t period_us, emu_loop_ha
         ESP_LOGI(TAG, "Loop initialized");
         return res;
     } else {
-        EMU_RETURN_CRITICAL(res.code, 0xFFFF, TAG, "Cannot init loop: %s", EMU_ERR_TO_STR(res.code));
+        //EMU_RETURN_CRITICAL(res.code, 0xFFFF, TAG, "Cannot init loop: %s", EMU_ERR_TO_STR(res.code));
     }
+    return res;
 }   
 
 emu_result_t emu_parse_source_add(chr_msg_buffer_t * msg){
-    if (!msg) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Source is NULL");}
+    if (!msg) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_parse_source_add,0, 0, TAG, "Source is NULL");}
     source = msg;
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_source_added, EMU_OWNER_emu_parse_source_add, 0,TAG, "Source for parser added");
 }

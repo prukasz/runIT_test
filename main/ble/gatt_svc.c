@@ -1,6 +1,7 @@
 #include "common.h"
 #include "gatt_svc.h"
 #include "gatt_uuids.h"
+#include "order_types.h"
 
 extern QueueHandle_t emu_interface_orders_queue;
 

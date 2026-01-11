@@ -1,7 +1,7 @@
 
 #pragma once
 #include "emulator_blocks.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 
 /* Timer Types */
 typedef enum {

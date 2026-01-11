@@ -1,5 +1,5 @@
 #include "emulator_loop.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include "emulator_interface.h"
 #include "emulator_body.h"
 #include "emulator_parse.h"
@@ -16,7 +16,7 @@ static uint64_t loop_period_us = 100000;
 static const uint32_t stack_depth = 10*1024;
 
 static void IRAM_ATTR loop_tick_intr_handler(void *arg) {
-    emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)arg;
+    emu_loop_handle_t *ctx = (emu_loop_handle_t *)arg;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     //calculate running time in ms (time stretchng possible)
     ctx->timer.time+=(ctx->timer.loop_period/1000);
@@ -43,11 +43,11 @@ static void IRAM_ATTR loop_tick_intr_handler(void *arg) {
 
 emu_result_t emu_loop_init(uint64_t period_us, emu_loop_handle_t *out_handle) {
     if (!out_handle) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle pointer is NULL");
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_loop_init, 0, 0, TAG, "Output handle pointer is NULL");
     }
-    emu_loop_ctx_t *ctx = calloc(1, sizeof(emu_loop_ctx_t));
+    emu_loop_handle_t *ctx = calloc(1, sizeof(emu_loop_handle_t));
     if (!ctx) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, 0xFFFF, TAG, "Failed to allocate context");
+        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_emu_loop_init, 0, 0, TAG, "Failed to allocate loop handle");
     }
 
     // Default settings
@@ -63,14 +63,14 @@ emu_result_t emu_loop_init(uint64_t period_us, emu_loop_handle_t *out_handle) {
 
     if (!ctx->sem_loop_start || !ctx->sem_loop_wtd) {
         free(ctx);
-        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, 0xFFFF, TAG, "Failed to create semaphores");
+        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_emu_loop_init, 0, 0, TAG, "Failed to create semaphores");
     }
 
     // Create Task
     BaseType_t task_res = xTaskCreate(emu_body_loop_task, "EMU_LOOP", stack_depth, (void*)ctx, 4, NULL);
     if (task_res != pdPASS) {
         free(ctx);
-        EMU_RETURN_CRITICAL(EMU_ERR_MEM_ALLOC, 0xFFFF, TAG, "Failed to create loop task");
+        EMU_RETURN_CRITICAL(EMU_ERR_MEM_ALLOC, EMU_OWNER_emu_loop_init, 0, 0, TAG, "Failed to create loop task");
     }
 
     // Create Timer
@@ -84,38 +84,37 @@ emu_result_t emu_loop_init(uint64_t period_us, emu_loop_handle_t *out_handle) {
     esp_err_t err = esp_timer_create(&timer_args, &ctx->timer.timer_handle);
     if (err != ESP_OK) {
         // Cleanup would be complex here (deleting task), usually critical failure
-        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Timer create failed: %d", err);
+        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, EMU_OWNER_emu_loop_init, 0, 0, TAG, "Timer create failed: %d", err);
     }
 
     // Do NOT give sem_loop_wtd here. It starts empty.
     
-    *out_handle = (emu_loop_handle_t)ctx;
-    return EMU_RESULT_OK();
+    //*out_handle = ctx;
+    EMU_RETURN_OK(EMU_LOG_loop_initialized, EMU_OWNER_emu_loop_init, 0, TAG, "Loop initialized with period %llu us", period_us);
 }
 
 
-emu_result_t emu_loop_start(emu_loop_handle_t handle) {
+emu_result_t emu_loop_start(emu_loop_handle_t *handle) {
     if (!handle) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_loop_start, 0 ,0, TAG, "Handle is NULL");
     }
     
-    emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
+    emu_loop_handle_t *ctx = (emu_loop_handle_t *)handle;
     
     emu_result_t res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
     if (res.code != EMU_OK) {
-        LOG_E(TAG, "Start denied: %s", EMU_ERR_TO_STR(res.code));
-        return res; 
+        EMU_RETURN_WARN(EMU_ERR_DENY, EMU_OWNER_emu_loop_start, 0, 0, TAG, "Loop start denied");
     }
 
     bool should_start_timer = false;
 
     if (ctx->timer.loop_status == LOOP_CREATED) {
-        LOG_I(TAG, "Starting loop (First Time)");
+        EMU_REPORT(EMU_LOG_loop_starting, EMU_OWNER_emu_loop_start, 0, TAG, "Starting loop (First Time)");
         ctx->timer.loop_status = LOOP_RUNNING;
         should_start_timer = true;
     }
     else if (ctx->timer.loop_status == LOOP_STOPPED) {
-        LOG_I(TAG, "Resuming loop (From Stopped)");
+        EMU_REPORT(EMU_LOG_loop_starting, EMU_OWNER_emu_loop_start, 0, TAG, "Resuming loop (From Stopped)");
         ctx->timer.loop_status = LOOP_RUNNING;
         should_start_timer = true;
     }
@@ -128,7 +127,7 @@ emu_result_t emu_loop_start(emu_loop_handle_t handle) {
         should_start_timer = true;
     }
     else {
-        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Loop start requested but state is %d", ctx->timer.loop_status);
+        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, EMU_OWNER_emu_loop_start, 0, 0, TAG, "Loop start requested but state is %d", ctx->timer.loop_status);
     }
 
     if (should_start_timer) {
@@ -137,34 +136,34 @@ emu_result_t emu_loop_start(emu_loop_handle_t handle) {
         esp_timer_start_periodic(ctx->timer.timer_handle, ctx->timer.loop_period);
     }
     
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_loop_started, EMU_OWNER_emu_loop_start, 0, TAG, "Loop started with period %llu us", ctx->timer.loop_period);
 }
 
-emu_result_t emu_loop_stop(emu_loop_handle_t handle) {
+emu_result_t emu_loop_stop(emu_loop_handle_t *handle) {
     if (!handle) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_loop_stop, 0, 0, TAG, "Handle is NULL");
     }
-    emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
+    emu_loop_handle_t *ctx = (emu_loop_handle_t *)handle;
 
     if (ctx->timer.loop_status != LOOP_RUNNING) {
-        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Attempted to stop loop, but state is %d (Not Running)", ctx->timer.loop_status);
+        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, EMU_OWNER_emu_loop_stop, 0, 0, TAG, "Attempted to stop loop, but state is %d (Not Running)", ctx->timer.loop_status);
     }
 
     ESP_LOGI(TAG, "Stopping loop");
     ctx->timer.loop_status = LOOP_STOPPED;
 
     if (unlikely(esp_timer_stop(ctx->timer.timer_handle)) != ESP_OK) {
-        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Failed to stop hardware timer");
+        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, EMU_OWNER_emu_loop_stop, 0, 0, TAG, "Failed to stop hardware timer");
     }
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_loop_stopped, EMU_OWNER_emu_loop_stop, 0, TAG, "Loop stopped successfully");
 }
 
-emu_result_t emu_loop_set_period(emu_loop_handle_t handle, uint64_t period_us) {
+emu_result_t emu_loop_set_period(emu_loop_handle_t *handle, uint64_t period_us) {
     if (!handle) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_loop_set_period, 0, 0, TAG, "Handle is NULL");
     }
 
-    emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
+    emu_loop_handle_t *ctx = (emu_loop_handle_t *)handle;
     bool was_clamped = false;
 
     if (period_us > LOOP_PERIOD_MAX) {
@@ -187,7 +186,7 @@ emu_result_t emu_loop_set_period(emu_loop_handle_t handle, uint64_t period_us) {
         esp_err_t err = esp_timer_start_periodic(ctx->timer.timer_handle, ctx->timer.loop_period);
         if (err != ESP_OK) {
             ctx->timer.loop_status = LOOP_HALTED;
-            EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Failed to restart timer: %d", err);
+            EMU_RETURN_CRITICAL(EMU_ERR_INVALID_STATE, EMU_OWNER_emu_loop_set_period, 0, 0, TAG, "Failed to restart timer: %d", err);
         }
         
         LOG_I(TAG, "Period updated live: %llu -> %llu us", old_period, ctx->timer.loop_period);
@@ -196,27 +195,26 @@ emu_result_t emu_loop_set_period(emu_loop_handle_t handle, uint64_t period_us) {
     }
 
     if (was_clamped) {
-        EMU_RETURN_WARN(EMU_ERR_BLOCK_OUT_OF_RANGE, 0xFFFF, TAG, "Period value clamped");
+        EMU_RETURN_WARN(EMU_ERR_INVALID_ARG, EMU_OWNER_emu_loop_set_period, 0, 0, TAG, "Period was clamped to %llu us", ctx->timer.loop_period);
     }
 
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_loop_period_set, EMU_OWNER_emu_loop_set_period, 0, TAG, "Loop period set to %llu us", ctx->timer.loop_period);
 }
 
-emu_result_t emu_loop_run_once(emu_loop_handle_t handle) {
+emu_result_t emu_loop_run_once(emu_loop_handle_t *handle) {
     if (!handle) { 
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0xFFFF, TAG, "Handle is NULL");
+        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_loop_run_once, 0, 0, TAG, "Handle is NULL");
     }
 
-    emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)handle;
+    emu_loop_handle_t *ctx = (emu_loop_handle_t *)handle;
 
     if (ctx->timer.loop_status == LOOP_RUNNING) {
-        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, 0xFFFF, TAG, "Cannot run_once while loop is RUNNING. Stop it first");
+        EMU_RETURN_WARN(EMU_ERR_INVALID_STATE, EMU_OWNER_emu_loop_run_once, 0, 0, TAG, "Cannot run_once while loop is RUNNING. Stop it first");
     }
 
     emu_result_t res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
     if (res.code != EMU_OK) {
-        LOG_E(TAG, "Run Once denied: %s", EMU_ERR_TO_STR(res.code));
-        return res; 
+        EMU_RETURN_WARN(EMU_ERR_DENY, EMU_OWNER_emu_loop_run_once, 0, 0, TAG, "Loop run_once denied"); 
     }
 
     xSemaphoreGive(ctx->sem_loop_start);
@@ -225,12 +223,20 @@ emu_result_t emu_loop_run_once(emu_loop_handle_t handle) {
 
         ctx->timer.loop_counter++;
         ctx->timer.time += ctx->timer.loop_period/1000;
-        return EMU_RESULT_OK();
+        EMU_RETURN_OK(EMU_LOG_loop_ran_once, EMU_OWNER_emu_loop_run_once, 0, TAG, "Loop run_once completed successfully");
 
     } else {
         ctx->wtd.wtd_triggered = 1;
         ctx->timer.loop_status = LOOP_HALTED;
-        EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_WTD_TRIGGERED, 0xFFFF, TAG, "One loop wtd triggered, loop took to long to execute");
+        EMU_RETURN_CRITICAL(EMU_ERR_WTD_TRIGGERED, EMU_OWNER_emu_loop_run_once, 0, 0, TAG, "One loop wtd triggered, loop took to long to execute");
+        EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_WTD_TRIGGERED, EMU_OWNER_emu_loop_run_once, 0, 0, TAG, "One loop wtd triggered, loop took to long to execute");
     }
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_loop_ran_once, EMU_OWNER_emu_loop_run_once, 0, TAG, "Loop run_once completed successfully");
+}
+
+uint64_t emu_loop_get_time(void){
+    return 0;
+}
+uint64_t emu_loop_get_iteration(void){
+    return 0;
 }

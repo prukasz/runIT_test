@@ -1,11 +1,5 @@
 #pragma once
-#include "gatt_buff.h"
-#include "string.h"
-#include "stdbool.h"
-#include "emulator_types.h"
-#include "emulator_blocks.h"
-#include "emulator_variables.h"
-#include "emulator_errors.h"
+#include "error_types.h"
 
 
 typedef enum{
@@ -34,6 +28,5 @@ typedef enum{
 
 emu_result_t emu_parse_manager(parse_cmd_t cmd);
 
-emu_result_t emu_parse_fill_block_data();
 
 

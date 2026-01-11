@@ -1,77 +1,11 @@
 #pragma once 
-#include "stdint.h"
-#include "stdbool.h"
-#include "emulator_errors.h"
 #include "emulator_variables.h"
-
-typedef struct block_handle_s block_handle_t;
-
-
-/**
- * @brief This index union represent one index value of array. 
- * It can be static value (Provided in emulator) or can refer to other instance as value
- */
-typedef union {
-        uint16_t static_idx;
-        void* next_instance; 
-} idx_u;
-
-/**
- * @brief This struct is used in inputs and outputs of blocks
- * 
- */
-typedef struct __attribute__((packed)) {
-        uint8_t  dims_cnt     :4; //total count of array dimensions 0 is "scalar" when scalar we switch to acces_arr_t
-        uint8_t  target_type  :4; //C-type target type (look at emu_types.h)
-        uint8_t  context_id   :3; //This id allows for usage of multiple mem structs (contexts) (0 is global 1 is outputs of blocks)
-        uint8_t  is_resolved  :1; //If "1" then direct poiner is avaible to memory, else need to search "recursive"
-        uint8_t _reserved     :4; 
-        uint16_t instance_idx;      //Target instance index (used when no direct avaible or when we want to search for instance struct)
-        union{
-            uint8_t*    static_ui8;
-            uint16_t*   static_ui16;
-            uint32_t*   static_ui32;
-            int8_t*     static_i8;
-            int16_t*    static_i16;
-            int32_t*    static_i32;
-            float*      static_f;
-            double*     static_d;
-            bool*       static_b;
-        }direct_ptr;       
-} mem_access_s_t;
-
-typedef struct __attribute__((packed)) { 
-    uint8_t  dims_cnt     :4; 
-    uint8_t  target_type  :4;
-    uint8_t  context_id    :3; 
-    uint8_t  is_resolved  :1;  
-    uint8_t  idx_types    :4;       //Mark is index value or other instance
-    uint16_t instance_idx;  
-    union{
-        uint8_t*    static_ui8;
-        uint16_t*   static_ui16;
-        uint32_t*   static_ui32;
-        int8_t*     static_i8;
-        int16_t*    static_i16;
-        int32_t*    static_i32;
-        float*      static_f;
-        double*     static_d;
-        bool*       static_b; 
-    }direct_ptr;    
-    idx_u indices[];           //those indices define access way for array, if value
-                            //then block will get chosen element, if instance then will search recursive 
-
-} mem_access_arr_t;
+#include "emulator_logging.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 
-/**
- * @brief eaisly switch between array and scalar struct
- */
-typedef union {
-    mem_access_s_t   *single;
-    mem_access_arr_t *arr;
-    uint8_t         *raw;
-} mem_acces_instance_iter_t;    
+
 
 //macros to eaisly check idx type
 #define IDX_IS_DYNAMIC(node, dim_idx)  (((node)->idx_types >> (dim_idx)) & 0x01)
@@ -109,7 +43,7 @@ void emu_access_system_free(void);
 /**
  * @brief Parse one access message (recursive if in need)
  */
-emu_err_t mem_access_parse_node_recursive(uint8_t **cursor, size_t *len, void **out_node);
+emu_result_t mem_access_parse_node_recursive(uint8_t **cursor, size_t *len, void **out_node);
 
 
 

@@ -1,5 +1,11 @@
 #pragma once
 #include <stdint.h>
+#include <stdbool.h>
+#include "error_types.h"
+#include "mem_types.h"
+#include "loop_types.h"
+#include "block_types.h"
+
 #define likely(x)      __builtin_expect(!!(x), 1)
 #define unlikely(x)    __builtin_expect(!!(x), 0)
 
@@ -9,62 +15,15 @@
 /**
 * @brief Data types used within emulator
 */
-typedef enum{
-    DATA_UI8  = 0,
-    DATA_UI16 = 1,
-    DATA_UI32 = 2,
-    DATA_I8   = 3,
-    DATA_I16  = 4,
-    DATA_I32  = 5,
-    DATA_F    = 6,
-    DATA_D    = 7,
-    DATA_B    = 8
-}data_types_t;
 
-static const uint8_t TYPE_SIZES[TYPES_COUNT] = {
-    1, // DATA_UI8
-    2, // DATA_UI16
-    4, // DATA_UI32
-    1, // DATA_I8
-    2, // DATA_I16
-    4, // DATA_I32
-    4, // DATA_F
-    8, // DATA_D
-    1  // DATA_B
-    };
 
-extern const char *DATA_TYPE_TO_STR[9];
+
+
 
 /**
 * @brief Orders for emulator interface to execute
 */
-typedef enum {
-    /********PARSER ORDERS **************/
-    ORD_CREATE_CONTEXT        = 0xFFFF,  //Create context with provided size
-    ORD_PARSE_VARIABLES       = 0xEEEE,  //Parse variables types and arrays sizes
-    ORD_PARSE_VARIABLES_DATA  = 0xDDDD,  //Fill created variables with provided data
-    ORD_EMU_CREATE_BLOCK_LIST = 0xb100,  //Create list for number of provided blocks (Total blocks in code)
-    ORD_EMU_CREATE_BLOCKS     = 0xb200,  //Create blocks (Inputs, Outputs, Type, Custom data)
-    ORD_CHECK_CODE            = 0x0030,  //Check code completeness before start (once after parsing finish)
 
-    /********RESET ORDERS  ***************/
-    ORD_RESET_ALL             = 0x0001,  //Brings emulator to startup state, provides way to eaisly send new code
-    ORD_RESET_BLOCKS          = 0x0002,  //Reset all blocks and theirs data
-    ORD_RESET_MGS_BUF         = 0x0003,  //Clear msg buffer
-    
-    /********LOOP CONTROL****************/
-    ORD_EMU_LOOP_START     = 0x1000, //start loop / resume 
-    ORD_EMU_LOOP_STOP      = 0x2000, //stop loop aka pause
-    ORD_EMU_LOOP_INIT      = 0x3000, //init loop first time 
-
-    /********DEBUG OPTIONS **************/
-    ORD_EMU_INIT_WITH_DBG  = 0x3333, //init loop with debug
-    ORD_EMU_SET_PERIOD     = 0x4000, //change period of loop
-    ORD_EMU_RUN_ONCE       = 0x5000, //Run one cycle and wait for next order
-    ORD_EMU_RUN_WITH_DEBUG = 0x6000, //Run with debug (Dump after each cycle)
-    ORD_EMU_RUN_ONE_STEP   = 0x7000, //Run one block / one step (With debug)
-
-}emu_order_t;
 
 
 /**
@@ -113,17 +72,7 @@ typedef enum{
     VAR_H_DATA_ARR_B    = 0xFFF8,
 }emu_variables_headers_t;
 
-/**
-* @brief emulator main loop flags
-*/
-typedef enum {
-    LOOP_NOT_SET,
-    LOOP_CREATED,
-    LOOP_RUNNING,
-    LOOP_STOPPED,
-    LOOP_HALTED,
-    LOOP_FINISHED,
-} loop_status_t;
+
 
 /**
 * @brief Block type identification code
@@ -137,4 +86,7 @@ typedef enum{
     BLOCK_FOR = 0x08,
     BLOCK_TIMER = 0x09,
 }block_type_t;
+
+
+
 

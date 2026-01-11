@@ -56,7 +56,7 @@ emu_result_t block_for(block_handle_t *src) {
     double current_val = iterator_start;
     uint32_t iteration = 0; 
 
-    emu_loop_ctx_t *ctx = (emu_loop_ctx_t *)loop_handle;
+    emu_loop_handle_t *ctx = (emu_loop_handle_t *)loop_handle;
 
     while(1) {
         bool condition_met = false;
@@ -88,7 +88,7 @@ emu_result_t block_for(block_handle_t *src) {
             block_handle_t* child = emu_block_struct_execution_list[src->cfg.block_idx + b];
             if (likely(child)) {
                 if (likely(ctx)) {
-                    if (unlikely(((volatile emu_loop_ctx_t*)ctx)->wtd.wtd_triggered )) {
+                    if (unlikely(((volatile emu_loop_handle_t*)ctx)->wtd.wtd_triggered )) {
                         EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx, TAG, "WTD triggered, on block %d, elapsed time %lld, iteration %ld ,wtd set to %lld ms", src->cfg.block_idx + b-1, ctx->timer.time, iteration, ctx->wtd.max_skipp*ctx->timer.loop_period/1000);
                     }
                 }
