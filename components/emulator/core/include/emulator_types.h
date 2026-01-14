@@ -6,8 +6,8 @@
 #include "loop_types.h"
 #include "block_types.h"
 
-#define likely(x)      __builtin_expect(!!(x), 1)
-#define unlikely(x)    __builtin_expect(!!(x), 0)
+//#define likely(x)      __builtin_expect(!!(x), 1)
+//#define unlikely(x)    __builtin_expect(!!(x), 0)
 
 
 #define TYPES_COUNT 9 

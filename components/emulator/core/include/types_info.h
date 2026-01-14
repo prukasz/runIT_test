@@ -3,6 +3,14 @@
 #include "order_types.h"
 #include <stdint.h>
 
+/*********************************************************************************************
+ * This header contains strings for error codes and order codes for logging and debugging
+ * 
+ ********************************************************************************************/
+
+/**
+ * @brief total different data_types_t
+ */
 #define DATA_TYPES_CNT 9
 
 extern const uint8_t DATA_TYPE_SIZES[DATA_TYPES_CNT];

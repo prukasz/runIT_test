@@ -1,5 +1,12 @@
 #pragma once 
 #include <stdint.h>
+
+
+/**
+ * @brief Emulator error codes used throughout the emulator core
+ * @note Please do not change existing error codes as they are used in logging and error reporting
+ * New error codes should have consistent naming scheme
+ */
 typedef enum {
     EMU_OK = 0,
 
@@ -49,10 +56,17 @@ typedef enum {
 
     /* --- SYSTEM WATCHDOG (0xA...) --- */
     EMU_ERR_WTD_TRIGGERED           = 0xA000,
-    EMU_ERR_MEM_INVALID_ACCESS
+    EMU_ERR_MEM_INVALID_ACCESS, 
+    EMU_ERR_LOOP_NOT_INITIALIZED,
 
 } emu_err_t;
 
+
+/**
+ * @brief Enum of error owners for tracking error sources
+ * @note Please do not change existing owner codes as they are used in logging and error reporting
+ * New owner codes should have consistent naming scheme example: EMU_OWNER_<function_name> 
+ */
 typedef enum {
     EMU_OWNER_emu_mem_free_contexts = 1,
     EMU_OWNER_emu_mem_alloc_context,
@@ -111,6 +125,12 @@ typedef enum {
 
 }emu_owner_t;
 
+/** 
+* @brief Emulator logging messages
+* Use names EMU_LOG_<description>
+* descriptions are treated as semi strings (so please use underscores _ to separate words)
+* @note Please do not change existing log names as they are used in logging and error reporting
+ */
 typedef enum {
     EMU_LOG_context_freed,
     EMU_LOG_context_allocated,
@@ -165,25 +185,83 @@ typedef enum {
     EMU_LOG_mem_invalid_data_type,
     EMU_LOG_mem_get_failed,
     EMU_LOG_executing_block,
+    EMU_LOG_loop_reinitialized,
+    EMU_LOG_loop_task_already_exists,
 } emu_log_t;
 
 
+/**
+ * @brief Emulator report structure for logging non-critical information
+ */
 typedef struct{
+    /**
+     * @brief Log message (from emu_log_t enum)
+     * usually we need to create new one for each new log message
+     */
     emu_log_t log;
+    /**
+     * @brief Owner of the log (from emu_owner_t enum) 
+     * usually function where log is created
+     */
     emu_owner_t owner;
+    /**
+     * @brief Owner index (usually index of block if possible, else 0/0xFFFF)
+     */
     uint16_t owner_idx;
+    /**
+     * @brief Time in ms when log was created (loop time context)
+     * @note This is set automatically during logging
+     */
     uint64_t time;
+    /**
+     * @brief Cycle count when log was created (loop iteration context)
+     * @note This is set automatically during logging
+     */
     uint64_t cycle;
 } emu_report_t;
 
+/**
+ * @brief Emulator result structure used for error reporting and function results
+ */
 typedef struct {
+    /**
+     * @brief Error code (emu_err_t) from operation (EMU_OK if no error)
+     */
     emu_err_t   code;  
+    /**
+     * @brief Owner of the error (from emu_owner_t enum) 
+     * usually function where error is created
+     */
     uint16_t    owner; 
+    /**
+     * @brief Owner index (usually index of block if possible, else 0/0xFFFF)
+     */
     uint16_t    owner_idx;
+    /**
+     * @brief Abort flag indicating if operation should abort further processing
+     */
     uint8_t     abort   : 1;
+    /**
+     * @brief Warning flag indicating if error is just a warning
+     */
+
     uint8_t     warning : 1; 
+    /**
+     * @brief Notice flag indicating if error is just a notice (aka can be ignored)
+     */
     uint8_t     notice  : 1;
+        /**
+     * @brief Depth of the error in call stack (0 for top level)
+     */
     uint8_t     depth   : 5; 
+    /**
+     * @brief Time in ms when error was created (loop time context)
+     * @note This is set automatically during error reporting
+     */
     uint64_t    time;
+    /**
+     * @brief Cycle count when error was created (loop iteration context)
+     * @note This is set automatically during error reporting
+     */
     uint64_t    cycle;
 } emu_result_t;

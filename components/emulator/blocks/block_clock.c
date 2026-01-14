@@ -22,7 +22,6 @@ typedef struct {
 #define CLK_OUT_Q      0
 
 
-extern emu_loop_handle_t loop_handle; 
 
 emu_result_t block_clock(block_handle_t *block) {
 
@@ -33,7 +32,7 @@ emu_result_t block_clock(block_handle_t *block) {
         data->prev_en = false;
         emu_variable_t v_out = { .type = DATA_B, .data.b = false };
         emu_result_t res = emu_block_set_output(block, &v_out, CLK_OUT_Q);
-        if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output Set Fail");
+        if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_clock, block->cfg.block_idx, 0, TAG, "Output Set Fail");
         return EMU_RESULT_OK();
     }
 
@@ -46,7 +45,7 @@ emu_result_t block_clock(block_handle_t *block) {
     if (period < 1.0) period = 1.0; 
     if (width < 0.0) width = 0.0;
 
-    uint64_t now = loop_handle->timer.time; 
+    uint64_t now = emu_loop_get_time();
 
     if (!data->prev_en) {
         data->start_time_ms = now;
@@ -65,7 +64,7 @@ emu_result_t block_clock(block_handle_t *block) {
     LOG_I(TAG, "out %d ", q_state);
     emu_result_t res = emu_block_set_output(block, &v_out, CLK_OUT_Q);
     
-    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output Set Fail");}
+    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_clock, block->cfg.block_idx, 0, TAG, "Output Set Fail");}
     return EMU_RESULT_OK();
 }
 
@@ -74,7 +73,7 @@ emu_result_t block_clock(block_handle_t *block) {
    ============================================================================ */
 
 emu_result_t block_clock_parse(chr_msg_buffer_t *source, block_handle_t *block) {
-    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Block NULL");
+    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_clock_parse, 0, 0, TAG, "Block NULL");
 
     uint8_t *data;
     size_t len;
@@ -95,14 +94,14 @@ emu_result_t block_clock_parse(chr_msg_buffer_t *source, block_handle_t *block) 
                 if (block->custom_data == NULL) {
                     block->custom_data = calloc(1, sizeof(block_clock_handle_t));
                     if (!block->custom_data) {
-                        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, target_idx, TAG, "Alloc failed");
+                        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_clock_parse, target_idx, 0, TAG, "Alloc failed");
                     }
                 }
                 block_clock_handle_t *config = (block_clock_handle_t*)block->custom_data;
 
                 if (data[2] == EMU_H_BLOCK_PACKET_CONST) {
                     if (len < (5 + 16)) {
-                        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, target_idx, TAG, "Packet too short");
+                        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, EMU_OWNER_block_clock_parse, target_idx, 0, TAG, "Packet too short");
                     }
                     size_t offset = 5;
                     memcpy(&config->default_period, &data[offset], 8); offset += 8;
@@ -118,13 +117,13 @@ emu_result_t block_clock_parse(chr_msg_buffer_t *source, block_handle_t *block) 
 }
 
 emu_result_t block_clock_verify(block_handle_t *block) {
-    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Block NULL");
-    if (!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, TAG, "Custom Data Missing");
+    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_clock_verify, 0, 0, TAG, "Block NULL");
+    if (!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_clock_verify, block->cfg.block_idx, 0, TAG, "Custom Data Missing");
 
     block_clock_handle_t *config = (block_clock_handle_t*)block->custom_data;
 
     if (config->default_period < 0.001) {
-        EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, TAG, "Default Period near zero");
+        EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_clock_verify, block->cfg.block_idx, 0, TAG, "Default Period near zero");
     }
     return EMU_RESULT_OK();
 }

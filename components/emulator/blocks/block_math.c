@@ -29,7 +29,7 @@ emu_err_t _clear_expression_internals(expression_t* expr);
 
 emu_result_t block_math_parse(chr_msg_buffer_t *source, block_handle_t *block)
 {
-    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "Null ptr provided");
+    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_math_parse, 0, 0, TAG, "Null ptr provided");
 
     emu_result_t res = {.code = EMU_OK};
     uint8_t *data;
@@ -59,13 +59,13 @@ emu_result_t block_math_parse(chr_msg_buffer_t *source, block_handle_t *block)
                 // Allocate custom data if not exists
                 if (!block->custom_data) {
                     block->custom_data = calloc(1, sizeof(expression_t));
-                    if(!block->custom_data){EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "No memory for custom_data block %d", block_idx);}
+                    if(!block->custom_data){EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "No memory for custom_data block %d", block_idx);}
                 }
 
                 size_t const_msg_cnt = 1;
                 if(_emu_parse_math_expr(source, search_idx, (expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
                     block_math_free(block);
-                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "Expr parse error block %d", block_idx);
+                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "Expr parse error block %d", block_idx);
                 }
             }
         }
@@ -90,13 +90,13 @@ emu_result_t block_math_parse(chr_msg_buffer_t *source, block_handle_t *block)
                 // Ensure custom_data exists
                 if (!block->custom_data) {
                      block->custom_data = calloc(1, sizeof(expression_t));
-                     if(!block->custom_data){EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "No memory for custom_data block %d", block_idx);}
+                     if(!block->custom_data){EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "No memory for custom_data block %d", block_idx);}
                 }
 
                 size_t const_msg_cnt = 1;
                 if(_emu_parse_math_const(source, search_idx, (expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
                     //block_math_free(block);
-                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "Const parse error block %d", block_idx);
+                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "Const parse error block %d", block_idx);
                 }
             }
         }
@@ -196,11 +196,11 @@ emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_in
 
 emu_result_t block_math(block_handle_t* block){
     emu_result_t res = {.code = EMU_OK};
+    (void)res; // May be used by macros
     
-    if (!emu_block_check_inputs_updated(block)) {EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
-    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
+    if (!emu_block_check_inputs_updated(block)) {EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Block is inactive");}
+    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Block is inactive");}
     
-    emu_variable_t var;
     expression_t* eval = (expression_t*)block->custom_data;
     //double inputs[16]
     double stack[16];
@@ -226,7 +226,7 @@ emu_result_t block_math(block_handle_t* block){
                 break;
             case OP_DIV:
                 if(over_top >= 2) {
-                    if(is_zero(stack[over_top-1])){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_DIV_BY_ZERO, block->cfg.block_idx, TAG, "Div by zero");}
+                    if(is_zero(stack[over_top-1])){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_DIV_BY_ZERO, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Div by zero");}
                     stack[over_top-2] /= stack[over_top-1];
                     over_top--;
                 }
@@ -257,7 +257,7 @@ emu_result_t block_math(block_handle_t* block){
     LOG_I(TAG, "[%d]result %lf", block->cfg.block_idx, result);
     emu_variable_t v_res = { .type = DATA_D, .data.d = result };
     res = emu_block_set_output(block, &v_res, 1);
-    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));}
+    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));}
     return res;      
 } 
 
@@ -293,12 +293,12 @@ void block_math_free(block_handle_t* block){
     }
 }
 emu_result_t block_math_verify(block_handle_t *block) {
-    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, "BLOCK_MATH", "Custom Data is NULL");}
+    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_math_verify, block->cfg.block_idx, 0, TAG, "Custom Data is NULL");}
 
     expression_t *data = (expression_t*)block->custom_data;
 
-    if (data->count == 0) {EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, "BLOCK_MATH", "Empty expression (count=0)");}
+    if (data->count == 0) {EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_math_verify, block->cfg.block_idx, 0, TAG, "Empty expression (count=0)");}
 
-    if (data->count > 0 && data->code == NULL) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, "BLOCK_MATH", "Code pointer is NULL");}
+    if (data->count > 0 && data->code == NULL) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_math_verify, block->cfg.block_idx, 0, TAG, "Code pointer is NULL");}
     return EMU_RESULT_OK();
 }

@@ -28,7 +28,7 @@ static emu_err_t _clear_logic_expression_internals(logic_expression_t* expr);
 emu_result_t block_logic_parse(chr_msg_buffer_t *source, block_handle_t *block)
 {
     // Użycie makra bez słowa 'return' (makro zawiera return)
-    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, 0, TAG, "NULL block pointer");
+    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_logic_parse, 0, 0, TAG, "NULL block pointer");
 
     emu_result_t res = EMU_RESULT_OK();
     uint8_t *data;
@@ -56,14 +56,14 @@ emu_result_t block_logic_parse(chr_msg_buffer_t *source, block_handle_t *block)
                     block->custom_data = calloc(1, sizeof(logic_expression_t));
                     if(!block->custom_data){
                         // Makro loguje błąd i zwraca wynik
-                        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "No memory for logic custom_data");
+                        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_logic_parse, block_idx, 0, TAG, "No memory for logic custom_data");
                     }
                 }
 
                 size_t const_msg_cnt = 1;
                 if(_emu_parse_logic_expr(source, search_idx, (logic_expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
                     block_logic_free(block);
-                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "Logic Expr parse error");
+                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_logic_parse, block_idx, 0, TAG, "Logic Expr parse error");
                 }
             }
         }
@@ -87,13 +87,13 @@ emu_result_t block_logic_parse(chr_msg_buffer_t *source, block_handle_t *block)
                 
                 if (!block->custom_data) {
                      block->custom_data = calloc(1, sizeof(logic_expression_t));
-                     if(!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "No memory for logic custom_data");
+                     if(!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_logic_parse, block_idx, 0, TAG, "No memory for logic custom_data");
                 }
 
                 size_t const_msg_cnt = 1;
                 if(_emu_parse_logic_const(source, search_idx, (logic_expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
                      block_logic_free(block);
-                     EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block_idx, TAG, "Error parsing constants");
+                     EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_logic_parse, block_idx, 0, TAG, "Error parsing constants");
                 }
             }
         }
@@ -194,7 +194,7 @@ emu_result_t block_logic(block_handle_t* block) {
     //     EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");
     // }
     
-    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");}
+    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Block is inactive");}
 
     logic_expression_t* eval = (logic_expression_t*)block->custom_data;
     double stack[16]; 
@@ -210,7 +210,7 @@ emu_result_t block_logic(block_handle_t* block) {
                 if (likely(!(res.code=MEM_GET(&tmp, block->inputs[ins->input_index])))) {
                     stack[over_top++] = tmp;
                 } else {
-                    EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Input acces error: %s", EMU_ERR_TO_STR(res.code));
+                    EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Input acces error: %s", EMU_ERR_TO_STR(res.code));
                 }
                 break;
             }
@@ -283,7 +283,7 @@ emu_result_t block_logic(block_handle_t* block) {
                 break;
 
             default:
-                EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, block->cfg.block_idx, TAG, "Invalid instruction: %d", ins->op);
+                EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Invalid instruction: %d", ins->op);
         }
     }
 
@@ -297,7 +297,7 @@ emu_result_t block_logic(block_handle_t* block) {
     res = emu_block_set_output(block, &v_out, 1);
 
     if (unlikely(res.code != EMU_OK)) {
-        EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output acces error: %s", EMU_ERR_TO_STR(res.code));
+        EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Output acces error: %s", EMU_ERR_TO_STR(res.code));
     }
     LOG_I(TAG, "[%d]result: %s", block->cfg.block_idx, final_bool ? "TRUE" : "FALSE");
     return res;
@@ -330,11 +330,11 @@ void block_logic_free(block_handle_t* block){
 }
 
 emu_result_t block_logic_verify(block_handle_t *block) {
-    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, "BLOCK_LOGIC", "Custom Data is NULL %d", block->cfg.block_idx);}
+    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_logic_verify, block->cfg.block_idx, 0, TAG, "Custom Data is NULL %d", block->cfg.block_idx);}
     logic_expression_t *data = (logic_expression_t*)block->custom_data;
-    if (data->count == 0) {EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, "BLOCK_LOGIC", "Empty expression (count=0) %d", block->cfg.block_idx);}
+    if (data->count == 0) {EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_logic_verify, block->cfg.block_idx, 0, TAG, "Empty expression (count=0) %d", block->cfg.block_idx);}
 
-    if (data->count > 0 && data->code == NULL) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, "BLOCK_LOGIC", "Code pointer is NULL, %d", block->cfg.block_idx);}
+    if (data->count > 0 && data->code == NULL) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_logic_verify, block->cfg.block_idx, 0, TAG, "Code pointer is NULL, %d", block->cfg.block_idx);}
 
     return EMU_RESULT_OK();
 }

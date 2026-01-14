@@ -8,7 +8,6 @@
 
 static const char* TAG = "BLOCK_TIMER";
 
-extern emu_loop_handle_t loop_handle; 
 
 #define BLOCK_TIMER_IN_EN   0
 #define BLOCK_TIMER_IN_PT   1
@@ -23,9 +22,8 @@ extern emu_loop_handle_t loop_handle;
 
 emu_result_t block_timer(block_handle_t *block) {
 
-    uint64_t now_ms = loop_handle->timer.time;
+    uint64_t now_ms = emu_loop_get_time();
     block_timer_t* data = (block_timer_t*)block->custom_data;
-    emu_variable_t var;
     emu_result_t res = EMU_RESULT_OK();
 
     bool IN = emu_block_check_and_get_en(block, BLOCK_TIMER_IN_EN);
@@ -125,7 +123,7 @@ emu_result_t block_timer(block_handle_t *block) {
     LOG_I(TAG, "is out active %d", data->q_out);
     res = emu_block_set_output(block, &v_en, 0);
     if (unlikely(res.code != EMU_OK)) {
-        EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));
+        EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_timer, block->cfg.block_idx, 0, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));
     }
     
     // Ustawienie wyjścia ET (czasu) - brakowało tego w twoim kodzie, ale zgodnie z logiką timera powinno być
@@ -134,7 +132,7 @@ emu_result_t block_timer(block_handle_t *block) {
     emu_variable_t v_et = { .type = DATA_D, .data.d = (double)data->delta_time };
     res = emu_block_set_output(block, &v_et, BLOCK_TIMER_OUT_ET);
     if (unlikely(res.code != EMU_OK)) {
-         EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Output ET error %s", EMU_ERR_TO_STR(res.code));
+         EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_timer, block->cfg.block_idx, 0, TAG, "Output ET error %s", EMU_ERR_TO_STR(res.code));
     }
 
     return EMU_RESULT_OK();
@@ -168,12 +166,12 @@ emu_result_t block_timer_parse(chr_msg_buffer_t *source, block_handle_t *block) 
             
                 if (block->custom_data == NULL) {
                     block->custom_data = calloc(1, sizeof(block_timer_t));
-                    if (!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, i, TAG, "Custom data alloc failed");
+                    if (!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_timer_parse, block->cfg.block_idx, 0, TAG, "Custom data alloc failed");
                 }
                 
                 if (data[2] == EMU_H_BLOCK_PACKET_CONST) {
                     if (_emu_parse_timer_config(data, len, (block_timer_t*)block->custom_data) != EMU_OK) {
-                        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, i, TAG, "cfg parsing issue");
+                        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, EMU_OWNER_block_timer_parse, block->cfg.block_idx, 0, TAG, "cfg parsing issue");
                     }
                 }
             }
@@ -190,11 +188,11 @@ void block_timer_free(block_handle_t *block) {
     }
 }
 emu_result_t block_timer_verify(block_handle_t *block) {
-    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, "BLOCK_TIMER", "Custom Data is NULL");}
+    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_timer_verify, block->cfg.block_idx, 0, TAG, "Custom Data is NULL");}
 
     block_timer_t *data = (block_timer_t*)block->custom_data;
 
-    if (data->type > TIMER_TYPE_TP_INV) {EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, "BLOCK_TIMER", "Invalid Timer Type: %d", data->type);}
+    if (data->type > TIMER_TYPE_TP_INV) {EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_timer_verify, block->cfg.block_idx, 0, TAG, "Invalid Timer Type: %d", data->type);}
 
     return EMU_RESULT_OK();
 }

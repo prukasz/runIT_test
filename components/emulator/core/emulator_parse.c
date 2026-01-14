@@ -32,13 +32,13 @@ emu_result_t emu_parse_manager(parse_cmd_t cmd){
 
     case PARSE_CREATE_VARIABLES:
         if(!s_mem_contexts[0]||!s_mem_contexts[1]){
-            //res = emu_mem_parse_create_context(source); 
+            res = emu_mem_parse_create_context(source); 
             if(res.abort){EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_parse_manager,0, ++res.depth, TAG, "Create context failed");}
         }
         if (res.code == EMU_OK || res.warning == 1) {
-            //res = emu_mem_parse_create_scalar_instances(source);
+            res = emu_mem_parse_create_scalar_instances(source);
             if (res.abort) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_parse_manager, 0, ++res.depth, TAG, "Create scalar instances failed");}
-            //res = emu_mem_parse_create_array_instances(source);
+            res = emu_mem_parse_create_array_instances(source);
             if (res.abort) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_parse_manager, 0, ++res.depth, TAG, "Create array instances failed");}
 
         //Update
@@ -54,7 +54,7 @@ emu_result_t emu_parse_manager(parse_cmd_t cmd){
 
     case PARSE_FILL_VARIABLES:
         if (p_state.vars_allocated) {
-            //res = emu_mem_parse_context_data_packets(source, NULL); 
+            res = emu_mem_parse_context_data_packets(source, NULL); 
             if (res.code == EMU_OK) p_state.vars_filled = true;
         } else {
             EMU_RETURN_WARN(EMU_ERR_DENY, EMU_OWNER_emu_parse_manager, 0, 0,TAG, "Fill variables denied: Vars not allocated");
@@ -64,19 +64,19 @@ emu_result_t emu_parse_manager(parse_cmd_t cmd){
     // --- BLOCKS ---
     case PARSE_CREATE_BLOCKS_LIST:
         if (p_state.vars_filled && !p_state.blocks_list_alloc) {
-            //res = emu_parse_blocks_total_cnt(source, &emu_block_struct_execution_list, &emu_block_total_cnt);
+            res = emu_parse_blocks_total_cnt(source, &emu_block_struct_execution_list, &emu_block_total_cnt);
             if (res.code == EMU_OK) {
                 p_state.blocks_list_alloc = true;
                 EMU_REPORT(EMU_LOG_blocks_list_allocated, EMU_OWNER_emu_parse_manager, 0, TAG, "Block List Allocated (%d)", emu_block_total_cnt);
             }
         } else if (!p_state.vars_filled) {
-            //EMU_RETURN_CRITICAL(EMU_ERR_DENY, EMU_OWNER_emu_parse_manager, 0, TAG, "List alloc denied: Vars not filled");
+            EMU_RETURN_CRITICAL(EMU_ERR_DENY, EMU_OWNER_emu_parse_manager, 0,0, TAG, "List alloc denied: Vars not filled");
         }
         break;
 
     case PARSE_CREATE_BLOCKS: 
         if (p_state.blocks_list_alloc) {
-            //res = emu_parse_block(source, emu_block_struct_execution_list, emu_block_total_cnt);
+            res = emu_parse_block(source, emu_block_struct_execution_list, emu_block_total_cnt);
             if (res.code == EMU_OK) {p_state.blocks_parsed = true;}
             else{EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_parse_manager, 0, 0,TAG, "Create blocks denied");}
         } else {

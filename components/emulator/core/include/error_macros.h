@@ -10,8 +10,42 @@
 // --- Global Queue Handles ---
 extern QueueHandle_t error_logs_queue_t;
 extern QueueHandle_t logs_queue_t;
+/**
+ * @brief This header contains macros for error handling and logging within the emulator.
+ * It provides standardized ways to report errors, warnings, and notices,
+ * as well as logging messages with context awareness (ISR safe).
+ * It utilizes FreeRTOS queues to push error reports and logs for asynchronous processing.
+ * 
+ * There are 2 queues:
+ * - error_logs_queue_t: for error reports (emu_result_t)
+ * - logs_queue_t: for general logs and reports (emu_log_t - on status change mainly)
+ * 
+ * ERROR MACROS:
+ * - EMU_RETURN_CRITICAL: for critical errors that should stop execution
+ * - EMU_RETURN_WARN: for warnings that allow execution to continue
+ * - EMU_RETURN_NOTICE: for informational notices
+ * - EMU_REPORT_CRITICAL: for reporting errors without returning
+ * - EMU_REPORT_WARN: for reporting warnings without returning
+ * - EMU_REPORT_NOTICE: for reporting notices without returning
+ * LOGGING MACROS:
+ * - LOG_I, LOG_W, LOG_E, LOG_D: for logging info, warnings, errors, and debug messages directly to ESP log
+ * - These macros are ISR safe and check context before logging.
+ * - EMU_RETURN_OK: for returning success results we add to logs_queue_t not error queue as its not an error
+ * - EMU_REPORT: for reporting success results we add to logs_queue_t not error queue as its not an error
+ * 
+ * For more details on each macro, see their definitions below.
+ * For error code definitions, see error_types.h
+ * For log configuration, see emulator_logs_config.h
+ * For emu_result_t structure, see error_types.h
+ * 
+ * PLEASE NOTE:
+ * Use constant Enum names for owner_name_enum parameters to ensure consistency in error reporting.
+ * Use constant TAG strings for logging to maintain clarity in log outputs.
+ * Use constant owner_idx values to identify specific instances (like block IDs). Use 0x0/0xFFFF if not applicable or unknown.
+ * Use depth_arg to trace error origin in call stack (0 for direct, increment for each layer).
+ * Use constant naming for enums used in reporting to ensure consistency when want to reuse.
+ ********************************************************************************************/
 
-// --- Configuration ---
 
 
 // --- Logging Macros (ISR Safe) ---
@@ -67,7 +101,7 @@ extern QueueHandle_t logs_queue_t;
         }; \
         _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
         return _err; \
-    } while(0)
+    } while(0)  
 
 /*********************************************************************************************
 
@@ -120,6 +154,66 @@ extern QueueHandle_t logs_queue_t;
         _EMU_RETURN_ERR(code, owner_name_enum, owner_idx, depth_arg, 1, 0, 0); \
     } while(0)
 
+    /**
+     * @brief Report an error without returning (no abort, warning, notice)
+     * @param code emu_err_t error
+     * @param owner_name_enum "function name enum"
+     * @param owner_idx "identifying index"
+     * @param depth_arg To trace error origin
+     * @param TAG log TAG
+     * @param fmt standard log fmt
+     */
+
+#define EMU_REPORT_ERROR_CRITICAL(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
+    do { \
+        _EMU_LOG_SAFE(LOG_E, tag, "ERROR REPORTED: " fmt, ##__VA_ARGS__); \
+        emu_result_t _err = { \
+            .code = code_arg, \
+            .owner = owner_name_enum, \
+            .owner_idx = owner_idx_arg, \
+            .notice = 0, \
+            .warning = 0, \
+            .abort = 1, \
+            .depth = depth_arg, \
+            .time = emu_loop_get_time(), \
+            .cycle = emu_loop_get_iteration() \
+        }; \
+        _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
+    } while(0)
+
+#define EMU_REPORT_ERROR_WARN(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
+    do { \
+        _EMU_LOG_SAFE(LOG_E, tag, "ERROR REPORTED: " fmt, ##__VA_ARGS__); \
+        emu_result_t _err = { \
+            .code = code_arg, \
+            .owner = owner_name_enum, \
+            .owner_idx = owner_idx_arg, \
+            .notice = 0, \
+            .warning = 1, \
+            .abort = 0, \
+            .depth = depth_arg, \
+            .time = emu_loop_get_time(), \
+            .cycle = emu_loop_get_iteration() \
+        }; \
+        _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
+    } while(0)
+
+#define EMU_REPORT_ERROR_NOTICE(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
+    do { \
+        _EMU_LOG_SAFE(LOG_E, tag, "ERROR REPORTED: " fmt, ##__VA_ARGS__); \
+        emu_result_t _err = { \
+            .code = code_arg, \
+            .owner = owner_name_enum, \
+            .owner_idx = owner_idx_arg, \
+            .notice = 1, \
+            .warning = 0, \
+            .abort = 0, \
+            .depth = depth_arg, \
+            .time = emu_loop_get_time(), \
+            .cycle = emu_loop_get_iteration() \
+        }; \
+        _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
+    } while(0)
 
 
 

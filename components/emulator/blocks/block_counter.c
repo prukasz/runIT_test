@@ -26,7 +26,7 @@ emu_result_t block_counter(block_handle_t *block) {
 
     counter_handle_t* data = (counter_handle_t*)block->custom_data;
     emu_result_t res;
-    emu_variable_t var;
+    (void)res; // May be used by macros
 
     if (emu_check_updated(block, IN_3_STEP)) {MEM_GET(&data->step, block->inputs[IN_3_STEP]);}
 
@@ -90,12 +90,12 @@ finish:
     LOG_I(TAG, "Setting outputs in counter block");
     emu_variable_t v_eno = { .type = DATA_B, .data.b = true };
     res = emu_block_set_output(block, &v_eno, OUT_0_ENO);
-    if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Set ENO Error");
+    if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_counter, block->cfg.block_idx, 0, TAG, "Set ENO Error");
 
     // OUT_1: VAL (Current Value)
     emu_variable_t v_val = { .type = DATA_D, .data.d = data->current_val };
     res = emu_block_set_output(block, &v_val, OUT_1_VAL);
-    if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, block->cfg.block_idx, TAG, "Set VAL Error");
+    if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_counter, block->cfg.block_idx, 0, TAG, "Set VAL Error");
 
     return EMU_RESULT_OK();
 }
@@ -114,7 +114,7 @@ emu_result_t block_counter_parse(chr_msg_buffer_t *source, block_handle_t *block
 
             block->custom_data = calloc(1, sizeof(counter_handle_t));
             counter_handle_t* handle = (counter_handle_t*)block->custom_data;
-            if(!handle) {EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, block->cfg.block_idx,TAG, "[%d]Null handle ptr", block->cfg.block_idx);}
+            if(!handle) {EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_counter_parse, block->cfg.block_idx, 0, TAG, "[%d]Null handle ptr", block->cfg.block_idx);}
             size_t offset = 5; // Skip header bytes
             handle->cfg = (counter_cfg_t)data[offset++];
             
@@ -131,11 +131,11 @@ emu_result_t block_counter_parse(chr_msg_buffer_t *source, block_handle_t *block
             }
         }
     }
-    EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, block->cfg.block_idx, TAG, "[%d]Packet not found", block->cfg.block_idx);
+    EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, EMU_OWNER_block_counter_parse, block->cfg.block_idx, 0, TAG, "[%d]Packet not found", block->cfg.block_idx);
 }
 
 emu_result_t block_counter_verify(block_handle_t *block) {
-    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, block->cfg.block_idx, TAG, "Custom Data is NULL %d", block->cfg.block_idx);}
+    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_counter_verify, block->cfg.block_idx, 0, TAG, "Custom Data is NULL %d", block->cfg.block_idx);}
     return EMU_RESULT_OK();
 }
 
