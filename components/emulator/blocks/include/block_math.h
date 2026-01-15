@@ -15,7 +15,7 @@ typedef enum{
 
 typedef struct {
     op_code_t op;
-    uint8_t input_index; //for operator its 00, for constant index in constant table
+    uint8_t input_index; //for operator it's 00, for constant index in constant table
 } instruction_t;
 
 
@@ -41,6 +41,32 @@ emu_result_t block_math_verify(block_handle_t *block);
     -->VAL  [3]|OPT....         |
                |________________|
  
+****************************************************************************
+DESCRIPTION:
+This block performs mathematical operations based on a user-defined expression.
+INPUTS:
+- EN (Boolean (ANY)): Enables or disables the block. If false, the output ENO will be false.
+- VAL[1..N] (ANY): Inputs used in the mathematical expression. The number of inputs depends on the expression defined.
+OUTPUTS:
+- ENO (Boolean): Indicates if the block executed successfully. It is true if EN is true.
+- RESULT (Double): The result of the mathematical expression evaluation.
+
+NOTE: 
+Block can handle up to 16 inputs and uses Reverse Polish Notation (RPN) for expression evaluation.
+Block can have static variables defined in constant table. all of them are double type.
+Block performs operations on double precision floating-point numbers.
+USAGE:
+MATH expr = "in_1*+cos(in_2)"
+
+[GPIO_1]---->[EN][MATH]
+["SPEED"]->[VAL1][MATH][RESULT]->["SPEED_CALC"]
+["ANGLE"]->[VAL2][MATH]
+
+RESULT:
+While EN is true "MATH" is executed and result of expression is on output RESULT
+NOTE: 
+BLOCK can have only one input: EN input, then it has hardcoded expression like "cos(0.5)+0.2137"
+
 ****************************************************************************/
 
 /**

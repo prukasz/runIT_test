@@ -1,13 +1,13 @@
 #include "block_clock.h"
 #include "emulator_blocks.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include "emulator_variables_acces.h"
 #include "emulator_loop.h" 
 #include "esp_log.h"
 #include <string.h>
 #include <math.h>
 
-static const char* TAG = "BLOCK_CLOCK";
+static const char* TAG = __FILE_NAME__;
 
 typedef struct {
     double   default_period;
@@ -27,20 +27,20 @@ emu_result_t block_clock(block_handle_t *block) {
 
     block_clock_handle_t *data = (block_clock_handle_t*)block->custom_data;
 
-    bool en = emu_block_check_and_get_en(block, CLK_IN_EN);
+    bool en = block_check_EN(block, CLK_IN_EN);
     if (!en) {
         data->prev_en = false;
         emu_variable_t v_out = { .type = DATA_B, .data.b = false };
-        emu_result_t res = emu_block_set_output(block, &v_out, CLK_OUT_Q);
+        emu_result_t res = block_set_output(block, &v_out, CLK_OUT_Q);
         if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_clock, block->cfg.block_idx, 0, TAG, "Output Set Fail");
         return EMU_RESULT_OK();
     }
 
     double period = data->default_period;
-    if(emu_check_updated(block, CLK_IN_PERIOD)){MEM_GET(&period, block->inputs[CLK_IN_PERIOD]);}
+    if(block_in_updated(block, CLK_IN_PERIOD)){MEM_GET(&period, block->inputs[CLK_IN_PERIOD]);}
 
     double width = data->default_width;
-    if(emu_check_updated(block, CLK_IN_WIDTH)){MEM_GET(&width, block->inputs[CLK_IN_WIDTH]);}
+    if(block_in_updated(block, CLK_IN_WIDTH)){MEM_GET(&width, block->inputs[CLK_IN_WIDTH]);}
 
     if (period < 1.0) period = 1.0; 
     if (width < 0.0) width = 0.0;
@@ -62,7 +62,7 @@ emu_result_t block_clock(block_handle_t *block) {
     emu_variable_t v_out = { .type = DATA_B, .data.b = q_state };
     LOG_I(TAG, "time %lld", local_time);
     LOG_I(TAG, "out %d ", q_state);
-    emu_result_t res = emu_block_set_output(block, &v_out, CLK_OUT_Q);
+    emu_result_t res = block_set_output(block, &v_out, CLK_OUT_Q);
     
     if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_clock, block->cfg.block_idx, 0, TAG, "Output Set Fail");}
     return EMU_RESULT_OK();

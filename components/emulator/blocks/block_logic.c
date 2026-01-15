@@ -1,5 +1,5 @@
 #include "block_logic.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include "emulator_variables_acces.h"
 #include "emulator_blocks.h" 
 #include "esp_log.h"
@@ -8,11 +8,159 @@
 #include <string.h>
 #include <stdlib.h>
 
-static const char* TAG = "BLOCK_LOGIC";
+static const char* TAG = __FILE_NAME__;
+
+/*Aviable operations*/
+typedef enum {
+    CMP_OP_VAR      = 0x00, 
+    CMP_OP_CONST    = 0x01, 
+
+    CMP_OP_GT       = 0x10, // >
+    CMP_OP_LT       = 0x11, // <
+    CMP_OP_EQ       = 0x12, // ==
+    CMP_OP_GTE      = 0x13, // >=
+    CMP_OP_LTE      = 0x14, // <=
+    CMP_OP_AND      = 0x20, // &&
+    CMP_OP_OR       = 0x21, // ||
+    CMP_OP_NOT      = 0x22  // !
+} logic_op_code_t;
+
+/*Operation struct*/
+typedef struct {
+    uint8_t op;        
+    uint8_t input_index; 
+} logic_instruction_t;
+
+/*Whole comparision struct*/
+typedef struct {
+    logic_instruction_t *code;
+    uint8_t count;
+    double *constant_table;
+} logic_expression_t;
 
 // Internal Helpers
-static inline bool is_true(double a);
-static inline double bool_to_double(bool val);
+static __always_inline bool is_true(double a) {return a > 0.5;}
+static __always_inline double bool_to_double(bool val) {return val ? 1.0 : 0.0;}
+
+emu_result_t block_logic(block_handle_t* block) {
+    //necessary checks for block execution
+    if (!emu_block_check_inputs_updated(block)) {EMU_REPORT(EMU_LOG_block_inactive, EMU_OWNER_block_logic, block->cfg.block_idx, TAG, "Block logic %d inactive (EN not updated)", block->cfg.block_idx);}
+    if(!block_check_EN(block, 0)){EMU_REPORT(EMU_LOG_block_inactive, EMU_OWNER_block_logic, block->cfg.block_idx, TAG, "Block logic %d inactive (EN not enabled)", block->cfg.block_idx);}
+
+    //stack opertatin variables
+    logic_expression_t* eval = (logic_expression_t*)block->custom_data;
+    double stack[16]; 
+    int8_t over_top = 0;
+    double val_a, val_b; 
+    emu_result_t res;
+
+    //this part gets all inputs first so we don't have to access memory multiple times during eval
+    double inputs[block->cfg.in_cnt];
+    //skip input 0 (EN)
+    for (uint8_t i = 1; i < block->cfg.in_cnt; i++) {
+        if(block->cfg.in_connected & (1 << i)){
+            if (likely(!(res.code=MEM_GET(&inputs[i], block->inputs[i])))) {
+            } else {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_logic, block->cfg.block_idx, 1, TAG, "Input acces error: %s", EMU_ERR_TO_STR(res.code));}
+        }
+    }
+
+    //execute all instructions for comparisons
+    for (int8_t i = 0; i < eval->count; i++) {
+        logic_instruction_t *ins = &(eval->code[i]);
+          
+        switch (ins->op) {
+            case CMP_OP_VAR: 
+                stack[over_top++] = inputs[ins->input_index];
+                break;
+
+            case CMP_OP_CONST:
+                stack[over_top++] = eval->constant_table[ins->input_index];
+                break;
+              
+            case CMP_OP_GT:
+                if (over_top >= 2) {
+                    val_b = stack[--over_top];
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(val_a > val_b); 
+                }
+                break;
+
+            case CMP_OP_LT:
+                if (over_top >= 2) {
+                    val_b = stack[--over_top];
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(val_a < val_b);
+                }
+                break;
+
+            case CMP_OP_EQ:
+                if (over_top >= 2) {
+                    val_b = stack[--over_top];
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(fabs(val_a - val_b) < DBL_EPSILON);
+                }
+                break;
+
+            case CMP_OP_GTE:
+                if (over_top >= 2) {
+                    val_b = stack[--over_top];
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(val_a >= val_b); 
+                }
+                break;
+
+            case CMP_OP_LTE:
+                if (over_top >= 2) {
+                    val_b = stack[--over_top];
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(val_a <= val_b);
+                }
+                break;    
+            
+            case CMP_OP_AND:
+                if (over_top >= 2) {
+                    val_b = stack[--over_top];
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(is_true(val_a) && is_true(val_b));
+                }
+                break;
+
+            case CMP_OP_OR:
+                if (over_top >= 2) {
+                    val_b = stack[--over_top];
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(is_true(val_a) || is_true(val_b));
+                }
+                break;
+
+            case CMP_OP_NOT: 
+                if (over_top >= 1) {
+                    val_a = stack[--over_top];
+                    stack[over_top++] = bool_to_double(!is_true(val_a));
+                }
+                break;
+
+            default:
+                EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Invalid instruction: %d", ins->op);
+        }
+    }
+
+    //get final result
+    bool final_bool = (over_top > 0) ? is_true(stack[0]) : false;
+    
+    //We set ENO and OUT
+    emu_variable_t v_out = { .type = DATA_B, .data.b = true};
+    res = block_set_output(block, &v_out, 0);
+    v_out.data.b = final_bool;
+    res = block_set_output(block, &v_out, 1);
+
+    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_logic, block->cfg.block_idx, ++res.depth, TAG, "Output acces error: %s", EMU_ERR_TO_STR(res.code));}
+    EMU_REPORT(EMU_LOG_finished, EMU_OWNER_block_logic, block->cfg.block_idx, TAG, "[%d]result: %s", block->cfg.block_idx, final_bool ? "TRUE" : "FALSE");
+    return res;
+}
+
+
+
 
 // Forward Declarations
 static emu_err_t _emu_parse_logic_expr(chr_msg_buffer_t *source, size_t msg_index, logic_expression_t* expression, size_t *const_msg_cnt);
@@ -27,7 +175,6 @@ static emu_err_t _clear_logic_expression_internals(logic_expression_t* expr);
 
 emu_result_t block_logic_parse(chr_msg_buffer_t *source, block_handle_t *block)
 {
-    // Użycie makra bez słowa 'return' (makro zawiera return)
     if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_logic_parse, 0, 0, TAG, "NULL block pointer");
 
     emu_result_t res = EMU_RESULT_OK();
@@ -184,133 +331,6 @@ static emu_err_t _emu_parse_logic_const_msg(uint8_t *data, uint16_t len, size_t 
     return EMU_OK;
 }
 
-/* ============================================================================
-    EXECUTION LOGIC
-   ============================================================================ */
-
-emu_result_t block_logic(block_handle_t* block) {
-    // 1. Sprawdzenie aktywności (Notice)
-    // if (!emu_block_check_inputs_updated(block)) {
-    //     EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, block->cfg.block_idx, TAG, "Block is inactive");
-    // }
-    
-    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Block is inactive");}
-
-    logic_expression_t* eval = (logic_expression_t*)block->custom_data;
-    double stack[16]; 
-    int8_t over_top = 0;
-    double val_a, val_b; 
-    double tmp;
-    emu_result_t res;
-    for (int8_t i = 0; i < eval->count; i++) {
-        logic_instruction_t *ins = &(eval->code[i]);
-          
-        switch (ins->op) {
-            case CMP_OP_VAR: {
-                if (likely(!(res.code=MEM_GET(&tmp, block->inputs[ins->input_index])))) {
-                    stack[over_top++] = tmp;
-                } else {
-                    EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Input acces error: %s", EMU_ERR_TO_STR(res.code));
-                }
-                break;
-            }
-
-            case CMP_OP_CONST:
-                stack[over_top++] = eval->constant_table[ins->input_index];
-                break;
-              
-            case CMP_OP_GT:
-                if (over_top >= 2) {
-                    val_b = stack[--over_top];
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(val_a > val_b); 
-                }
-                break;
-
-            case CMP_OP_LT:
-                if (over_top >= 2) {
-                    val_b = stack[--over_top];
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(val_a < val_b);
-                }
-                break;
-
-            case CMP_OP_EQ:
-                if (over_top >= 2) {
-                    val_b = stack[--over_top];
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(fabs(val_a - val_b) < DBL_EPSILON);
-                }
-                break;
-
-            case CMP_OP_GTE:
-                if (over_top >= 2) {
-                    val_b = stack[--over_top];
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(val_a >= val_b); 
-                }
-                break;
-
-            case CMP_OP_LTE:
-                if (over_top >= 2) {
-                    val_b = stack[--over_top];
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(val_a <= val_b);
-                }
-                break;    
-            
-            case CMP_OP_AND:
-                if (over_top >= 2) {
-                    val_b = stack[--over_top];
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(is_true(val_a) && is_true(val_b));
-                }
-                break;
-
-            case CMP_OP_OR:
-                if (over_top >= 2) {
-                    val_b = stack[--over_top];
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(is_true(val_a) || is_true(val_b));
-                }
-                break;
-
-            case CMP_OP_NOT: 
-                if (over_top >= 1) {
-                    val_a = stack[--over_top];
-                    stack[over_top++] = bool_to_double(!is_true(val_a));
-                }
-                break;
-
-            default:
-                EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Invalid instruction: %d", ins->op);
-        }
-    }
-
-    bool final_bool = (over_top > 0) ? is_true(stack[0]) : false;
-    
-    // Set Output 0 (Result)
-    emu_variable_t v_out = { .type = DATA_B };
-    v_out.data.b = true;
-    res = emu_block_set_output(block, &v_out, 0);
-    v_out.data.b = final_bool;
-    res = emu_block_set_output(block, &v_out, 1);
-
-    if (unlikely(res.code != EMU_OK)) {
-        EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_logic, block->cfg.block_idx, 0, TAG, "Output acces error: %s", EMU_ERR_TO_STR(res.code));
-    }
-    LOG_I(TAG, "[%d]result: %s", block->cfg.block_idx, final_bool ? "TRUE" : "FALSE");
-    return res;
-}
-
-/* Helper functions */
-static inline bool is_true(double a) {
-    return a > 0.5; 
-}
-
-static inline double bool_to_double(bool val) {
-    return val ? 1.0 : 0.0;
-}
 
 static emu_err_t _clear_logic_expression_internals(logic_expression_t* expr){
     if(expr->code) free(expr->code);

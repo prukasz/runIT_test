@@ -268,3 +268,5 @@ extern QueueHandle_t logs_queue_t;
 
     #define EMU_REPORT(...) do {} while(0)
 #endif
+
+#define EMU_RESULT_OK() ((emu_result_t){ .code = EMU_OK })

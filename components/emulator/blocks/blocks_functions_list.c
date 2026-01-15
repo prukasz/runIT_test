@@ -1,5 +1,9 @@
 #include "blocks_functions_list.h"
 
+
+/**
+ * @brief Tables with main functions for each block: requierd for all block types
+ */
 emu_block_func blocks_main_functions_table[255]={
     [BLOCK_LOGIC]=block_logic,
     [BLOCK_MATH]=block_math,
@@ -10,6 +14,10 @@ emu_block_func blocks_main_functions_table[255]={
     [BLOCK_CLOCK]=block_clock
 };
 
+
+/**
+ * @brief Table for block specific parsers
+ */
 emu_block_parse_func emu_block_parsers_table[255]={
     [BLOCK_LOGIC]=block_logic_parse,
     [BLOCK_MATH]=block_math_parse,
@@ -19,6 +27,9 @@ emu_block_parse_func emu_block_parsers_table[255]={
     [BLOCK_CLOCK]=block_clock_parse
 };
 
+/**
+ * @brief Table for block specific free functions (cleanup/reset)
+ */
 emu_block_free_func emu_block_free_table[255]={
     [BLOCK_LOGIC]=block_logic_free,
     [BLOCK_MATH]=block_math_free,
@@ -28,6 +39,9 @@ emu_block_free_func emu_block_free_table[255]={
     [BLOCK_CLOCK]=block_clock_free
 };
 
+/**
+ * @brief Table for block specific verify functions (check configuration validity and code completeness)
+ */
 emu_block_verify_func emu_block_verify_table[255]={
     [BLOCK_LOGIC]=block_logic_verify,
     [BLOCK_MATH]=block_math_verify,

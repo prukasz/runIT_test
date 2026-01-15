@@ -1,7 +1,4 @@
 #include "emulator_blocks.h"
-#include "emulator_errors.h"
-#include "emulator_variables_acces.h"
-#include "emulator_variables.h"
 #include "blocks_functions_list.h"
 #include "esp_log.h"
 #include <string.h>
@@ -9,7 +6,7 @@
 #include <math.h>
 
 extern emu_mem_t* s_mem_contexts[];
-static const char* TAG = "EMU_BLOCKS";
+static const char* TAG = __FILE_NAME__;
 
 /* ============================================================================
     ZARZĄDZANIE PAMIĘCIĄ BLOKÓW (FREE)
@@ -37,31 +34,26 @@ static void _free_single_block(block_handle_t* block) {
     free(block);
 }
 
-void emu_blocks_free_all(block_handle_t** blocks_list, uint16_t blocks_cnt) {
-    if (!blocks_list) {
-        LOG_W(TAG, "No block list to free");
-        return;
-    }
-    
-    for (size_t i = 0; i < blocks_cnt; i++) {
-        if (blocks_list[i]) {
-            _free_single_block(blocks_list[i]);
-            blocks_list[i] = NULL;
+void emu_blocks_free_all(emu_code_handle_t code) {
+
+    for (size_t i = 0; i < code->total_blocks; i++) {
+        if (code->blocks_list[i]) {
+            _free_single_block(code->blocks_list[i]);
+            code->blocks_list[i] = NULL;
         }
     }
+
     
-    free(blocks_list);
-    LOG_I(TAG, "All %d blocks freed", blocks_cnt);
+    free(code->blocks_list);
+    code->total_blocks = 0;
+    LOG_I(TAG, "All %d blocks freed", code->total_blocks);
 }
 
 /****************************************************************************
  * TOTAL BLOCKS CNT
  ****************************************************************************/
 
-emu_result_t emu_parse_blocks_total_cnt(chr_msg_buffer_t *source, block_handle_t ***blocks_list, uint16_t *blocks_total_cnt) {
-    if (!source || !blocks_list || !blocks_total_cnt) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_parse_blocks_total_cnt, 0xFFFF, 0, TAG, "Null ptr provided");
-    }
+emu_result_t emu_parse_blocks_total_cnt(chr_msg_buffer_t *source, emu_code_handle_t code) {
 
     uint8_t *data;
     size_t len;
@@ -83,15 +75,15 @@ emu_result_t emu_parse_blocks_total_cnt(chr_msg_buffer_t *source, block_handle_t
                 EMU_RETURN_NOTICE(EMU_OK, EMU_OWNER_emu_parse_blocks_total_cnt, 0xFFFF, 0, TAG, "Block count is 0");
             }
 
-            *blocks_list = (block_handle_t**)calloc(cnt, sizeof(block_handle_t*));
+            code->blocks_list = (block_handle_t**)calloc(cnt, sizeof(block_handle_t*));
             
-            if (*blocks_list == NULL) {
+            if (code->blocks_list == NULL) {
                 EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_emu_parse_blocks_total_cnt, 0, 0, TAG, "Failed to allocate list for %d blocks", cnt);
             }
 
-            *blocks_total_cnt = cnt;
+            code->total_blocks = cnt;
             LOG_I(TAG, "Allocated list for %d blocks", cnt);
-            return EMU_RESULT_OK();
+            EMU_RETURN_OK(EMU_LOG_blocks_list_allocated, EMU_OWNER_emu_parse_blocks_total_cnt, 0, TAG, "Block count header found: %d", cnt);
         }
     }
     EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, EMU_OWNER_emu_parse_blocks_total_cnt, EMU_H_BLOCK_CNT, 0, TAG, "Block count header not found");
@@ -101,10 +93,7 @@ emu_result_t emu_parse_blocks_total_cnt(chr_msg_buffer_t *source, block_handle_t
  * SINGLE BLOCK PARSE
  *********************************************************************************/
 
-emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t **blocks_list, uint16_t blocks_total_cnt) {
-    if (!blocks_list || blocks_total_cnt == 0) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_parse_block, 0, 0, TAG, "Null ptr provided");
-    }
+emu_result_t emu_parse_block(chr_msg_buffer_t *source, emu_code_handle_t code) {
 
     uint8_t *data;
     size_t len;
@@ -122,18 +111,18 @@ emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t **blocks_l
             uint16_t blk_idx = 0;
             memcpy(&blk_idx, &data[3], 2);
 
-            if (blk_idx >= blocks_total_cnt) {
-                EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER_emu_parse_block, blk_idx, 0, TAG, "Block ID %d exceeds total %d", blk_idx, blocks_total_cnt);
+            if (blk_idx >= code->total_blocks) {
+                EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER_emu_parse_block, blk_idx, 0, TAG, "Block ID %d exceeds total %d", blk_idx, code->total_blocks);
             }
 
-            if (blocks_list[blk_idx] == NULL) {
-                blocks_list[blk_idx] = (block_handle_t*)calloc(1, sizeof(block_handle_t));
-                if (!blocks_list[blk_idx]) {
+            if (code->blocks_list[blk_idx] == NULL) {
+                code->blocks_list[blk_idx] = (block_handle_t*)calloc(1, sizeof(block_handle_t));
+                if (!code->blocks_list[blk_idx]) {
                     EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_emu_parse_block, blk_idx, 0, TAG, "Block struct alloc failed");
                 }
             }
 
-            block_handle_t *block = blocks_list[blk_idx];
+            block_handle_t *block = code->blocks_list[blk_idx];
             block->cfg.block_idx  = blk_idx;
             block->cfg.block_type = data[1]; 
 
@@ -183,20 +172,17 @@ emu_result_t emu_parse_block(chr_msg_buffer_t *source, block_handle_t **blocks_l
         }
     }
 
-    if (found_cnt < blocks_total_cnt) {
-        LOG_D(TAG, "Configured %d blocks out of %d expected", found_cnt, blocks_total_cnt);
-        return EMU_RESULT_OK(); 
+    if (found_cnt < code->total_blocks) {
+        LOG_D(TAG, "Configured %d blocks out of %d expected", found_cnt, code->total_blocks);
+        EMU_RETURN_NOTICE(EMU_OK, EMU_OWNER_emu_parse_block, 0, 0, TAG, "Configured %d blocks out of %d expected", found_cnt, code->total_blocks);
     }
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_blocks_parsed_once, EMU_OWNER_emu_parse_block, 0, TAG, "All %d blocks parsed", found_cnt);
 }
 
-emu_result_t emu_parse_blocks_verify_all(block_handle_t **blocks_list, uint16_t blocks_total_cnt) {
-    if (!blocks_list || blocks_total_cnt == 0) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_parse_blocks_verify_all, 0, 0, TAG, "Null ptr provided or zero blocks to check");
-    }
-    
-    for (size_t i = 0; i < blocks_total_cnt; i++) {
-        block_handle_t *block = blocks_list[i];
+emu_result_t emu_parse_blocks_verify_all(emu_code_handle_t code) {
+
+    for (size_t i = 0; i < code->total_blocks; i++) {
+        block_handle_t *block = code->blocks_list[i];
 
         if (!block) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_parse_blocks_verify_all, i, 0, TAG, "Block %d is NULL", i);}
 
@@ -230,13 +216,13 @@ emu_result_t emu_parse_blocks_verify_all(block_handle_t **blocks_list, uint16_t 
         }
         //verify content
         emu_block_verify_func verify_func = emu_block_verify_table[block->cfg.block_type];
-        emu_result_t res = EMU_RESULT_OK();
+        emu_result_t res = {.code = EMU_OK};
         if (verify_func) {
             res = verify_func(block);
         }
         if (res.code != EMU_OK && res.abort){EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_parse_blocks_verify_all, i, 0, TAG, "Block content verify failed for block %d", i);}
     }
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_blocks_verified, EMU_OWNER_emu_parse_blocks_verify_all, 0, TAG, "All %d blocks verified", code->total_blocks);
 }
 
 emu_result_t emu_parse_block_inputs(chr_msg_buffer_t *source, block_handle_t *block) {
@@ -258,7 +244,7 @@ emu_result_t emu_parse_block_inputs(chr_msg_buffer_t *source, block_handle_t *bl
             }
         }
     }
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_parsed_block_inputs, EMU_OWNER_emu_parse_block_inputs, 0, TAG, "Parsed inputs for block %d", block->cfg.block_idx);
 }
 
 emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *block) {
@@ -280,5 +266,5 @@ emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *b
             }
         }
     }
-    return EMU_RESULT_OK();
+    EMU_RETURN_OK(EMU_LOG_parsed_block_outputs, EMU_OWNER_emu_parse_block_outputs, 0, TAG, "Parsed outputs for block %d", block->cfg.block_idx);
 }

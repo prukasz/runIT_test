@@ -113,7 +113,7 @@ typedef enum {
     EMU_OWNER_block_clock,
     EMU_OWNER_block_clock_parse,
     EMU_OWNER_block_clock_verify,
-    EMU_OWNER_emu_block_set_output,
+    EMU_OWNER_block_set_output,
     EMU_OWNER_emu_mem_register_context,
     EMU_OWNER__parse_scalar_data,
     EMU_OWNER__parse_array_data,
@@ -122,7 +122,7 @@ typedef enum {
     EMU_OWNER_mem_access_parse_node_recursive,
     EMU_OWNER__resolve_mem_offset,
     EMU_OWNER_mem_get,
-
+    EMU_OWNER_block_check_EN,
 }emu_owner_t;
 
 /** 
@@ -187,6 +187,11 @@ typedef enum {
     EMU_LOG_executing_block,
     EMU_LOG_loop_reinitialized,
     EMU_LOG_loop_task_already_exists,
+    EMU_LOG_blocks_parsed_once,
+    EMU_LOG_parsed_block_inputs,
+    EMU_LOG_parsed_block_outputs,
+    EMU_LOG_block_inactive,
+    EMU_LOG_finished,
 } emu_log_t;
 
 

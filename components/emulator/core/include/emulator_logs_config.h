@@ -5,7 +5,10 @@
  * Enabling/disabling logging features and setting queue sizes and task stack size
  * ENABLE_LOGGING - enables logging to ESP log system
  * ENABLE_DEBUG_LOGS - enables extra debug logs (to be used with ENABLE_LOGGING)
- * ENABLE_REPORT - enables reporting to queues (also enables debug if enabled)
+ * ENABLE_REPORT - enables reporting to queues 
+ IMPORTANT: 
+    * - Disabling logging/reporting will save some memory and CPU time but will make debugging and error tracking much harder
+    
  *************************************************************************************************/
 
 #define ENABLE_LOGGING 

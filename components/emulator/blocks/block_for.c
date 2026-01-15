@@ -1,24 +1,53 @@
 #include "block_for.h"
 #include "emulator_blocks.h"
-#include "emulator_errors.h"
 #include "emulator_variables_acces.h"
+#include "blocks_functions_list.h"
 #include "emulator_loop.h" 
+#include "emulator_body.h"
 #include "esp_log.h"
 #include <math.h>
 #include <float.h>
 #include <string.h>
 #include <stdlib.h>
 
-static const char* TAG = "BLOCK_FOR";
+static const char* TAG = __FILE_NAME__;
 
-extern block_handle_t **emu_block_struct_execution_list; 
-extern uint64_t emu_loop_iterator;
-extern emu_block_func blocks_main_functions_table[255];
+typedef enum{
+    FOR_COND_GT       = 0x01, // >
+    FOR_COND_LT       = 0x02, // <
+    FOR_COND_GTE      = 0x04, // >=
+    FOR_COND_LTE      = 0x05, // <=
+}block_for_condition_t;
+
+typedef enum{
+    FOR_OP_ADD        = 0x01,
+    FOR_OP_SUB        = 0x02,
+    FOR_OP_MUL        = 0x03,
+    FOR_OP_DIV        = 0x04,
+}block_for_operator_t;
+
+ 
+typedef struct{
+    uint16_t chain_len;
+    double start_val;
+    double end_val;
+    double op_step;
+    block_for_condition_t condition;
+    block_for_operator_t op;
+}block_for_handle_t;   
 
 
+#define BLOCK_FOR_IN_EN    0
 #define BLOCK_FOR_IN_START 1
 #define BLOCK_FOR_IN_STOP  2
 #define BLOCK_FOR_IN_STEP  3
+#define BLOCK_FOR_MAX_CYCLES 1000
+
+
+static emu_code_handle_t code;
+static bool binded_to_code = false;
+
+extern uint64_t emu_loop_iterator;
 
 // Helper: safe double equality
 static inline bool dbl_eq(double a, double b) {
@@ -34,23 +63,22 @@ emu_result_t block_for(block_handle_t *src) {
     (void)res; // May be used by macros
     
 
-    bool EN = emu_block_check_and_get_en(src, 0);
+    bool EN = block_check_EN(src, 0);
     
-    if (!EN) {EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, EMU_OWNER_block_for, src->cfg.block_idx, 0, TAG, "Block Disabled (EN=0)");}
-
+    if (!EN) { EMU_RETURN_OK(EMU_LOG_block_inactive, EMU_OWNER_block_for, src->cfg.block_idx, TAG, "Block Disabled"); }
     block_for_handle_t* config = (block_for_handle_t*)src->custom_data;
     if (!config) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_for, src->cfg.block_idx, 0, TAG, "No custom data");
 
     // 3. Pobieranie parametrów (Start / Stop / Step)
     double iterator_start = config->start_val;
-    if (emu_check_updated(src, BLOCK_FOR_IN_START)){MEM_GET(&iterator_start, src->inputs[BLOCK_FOR_IN_START]);}
+    if (block_in_updated(src, BLOCK_FOR_IN_START)){MEM_GET(&iterator_start, src->inputs[BLOCK_FOR_IN_START]);}
 
     double limit = config->end_val;
-    if (emu_check_updated(src, BLOCK_FOR_IN_STOP)){MEM_GET(&limit, src->inputs[BLOCK_FOR_IN_STOP]);}
+    if (block_in_updated(src, BLOCK_FOR_IN_STOP)){MEM_GET(&limit, src->inputs[BLOCK_FOR_IN_STOP]);}
 
 
     double step = config->op_step;
-    if (emu_check_updated(src, BLOCK_FOR_IN_STEP)){MEM_GET(&step, src->inputs[BLOCK_FOR_IN_STEP]);}
+    if (block_in_updated(src, BLOCK_FOR_IN_STEP)){MEM_GET(&step, src->inputs[BLOCK_FOR_IN_STEP]);}
 
     // 4. Inicjalizacja Pętli
     double current_val = iterator_start;
@@ -59,7 +87,6 @@ emu_result_t block_for(block_handle_t *src) {
 
     while(1) {
         bool condition_met = false;
-
 
         // --- B. WARUNEK LOGICZNY PĘTLI ---
         switch (config->condition) {
@@ -75,19 +102,19 @@ emu_result_t block_for(block_handle_t *src) {
 
         // --- D. WYJŚCIA ---
         emu_variable_t v_en = { .type = DATA_B, .data.b = true };
-        res = emu_block_set_output(src, &v_en, 0);
+        res = block_set_output(src, &v_en, 0);
         if (res.code != EMU_OK) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_for, src->cfg.block_idx, 0, TAG, "Set Out 0 fail");
 
         emu_variable_t v_iter = { .type = DATA_D, .data.d = current_val };
-        res = emu_block_set_output(src, &v_iter, 1);
+        res = block_set_output(src, &v_iter, 1);
         if (res.code != EMU_OK) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_for, src->cfg.block_idx, 0, TAG, "Set Out 1 fail");
 
         // --- E. WYKONANIE DZIECI (CHILD BLOCKS) ---
         for (uint16_t b = 1; b <= config->chain_len; b++) {
-            block_handle_t* child = emu_block_struct_execution_list[src->cfg.block_idx + b];
+            block_handle_t* child = code->blocks_list[src->cfg.block_idx + b];
             if (likely(child)) {
                     if (unlikely(emu_loop_wtd_status())) {
-                        EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_FOR_TIMEOUT, EMU_OWNER_block_for, src->cfg.block_idx, 0, TAG, "WTD triggered, on block %d, elapsed time %lld, iteration %ld ,wtd set to %lld ms", src->cfg.block_idx + b-1, emu_loop_get_time(), iteration, emu_loop_get_wtd_max_skipp()*emu_loop_get_loop_period()/1000);
+                        EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_FOR_TIMEOUT, EMU_OWNER_block_for, src->cfg.block_idx, 0, TAG, "WTD triggered, on block %d, elapsed time %lld, iteration %ld ,wtd set to %lld ms", src->cfg.block_idx + b-1, emu_loop_get_time(), iteration, emu_loop_get_wtd_max_skipped()*emu_loop_get_period()/1000);
                     }
                 emu_block_reset_outputs_status(child);
                 
@@ -178,7 +205,10 @@ static emu_err_t _emu_parse_for_settings(uint8_t *data, uint16_t len, block_for_
 
 emu_result_t block_for_parse(chr_msg_buffer_t *source, block_handle_t *block) {
     if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_for_parse, 0, 0, TAG, "NULL block");
-
+    if(!binded_to_code){
+        code = emu_get_current_code_ctx();
+        binded_to_code = true;
+    }
     uint8_t *data;
     size_t len;
     size_t buff_size = chr_msg_buffer_size(source);

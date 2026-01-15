@@ -3,21 +3,54 @@
 #include "emulator_logging.h"
 #include "emulator_blocks.h"
 
-typedef enum{
-    CFG_ON_RISING,
-    CFG_WHEN_ACTIVE,
-}counter_cfg_t;
+/****************************************************************************
+                COUNTER BLOCK
+                ________________
+--> CTU    [0] |BOOL        BOOL|[0]ENO   -->
+--> CTD    [1] |BOOL      DOUBLE|[1]VAL   -->
+--> RST    [2] |BOOL            |  
+--> STEP   [3] |OPT             |
+--> LIM_MAX[4] |OPT             |
+--> LIM_MIN[5] |OPT             |
+               |                |
+               |________________|
+ 
+****************************************************************************
+DESCRIPTION:
+This block implements a counter that can count up and down based on input signals.
+It supports reset functionality and allows dynamic adjustment of step size and limits.
+INPUTS:
+- EN (Boolean (ANY)): Enables or disables the counter. If false, the counter will not count.
+- CTU (Boolean (ANY)): Count up input. When true, the counter increments by the step value.
+- CTD (Boolean (ANY)): Count down input. When true, the counter decrements by the step value.
+- RST (Boolean (ANY)): Reset input. When true, the counter resets to the initial value.
+- STEP (ANY): The value by which the counter increments or decrements.
+- LIM_MAX (ANY): The maximum limit for the counter value.
+- LIM_MIN (ANY): The minimum limit for the counter value.
+OUTPUTS:
+- Q (Boolean): The clock output signal, which toggles between true and false based on the specified period and width.
+- VAL (Double): The current value of the counter.
+NOTE:
+Counter will not exceed the specified maximum and minimum limits.
+Counter can be configured to count on rising edge or when input is active.
+Rising edge requires FALSE->TRUE cylce
 
-typedef struct{
-    double current_val;
-    double step;
-    double max;
-    double min;
-    double start;
-    counter_cfg_t cfg;
-    bool prev_ctu; 
-    bool prev_ctd;
-}counter_handle_t;
+USAGE:
+mode on rising edge:
+[GPIO_1]->[CTU][COUNTER][VAL]->[SET]("button_press_count")
+
+mode when active:
+[GPIO_2]->[CTU][COUNTER][VAL]->[SET]("button_press_count")
+
+RESULTS:
+When GPIO_1 rising edge, the COUNTER block will increment the VAL output by the STEP value, up to the LIM_MAX limit.
+The value is assgned to "button_press_count" variable.
+
+When GPIO_2 is active, the COUNTER block will increment the VAL output by the STEP value, up to the LIM_MAX limit.
+Counter will increment each loop cycle while GPIO_2 is active.
+
+***************************************************************************/
+
 
 emu_result_t block_counter(block_handle_t *block);
 emu_result_t block_counter_parse(chr_msg_buffer_t *source, block_handle_t *block);

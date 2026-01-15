@@ -1,5 +1,5 @@
 #include "block_math.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include "emulator_variables_acces.h"
 #include "emulator_blocks.h" 
 #include "esp_log.h"
@@ -9,12 +9,12 @@
 #include <string.h>
 #include <stdlib.h>
 
-static const char* TAG = "BLOCK_MATH";
+static const char* TAG = __FILE_NAME__;
 
 // Internal Helpers
-static inline bool is_greater(double a, double b);
-static inline bool is_equal(double a, double b);
-static inline bool is_zero(double a);
+static __always_inline bool is_greater(double a, double b);
+static __always_inline bool is_equal(double a, double b);
+static __always_inline bool is_zero(double a);
 
 // Forward Declarations
 emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
@@ -198,8 +198,8 @@ emu_result_t block_math(block_handle_t* block){
     emu_result_t res = {.code = EMU_OK};
     (void)res; // May be used by macros
     
-    if (!emu_block_check_inputs_updated(block)) {EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Block is inactive");}
-    if(!emu_block_check_and_get_en(block, 0)){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_INACTIVE, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Block is inactive");}
+    if (!emu_block_check_inputs_updated(block)) { EMU_RETURN_OK(EMU_LOG_block_inactive, EMU_OWNER_block_math, block->cfg.block_idx, TAG, "Block Disabled"); }
+    if(!block_check_EN(block, 0)){ EMU_RETURN_OK(EMU_LOG_block_inactive, EMU_OWNER_block_math, block->cfg.block_idx, TAG, "Block Disabled"); }
     
     expression_t* eval = (expression_t*)block->custom_data;
     //double inputs[16]
@@ -253,10 +253,10 @@ emu_result_t block_math(block_handle_t* block){
     
     // Set Outputs
     emu_variable_t v_eno = { .type = DATA_B, .data.b = true };
-    res =emu_block_set_output(block, &v_eno, 0);
+    res =block_set_output(block, &v_eno, 0);
     LOG_I(TAG, "[%d]result %lf", block->cfg.block_idx, result);
     emu_variable_t v_res = { .type = DATA_D, .data.d = result };
-    res = emu_block_set_output(block, &v_res, 1);
+    res = block_set_output(block, &v_res, 1);
     if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));}
     return res;      
 } 
@@ -265,15 +265,15 @@ emu_result_t block_math(block_handle_t* block){
     HELPERS
    ============================================================================ */
 
-static inline bool is_equal(double a, double b){
+static __always_inline bool is_equal(double a, double b){
     return fabs(a-b) < DBL_EPSILON;
 }
-
-static inline bool is_zero(double a){
+    
+static __always_inline bool is_zero(double a){
     return fabs(a) < DBL_EPSILON;
 }
 
-static inline bool is_greater(double a, double b){
+static __always_inline bool is_greater(double a, double b){
     return (a - b) > DBL_EPSILON;
 }
 

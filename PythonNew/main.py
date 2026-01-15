@@ -27,9 +27,9 @@ if __name__ == "__main__":
     Ref.register_memory(mem_blk)
 
     # Zmienne globalne
-    mem_glob.add("x", DataTypes.DATA_F, 0.0) # Zmienna sterująca / licznik pętli
+    mem_glob.add("x", DataTypes.DATA_F, 2) # Zmienna sterująca / licznik pętli
     mem_glob.add("en", DataTypes.DATA_B, True) # Zmienna sterująca
-    mem_glob.add("array", DataTypes.DATA_UI32, [3]+99*[0], [100])
+    mem_glob.add("array", DataTypes.DATA_UI32, [1]*100, [100])
     
     # Przeliczenie indeksów globalnych
     mem_glob.recalculate_indices()
@@ -56,17 +56,12 @@ if __name__ == "__main__":
         ]
     )
 
-
-    # --- BLOK 1: CLOCK ---
-    # Generuje impulsy, dopóki Logic zwraca True.
-    # EN = blk_logic.out[0] (Wynik porównania)
-    # Period = 1000ms, Width = 100ms
     blk_clock = BlockClock(
         block_idx=1,
         storage=storage,
         enable=blk_logic.out[1], 
-        period_ms=1000.0,
-        width_ms=100.0
+        period_ms=2000.0,
+        width_ms=1000.0
     )
 
 
@@ -75,35 +70,28 @@ if __name__ == "__main__":
         storage=storage,
         condition = ForCondition.LT,
         start=0,
-        limit=1000,
+        limit=10,
         step=1,
         chain_len=2,
         en=blk_clock.out[0]
     )
 
-
+    #array[iterator]*2
     blk_math = BlockMath(
         block_idx=3,
         storage=storage,
         expression="in_1*in_2",
         en=blk_for.out[1],
-        connections=[Ref("array"), Ref("x")]
+        connections=[Ref("array")[blk_for.out[1]], blk_for.out[1]]
     )
 
-    blk_math = BlockMath(
+
+    blk_set2 = BlockSet(
         block_idx=4,
         storage=storage,
-        expression="in_1",
-        en=blk_for.out[1],
-        connections=[Ref("array")]
+        target=Ref("array")[blk_for.out[1]],
+        value=blk_math.out[1] 
     )
-    
-    # blk_set2 = BlockSet(
-    #     block_idx=5,
-    #     storage=storage,
-    #     target=Ref("x"),
-    #     value=blk_math.out[1] # CV (Current Value))
-    # )
 
     
 

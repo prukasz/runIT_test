@@ -1,10 +1,27 @@
 #include "block_counter.h"
 #include "emulator_blocks.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include "emulator_variables_acces.h"
 #include <string.h>
 
-static const char* TAG = "BLOCK_COUNTER";
+static const char* TAG = __FILE_NAME__;
+
+
+typedef enum{
+    CFG_ON_RISING,
+    CFG_WHEN_ACTIVE,
+}counter_cfg_t;
+
+typedef struct{
+    double current_val;
+    double step;
+    double max;
+    double min;
+    double start;
+    counter_cfg_t cfg;
+    bool prev_ctu; 
+    bool prev_ctd;
+}counter_handle_t;
 
 // Input indices
 #define IN_0_CTU        0
@@ -18,9 +35,7 @@ static const char* TAG = "BLOCK_COUNTER";
 #define OUT_0_ENO       0
 #define OUT_1_VAL       1
 
-/* ========================================================================= */
-/* EXECUTION LOGIC                                                           */
-/* ========================================================================= */
+
 
 emu_result_t block_counter(block_handle_t *block) {
 
@@ -28,16 +43,16 @@ emu_result_t block_counter(block_handle_t *block) {
     emu_result_t res;
     (void)res; // May be used by macros
 
-    if (emu_check_updated(block, IN_3_STEP)) {MEM_GET(&data->step, block->inputs[IN_3_STEP]);}
+    if (block_in_updated(block, IN_3_STEP)) {MEM_GET(&data->step, block->inputs[IN_3_STEP]);}
 
 
-    if (emu_check_updated(block, IN_4_LIMIT_MAX)) {MEM_GET(&data->max, block->inputs[IN_4_LIMIT_MAX]);}
+    if (block_in_updated(block, IN_4_LIMIT_MAX)) {MEM_GET(&data->max, block->inputs[IN_4_LIMIT_MAX]);}
     
-    if (emu_check_updated(block, IN_5_LIMIT_MIN)) {MEM_GET(&data->min, block->inputs[IN_5_LIMIT_MIN]);}
+    if (block_in_updated(block, IN_5_LIMIT_MIN)) {MEM_GET(&data->min, block->inputs[IN_5_LIMIT_MIN]);}
 
 
     // RESET (Priority 1)
-    if (emu_block_check_and_get_en(block, IN_2_RESET)) {
+    if (block_check_EN(block, IN_2_RESET)) {
             data->current_val = data->start;
             data->prev_ctu = false; // Clear edge detection state
             data->prev_ctd = false;
@@ -46,7 +61,7 @@ emu_result_t block_counter(block_handle_t *block) {
 
     // CTU
     
-    if (emu_block_check_and_get_en(block, IN_0_CTU)) {
+    if (block_check_EN(block, IN_0_CTU)) {
         
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctu){
@@ -65,7 +80,7 @@ emu_result_t block_counter(block_handle_t *block) {
             data->prev_ctu = false;
         }
 
-        if (emu_block_check_and_get_en(block, IN_1_CTD)) {
+        if (block_check_EN(block, IN_1_CTD)) {
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctd){
                 data->current_val -= data->step;
@@ -89,12 +104,12 @@ finish:
     // OUT_0: ENO (True/Active)
     LOG_I(TAG, "Setting outputs in counter block");
     emu_variable_t v_eno = { .type = DATA_B, .data.b = true };
-    res = emu_block_set_output(block, &v_eno, OUT_0_ENO);
+    res = block_set_output(block, &v_eno, OUT_0_ENO);
     if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_counter, block->cfg.block_idx, 0, TAG, "Set ENO Error");
 
     // OUT_1: VAL (Current Value)
     emu_variable_t v_val = { .type = DATA_D, .data.d = data->current_val };
-    res = emu_block_set_output(block, &v_val, OUT_1_VAL);
+    res = block_set_output(block, &v_val, OUT_1_VAL);
     if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_counter, block->cfg.block_idx, 0, TAG, "Set VAL Error");
 
     return EMU_RESULT_OK();

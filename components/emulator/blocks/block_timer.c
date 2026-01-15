@@ -1,12 +1,12 @@
 #include "block_timer.h"
 #include "emulator_loop.h"
-#include "emulator_errors.h"
+#include "emulator_logging.h"
 #include "emulator_variables_acces.h" 
 #include "emulator_blocks.h"
 #include "esp_log.h"
 #include <string.h>
 
-static const char* TAG = "BLOCK_TIMER";
+static const char* TAG = __FILE_NAME__;
 
 
 #define BLOCK_TIMER_IN_EN   0
@@ -15,6 +15,35 @@ static const char* TAG = "BLOCK_TIMER";
 
 #define BLOCK_TIMER_OUT_Q   0
 #define BLOCK_TIMER_OUT_ET  1
+
+/* Timer Types */
+typedef enum {
+    TIMER_TYPE_TON = 0x01, // On-Delay
+    TIMER_TYPE_TOF = 0x02, // Off-Delay
+    TIMER_TYPE_TP  = 0x03,  // Pulse
+    TIMER_TYPE_TON_INV = 0x04,
+    TIMER_TYPE_TOF_INV = 0x05,
+    TIMER_TYPE_TP_INV = 0x06
+} block_timer_type_t;
+
+
+typedef struct {
+    block_timer_type_t type;
+    uint64_t start_time;
+    uint32_t default_pt; 
+    uint32_t delta_time;  
+    bool q_out;            
+    bool prev_in;                  
+    bool counting;         
+} block_timer_t;
+
+/* Inputs/Outputs Indices */
+#define BLOCK_TIMER_IN_EN    0
+#define BLOCK_TIMER_IN_PT    1
+#define BLOCK_TIMER_IN_RST   2
+
+#define BLOCK_TIMER_OUT_Q    0
+#define BLOCK_TIMER_OUT_ET   1  //elapsed time 
 
 /* ========================================================================= */
 /* LOGIKA WYKONAWCZA                                                         */
@@ -26,14 +55,14 @@ emu_result_t block_timer(block_handle_t *block) {
     block_timer_t* data = (block_timer_t*)block->custom_data;
     emu_result_t res = EMU_RESULT_OK();
 
-    bool IN = emu_block_check_and_get_en(block, BLOCK_TIMER_IN_EN);
+    bool IN = block_check_EN(block, BLOCK_TIMER_IN_EN);
 
     // RST (Reset)
     bool RST = false;
-    if(emu_check_updated(block, BLOCK_TIMER_IN_RST)){MEM_GET(&RST, block->inputs[BLOCK_TIMER_IN_RST]);}
+    if(block_in_updated(block, BLOCK_TIMER_IN_RST)){MEM_GET(&RST, block->inputs[BLOCK_TIMER_IN_RST]);}
 
     uint32_t PT = data->default_pt; 
-    if(emu_check_updated(block, BLOCK_TIMER_IN_PT)){MEM_GET(&PT, block->inputs[BLOCK_TIMER_IN_PT]);}
+    if(block_in_updated(block, BLOCK_TIMER_IN_PT)){MEM_GET(&PT, block->inputs[BLOCK_TIMER_IN_PT]);}
 
     block_timer_type_t type = data->type;
 
@@ -121,7 +150,7 @@ emu_result_t block_timer(block_handle_t *block) {
     
     emu_variable_t v_en = { .type = DATA_B, .data.b = data->q_out};
     LOG_I(TAG, "is out active %d", data->q_out);
-    res = emu_block_set_output(block, &v_en, 0);
+    res = block_set_output(block, &v_en, 0);
     if (unlikely(res.code != EMU_OK)) {
         EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_timer, block->cfg.block_idx, 0, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));
     }
@@ -130,7 +159,7 @@ emu_result_t block_timer(block_handle_t *block) {
     // Zakładam, że chcesz to dodać, skoro liczysz delta_time.
     // Jeśli nie chcesz zmieniać logiki, usuń poniższy blok.
     emu_variable_t v_et = { .type = DATA_D, .data.d = (double)data->delta_time };
-    res = emu_block_set_output(block, &v_et, BLOCK_TIMER_OUT_ET);
+    res = block_set_output(block, &v_et, BLOCK_TIMER_OUT_ET);
     if (unlikely(res.code != EMU_OK)) {
          EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_timer, block->cfg.block_idx, 0, TAG, "Output ET error %s", EMU_ERR_TO_STR(res.code));
     }
