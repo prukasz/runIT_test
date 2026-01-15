@@ -1,6 +1,6 @@
 #include "i2c_tasks.h"
 
-extern uint8_t chr_val_1[23];
+extern uint8_t data_to_send[23];
 
 QueueHandle_t mpu6050_queue;
 
@@ -36,8 +36,8 @@ void task_ads1115 ( void *parameters){
     {
         ads1115_read_raw(handle);
         ESP_LOGI("ADS", "%0x", handle->last_reading);
-        chr_val_1[0] = (uint8_t)((handle->last_reading & 0xFF00)>>8);
-        chr_val_1[1] = (uint8_t)(handle->last_reading & 0x00FF);
+        data_to_send[0] = (uint8_t)((handle->last_reading & 0xFF00)>>8);
+        data_to_send[1] = (uint8_t)(handle->last_reading & 0x00FF);
         vTaskDelayUntil(&uxprev_time, 1000);
     }
 };
