@@ -8,9 +8,10 @@
 
 
 //macros to eaisly check idx type
-#define IDX_IS_DYNAMIC(node, dim_idx)  (((node)->idx_types >> (dim_idx)) & 0x01)
-#define IDX_SET_DYNAMIC(node, dim_idx) ((node)->idx_types |= (1 << (dim_idx)))
-#define IDX_SET_STATIC(node, dim_idx)  ((node)->idx_types &= ~(1 << (dim_idx)))
+
+#define IDX_IS_DYNAMIC(node, dim_idx)  (((node)->is_idx_static >> (dim_idx)) & 0x01)
+#define IDX_SET_DYNAMIC(node, dim_idx) ((node)->is_idx_static |= (1 << (dim_idx)))
+#define IDX_SET_STATIC(node, dim_idx)  ((node)->is_idx_static &= ~(1 << (dim_idx)))
 
 
 /**

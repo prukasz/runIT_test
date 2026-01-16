@@ -155,11 +155,12 @@ emu_result_t emu_mem_parse_create_scalar_instances(chr_msg_buffer_t *source) {
     size_t packet_len;
     size_t buff_size = chr_msg_buffer_size(source);
     
-    const size_t EXPECTED_PAYLOAD = TYPES_COUNT * sizeof(uint16_t); //here we just get count of scalar instances of each type
+    const size_t EXPECTED_PAYLOAD = TYPES_COUNT * sizeof(uint16_t); 
 
     for (size_t i = 0; i < buff_size; i++) {
         chr_msg_buffer_get(source, i, &data, &packet_len);
         
+        //empty packet or order
         if (packet_len < 3) continue;
 
         uint16_t header = 0;
@@ -167,48 +168,66 @@ emu_result_t emu_mem_parse_create_scalar_instances(chr_msg_buffer_t *source) {
 
         if (header == VAR_H_SCALAR_CNT) {
             uint8_t ctx_id = data[2];
-            emu_mem_t *mem = _get_mem_context(ctx_id); //in this case there is no created memory we can refer to 
-            if (!mem) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_CONTEXT, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0,  0, TAG, "Scalar Cnt: Ctx %d not found", ctx_id);}
             
+            //get right context 
+            emu_mem_t *mem = _get_mem_context(ctx_id);
+            if (unlikely(!mem)) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_CONTEXT, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0, 0, TAG, "Scalar Cnt: Ctx %d not found", ctx_id);}
+            
+            //validate packet len
             uint16_t idx = 3; 
-            if (packet_len != (idx + EXPECTED_PAYLOAD)) {EMU_RETURN_WARN(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0,0, TAG, "Packet incomplete for VAR_H_SCALAR_CNT");}
+            if (packet_len != (idx + EXPECTED_PAYLOAD)) {EMU_RETURN_WARN(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0, 0, TAG, "Packet incomplete for VAR_H_SCALAR_CNT");}
 
+            //iterate every datatype
             for (uint8_t type = 0; type < TYPES_COUNT; type++) {
                 uint16_t scalar_cnt = 0;
                 memcpy(&scalar_cnt, &data[idx], sizeof(uint16_t));
                 idx += sizeof(uint16_t);
                 
-                if (scalar_cnt == 0) continue; //skip if scalar of type =  0 don't return anythig 
+                if (scalar_cnt == 0) continue; 
 
-                if (!mem->instances_arenas[type] || !mem->instances[type]) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_INSTANCE, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0 ,0 , TAG, "Scalar Cnt: Arena/Table missing for Type %d Ctx %d", type, ctx_id);}
-
-                uint8_t *arena_cursor = (uint8_t*)mem->instances_arenas[type];
-                void **instance_table = mem->instances[type];
-
-                for (int k = 0; k < scalar_cnt; k++) {
-                    instance_table[k] = arena_cursor;
-
-                    emu_mem_instance_s_t *meta = (emu_mem_instance_s_t*)arena_cursor;
-                    
-                    meta->dims_cnt     = 0;    
-                    meta->target_type  = type;       
-                    meta->context_id   = ctx_id; 
-                    meta->updated      = 1;      
-                    meta->start_idx    = k;     //start idx is for scalars equal index in instances 0-k                                   
-                    LOG_I("TAG", "Ctx %d: Created SCALAR of Type %s", ctx_id, EMU_DATATYPE_TO_STR[type]);
-                    arena_cursor += sizeof(emu_mem_instance_s_t);
+                //check for any nulls
+                if (unlikely(!mem->instances_arenas[type] || !mem->instances[type] || !mem->data_pools[type])) {
+                    EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_INSTANCE, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0, 0, TAG, "Missing allocations for Type %d Ctx %d", type, ctx_id);
                 }
+
                 
-                mem->next_data_pools_idx[type] = scalar_cnt;  //each scalar takes up 1 index
-                mem->next_instance_idx[type] = scalar_cnt; //each scalar takes up 1 index
-                mem->instances_arenas_offset[type] = scalar_cnt * sizeof(emu_mem_instance_s_t);  // instances handle is always same size for scalar so we offset by total size in bytes
+                uint8_t *arena_base = (uint8_t*)mem->instances_arenas[type];
+                void **instance_table = mem->instances[type];
+                uint8_t *data_base = (uint8_t*)mem->data_pools[type];
+
+                //intance creation
+                for (uint16_t k = 0; k < scalar_cnt; k++) {
+                    //we get offset from previous parse
+                    size_t arena_off = mem->instances_arenas_offset[type];
+                    emu_mem_instance_s_t *meta = (emu_mem_instance_s_t*)(arena_base + arena_off);
                     
-                LOG_I(TAG, "Ctx %d: Created %d SCALARS of Type %s", ctx_id, scalar_cnt, EMU_DATATYPE_TO_STR[type]);
+                    size_t data_idx = mem->next_data_pools_idx[type];
+                    //calculate pointer    
+                    void *data_ptr = data_base + (data_idx * DATA_TYPE_SIZES[type]);
+
+                    //fill struct
+                    meta->data = data_ptr;          
+                    meta->dims_cnt = 0;           // Skalar ma 0 wymiarów
+                    meta->target_type = type;
+                    meta->context_id = ctx_id;
+                    meta->updated = 1;
+                    meta->_reserved = 0;
+
+                    // D. Zapisz wskaźnik do instancji w tabeli lookup (dla szybkiego dostępu po ID)
+                    size_t inst_idx = mem->next_instance_idx[type];
+                    instance_table[inst_idx] = meta;
+
+                    // E. Aktualizacja liczników (Offsety)
+                    mem->instances_arenas_offset[type] += sizeof(emu_mem_instance_s_t);
+                    mem->next_data_pools_idx[type]++;
+                    mem->next_instance_idx[type]++;
+                }
+                ESP_LOGI(TAG, "Ctx %d: Created %d SCALARS of Type %s", ctx_id, scalar_cnt, EMU_DATATYPE_TO_STR[type]);
             } 
             EMU_RETURN_OK(EMU_LOG_scalars_created, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0, TAG, "Scalars created for context %d", ctx_id);
         }
     }
-    EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0 , 0, TAG, "Packet not found for VAR_H_SCALAR_CNT");
+    EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, EMU_OWNER_emu_mem_parse_create_scalar_instances, 0, 0, TAG, "Packet not found for VAR_H_SCALAR_CNT");
 }
 
 emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
@@ -224,67 +243,99 @@ emu_result_t emu_mem_parse_create_array_instances(chr_msg_buffer_t *source) {
         uint16_t header = 0;
         memcpy(&header, data, 2);
 
-        if (header == VAR_H_ARR) {  //again process only matching headers
+        if (header == VAR_H_ARR) { 
             uint8_t ctx_id = data[2];
-            emu_mem_t *mem = _get_mem_context(ctx_id);  //so we can refer to
-            if (!mem) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_CONTEXT, EMU_OWNER_emu_mem_parse_create_array_instances, 0 , 0, TAG, "Ctx %d not found", ctx_id);}
+            emu_mem_t *mem = _get_mem_context(ctx_id);
+            
+            if (unlikely(!mem)) {
+                EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_CONTEXT, EMU_OWNER_emu_mem_parse_create_array_instances, 0, 0, TAG, "Ctx %d not found", ctx_id);
+            }
 
             uint16_t idx = 3; 
 
             while (idx < len) {
-                if ((idx + 2) > len) break;  //check for end of packet
+                // Sprawdzenie końca pakietu (nagłówek instancji to 2 bajty: dims + type)
+                if ((idx + 2) > len) break;  
 
-                uint8_t dims_cnt    = data[idx++];   //first dims count so we know the offset for reading
-                uint8_t target_type = data[idx++];   //type directly to struct 
+                uint8_t dims_cnt    = data[idx++]; 
+                uint8_t target_type = data[idx++]; 
 
-                //check for edge cases
-                if (target_type >= TYPES_COUNT || dims_cnt > 4) {EMU_RETURN_CRITICAL(EMU_ERR_INVALID_ARG, EMU_OWNER_emu_mem_parse_create_array_instances, 0 , 0, TAG, "Invalid type %d or dims %d", target_type, dims_cnt);}
+                // Walidacja danych wejściowych
+                if (unlikely(target_type >= TYPES_COUNT || dims_cnt > 4)) {
+                    EMU_RETURN_CRITICAL(EMU_ERR_INVALID_ARG, EMU_OWNER_emu_mem_parse_create_array_instances, 0, 0, TAG, "Invalid type %d or dims %d", target_type, dims_cnt);
+                }
 
-                //check for packtet completeness
-                if ((idx + dims_cnt) > len) {EMU_RETURN_CRITICAL(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_emu_mem_parse_create_array_instances, 0 , 0, TAG, "Packet incomplete for array type %d", target_type);}
+                // Sprawdzenie czy pakiet zawiera wymiary
+                if (unlikely((idx + dims_cnt) > len)) {
+                    EMU_RETURN_CRITICAL(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_emu_mem_parse_create_array_instances, 0, 0, TAG, "Packet incomplete for array type %d", target_type);
+                }
 
+                // Sprawdzenie alokacji pamięci
+                if (unlikely(!mem->instances[target_type] || !mem->instances_arenas[target_type] || !mem->data_pools[target_type])) {
+                    EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_INSTANCE, EMU_OWNER_emu_mem_parse_create_array_instances, 0, 0, TAG, "Array: Missing allocations for Type %d Ctx %d", target_type, ctx_id);
+                }
+
+                // 1. Przygotowanie wskaźników bazowych
                 void **instance_table = mem->instances[target_type];
+                uint8_t *arena_base   = (uint8_t*)mem->instances_arenas[target_type];
+                uint8_t *data_base    = (uint8_t*)mem->data_pools[target_type];
+
+                // 2. Pobranie bieżących offsetów
+                uint32_t instance_idx = mem->next_instance_idx[target_type];
+                size_t arena_offset   = mem->instances_arenas_offset[target_type];
+                size_t data_offset    = mem->next_data_pools_idx[target_type]; // To jest index elementu, nie bajtu!
+
+                if (unlikely(instance_idx >= mem->instances_cnt[target_type])) {
+                    EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER_emu_mem_parse_create_array_instances, 0, 0, TAG, "Max instances reached for type %d", target_type);
+                }
+
+                // 3. Obliczenie wskaźnika na nową metadaną w arenie
+                emu_mem_instance_arr_t *meta = (emu_mem_instance_arr_t*)(arena_base + arena_offset);
                 
-                if (!instance_table) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_INSTANCE, EMU_OWNER_emu_mem_parse_create_array_instances, 0 , 0, TAG, "Array: Instance table missing for Type %d Ctx %d", target_type, ctx_id);}
+                // Zapisz wskaźnik w tabeli lookup
+                instance_table[instance_idx] = meta;
 
+                // 4. Obliczenie wskaźnika na dane
+                // data_base + (index * rozmiar_typu)
+                meta->data = data_base + (data_offset * DATA_TYPE_SIZES[target_type]);
 
-                //we get right place to create our instance
-                uint32_t instance_idx = mem->next_instance_idx[target_type];  //offsets from constants
-                uint32_t data_idx     = mem->next_data_pools_idx[target_type];   //offsets from constants
-                uint8_t *arena_cursor = (uint8_t*)mem->instances_arenas[target_type] + mem->instances_arenas_offset[target_type];  //offsets from constants
+                // 5. Wypełnienie pól nagłówka
+                meta->dims_cnt    = dims_cnt;
+                meta->target_type = target_type;
+                meta->context_id  = ctx_id;
+                meta->updated     = 1;
+                meta->_reserved   = 0;
 
-                if (instance_idx >= mem->instances_cnt[target_type]) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER_emu_mem_parse_create_array_instances, 0 , 0, TAG, "Max instances reached for type %d", target_type);}
-
-                instance_table[instance_idx] = arena_cursor;
-                //fill struct
-                emu_mem_instance_arr_t *meta = (emu_mem_instance_arr_t*)arena_cursor;
-                meta->dims_cnt     = dims_cnt;
-                meta->target_type  = target_type;
-                meta->context_id = ctx_id;
-                meta->updated      = 1;
-                meta->start_idx    = data_idx;
-
-                //take a look at '[d]' we use it to copy dims dimensions (sizes of them) from packet
+                // 6. Parsowanie wymiarów i obliczanie całkowitej liczby elementów
                 uint32_t total_elements = 1;
                 for (int d = 0; d < dims_cnt; d++) {
                     uint8_t dim_size = data[idx++];
-                    meta->dim_sizes[d] = dim_size;
+                    meta->dim_sizes[d] = dim_size; // Flexible Array Member access
                     total_elements *= dim_size;
                 }
-                //we created offset to next one 
 
-                mem->next_data_pools_idx[target_type]     += total_elements; //total elements created on the go in dims loop
-                mem->next_instance_idx[target_type]++;  //instance always 1 offset
-                mem->instances_arenas_offset[target_type]      += sizeof(emu_mem_instance_arr_t) + dims_cnt;  //here we mark enough space for extra dimension + array handle
+                // 7. Aktualizacja liczników (Postęp parsowania)
+                
+                // Przesuwamy kursor danych o liczbę elementów (nie bajtów!)
+                mem->next_data_pools_idx[target_type] += total_elements;
+                
+                // Przesuwamy index instancji
+                mem->next_instance_idx[target_type]++;
+                
+                // Przesuwamy kursor areny o rozmiar struktury + rozmiar tablicy wymiarów
+                // sizeof(emu_mem_instance_arr_t) uwzględnia padding, a dim_sizes[] dochodzi na końcu.
+                // Drobna korekta: Flexible array member nie jest wliczony w sizeof, więc dodajemy dims_cnt.
+                // Jeśli kompilator wpycha dim_sizes w padding, to i tak musimy zarezerwować bezpieczną ilość miejsca.
+                // Najbezpieczniej: sizeof(struct) + dims_cnt (bajtów).
+                mem->instances_arenas_offset[target_type] += sizeof(emu_mem_instance_arr_t) + (dims_cnt * sizeof(uint8_t));
 
-                LOG_I(TAG, "Ctx %d: Created ARRAY Type %d (Dims:%d, Elems:%ld)", 
-                      ctx_id, target_type, dims_cnt, total_elements);
+                // Opcjonalne logowanie
+                LOG_I(TAG, "Ctx %d: Created ARRAY Type %d (Dims:%d, Elems:%ld)", ctx_id, target_type, dims_cnt, total_elements);
             }
             EMU_RETURN_OK(EMU_LOG_arrays_created, EMU_OWNER_emu_mem_parse_create_array_instances, 0, TAG, "Arrays created for context %d", ctx_id);
         }
     }
-     //something wrong as there should be any packet if called but nothing happes really
-    EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, EMU_OWNER_emu_mem_parse_create_array_instances, 0 , 0, TAG, "Packet not found for VAR_H_ARR"); 
+    EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, EMU_OWNER_emu_mem_parse_create_array_instances, 0, 0, TAG, "Packet not found for VAR_H_ARR");
 }
 
 
@@ -328,74 +379,80 @@ static inline emu_mem_instance_iter_t _mem_get_instance_meta(emu_mem_t *mem, uin
     return iter;
 }
 
-//subfunction to parse data into scalars
-static emu_result_t _parse_scalar_data(uint8_t ctx_id, uint8_t type, uint8_t *data, size_t len) {
-    emu_mem_t *mem = _get_mem_context(ctx_id);  //again check if there is even what to fill
-    if (!mem) EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Ctx %d not found", ctx_id);
 
-    //also check if pool exist, so we can memcpy to existing place
-    void *pool_ptr = mem->data_pools[type];
-    if (!pool_ptr) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Data pool NULL for Ctx %d Type %d", ctx_id, type);
+static emu_result_t _parse_scalar_data(uint8_t ctx_id, uint8_t type, uint8_t *data, size_t len) {
+    emu_mem_t *mem = _get_mem_context(ctx_id); 
+    if (unlikely(!mem)) EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Ctx %d not found", ctx_id);
+
+    // Mimo że mamy bezpośrednie wskaźniki w instancjach, warto sprawdzić czy pula w ogóle istnieje dla bezpieczeństwa
+    if (unlikely(!mem->data_pools[type])) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Data pool NULL for Ctx %d Type %d", ctx_id, type);
 
     size_t cursor = 0;
-    size_t elem_size = DATA_TYPE_SIZES[type];  //just table of sizeof
-    size_t entry_size = 2 + elem_size;  //index + value so we don't send zeros
+    size_t elem_size = DATA_TYPE_SIZES[type]; 
+    size_t entry_size = 2 + elem_size; // 2 bajty indexu + wartość
 
     while (cursor + entry_size <= len) {
         uint16_t instance_idx = 0;
         memcpy(&instance_idx, &data[cursor], 2);
         cursor += 2;
 
-        //edge case
-        if (instance_idx >= mem->instances_cnt[type]) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Instance Idx OOB (%d >= %d) type %d", instance_idx, mem->instances_cnt[type], type);}
+        if (unlikely(instance_idx >= mem->instances_cnt[type])) {
+            EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Instance Idx OOB (%d >= %d) type %d", instance_idx, mem->instances_cnt[type], type);
+        }
 
-        //we get right instance metadata
+        // Pobranie metadanych
         emu_mem_instance_iter_t meta = _mem_get_instance_meta(mem, type, instance_idx);
-        if (!meta.raw) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_IDX, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Meta NULL for Inst %d Type %d", instance_idx, type);}
+        if (unlikely(!meta.raw)) {
+            EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_IDX, EMU_OWNER__parse_scalar_data, 0 , 0, TAG, "Meta NULL for Inst %d Type %d", instance_idx, type);
+        }
 
-        //then place in pools
-        uint32_t pool_idx = meta.single->start_idx;
-        uint8_t *dest = (uint8_t*)pool_ptr + (pool_idx * elem_size);
+        // ZMIANA: Używamy bezpośredniego wskaźnika data zamiast start_idx
+        // Wskaźnik w strukturze wskazuje już na konkretny element w puli
+        uint8_t *dest = (uint8_t*)meta.single->data;
         
-
+        // Kopiowanie danych
         memcpy(dest, &data[cursor], elem_size);
+        
         cursor += elem_size;
-        meta.single->updated = 1;  //mark as updated for safety (it should be marked already when created)
+        meta.single->updated = 1; 
     }
     EMU_RETURN_OK(EMU_LOG_data_parsed, EMU_OWNER__parse_scalar_data, 0, TAG, "Scalar data parsed for Ctx %d Type %d", ctx_id, type);
 }
 
 static emu_result_t _parse_array_data(uint8_t ctx_id, uint8_t type, uint8_t *data, size_t len) {
     emu_mem_t *mem = _get_mem_context(ctx_id);
-    //same cases as in scalars
-    if (!mem) EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, EMU_OWNER__parse_array_data, 0 , 0, TAG, "Ctx %d not found", ctx_id);
+    if (unlikely(!mem)) EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, EMU_OWNER__parse_array_data, 0 , 0, TAG, "Ctx %d not found", ctx_id);
 
-    if (len < 4) {EMU_RETURN_WARN(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER__parse_array_data, 0 , 0, TAG, "Packet too small (len=%d)", (int)len);}
+    if (unlikely(len < 4)) {EMU_RETURN_WARN(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER__parse_array_data, 0 , 0, TAG, "Packet too small (len=%d)", (int)len);}
 
     uint16_t instance_idx = 0;
-    memcpy(&instance_idx, &data[0], 2); //we get instance idx
+    memcpy(&instance_idx, &data[0], 2);
     
     uint16_t offset_in_array = 0;
-    memcpy(&offset_in_array, &data[2], 2);  //and offset in array 
+    memcpy(&offset_in_array, &data[2], 2); 
 
     emu_mem_instance_iter_t meta = _mem_get_instance_meta(mem, type, instance_idx);
-    if (!meta.raw) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_IDX, EMU_OWNER__parse_array_data, 0 , 0, TAG, "Meta NULL for Inst %d", instance_idx);}
+    if (unlikely(!meta.raw)) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_IDX, EMU_OWNER__parse_array_data, 0 , 0, TAG, "Meta NULL for Inst %d", instance_idx);}
 
-    uint32_t pool_start_idx = meta.arr->start_idx;
-    uint32_t final_pool_idx = pool_start_idx + offset_in_array;
-
-    void *pool_ptr = mem->data_pools[type];
-    if (!pool_ptr) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER__parse_array_data, 0 , 0, TAG, "Data pool NULL for Ctx %d Type %d", ctx_id, type);
-
-    size_t elem_size = DATA_TYPE_SIZES[type]; //again size to copy
-    size_t data_bytes = len - 4;
+    // ZMIANA: Obliczanie adresu w oparciu o wskaźnik bazowy tablicy
+    // meta.arr->data wskazuje na Poczatek Tablicy (element 0)
+    // Musimy przesunąć się o offset_in_array elementów
     
-    uint8_t *dest = (uint8_t*)pool_ptr + (final_pool_idx * elem_size); //we operate in bytes not types
+    size_t elem_size = DATA_TYPE_SIZES[type];
+    
+    // Obliczamy adres docelowy: Baza + (Offset * Rozmiar Typu)
+    uint8_t *dest = (uint8_t*)meta.arr->data + (offset_in_array * elem_size); 
+
+    // Sprawdzamy czy nie wychodzimy poza zakres pamięci (opcjonalnie, ale zalecane)
+    // Do tego potrzebujesz znać całkowity rozmiar tablicy (który jest obliczany z dim_sizes)
+    // Jeśli nie przechowujesz total_size w meta, to tutaj polegamy na poprawności pakietu.
+
+    size_t data_bytes = len - 4;
     memcpy(dest, &data[4], data_bytes);
+    
     meta.arr->updated = 1;
     EMU_RETURN_OK(EMU_LOG_data_parsed, EMU_OWNER__parse_array_data, 0, TAG, "Array data parsed for Ctx %d Type %d", ctx_id, type);
 }
-
 emu_result_t emu_mem_parse_context_data_packets(chr_msg_buffer_t *source, emu_mem_t *mem_ignored) {
     uint8_t *data;
     size_t len;

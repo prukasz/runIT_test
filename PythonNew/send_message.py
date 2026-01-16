@@ -136,7 +136,7 @@ async def send_file(client, write_char):
 
         try:
             await client.write_gatt_char(write_char, data, response=True)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
             print(f"Message {i} sent: {data.hex().upper()}")
         except Exception as e:
             print(f"Failed to send message {i}: {e}")
@@ -232,7 +232,7 @@ async def main():
                 print("Failed to send:", e)
 
             msg_num += 1
-            await asyncio.sleep(0.1)
+            #await asyncio.sleep(0.1)
 
 
 if __name__ == "__main__":

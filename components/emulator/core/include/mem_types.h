@@ -116,42 +116,23 @@ typedef struct {
  * @brief emu_mem_instance_s_t and emu_mem_instance_arr_t represent array or scalar located in memory contexts
  * mem_access_s_t referes to those instances
  **/ 
-typedef struct __attribute__((packed)) {
-    /**
-     * @brief Number of dimensions for array instances. 0 for scalar instances. This filed is inluded to treat both structs as same base struct
-     */
-    uint32_t dims_cnt     :4; 
-    /** 
-    * @brief Target data type of the instance (from data_types_t enum)
-    */
-    uint32_t target_type  :4;
-
-    /**
-     * @brief Flag indicating if variable has been updated in current cycle (see usage in blocks outputs), for other contexts can be ignored
-     * Its set to 1 by default during instance creation and can be cleared "manually"
-     */
-    uint32_t updated      :1;  //updated is flag telling block that variable has been updated in cycle
-    /**
-     * @brief Context ID to which this instance belongs (allows multiple memory contexts)
-     */
-    uint32_t context_id   :3;  //this allows for usage of multiple mem structs
-    /**
-     * @brief Start index in data pool of chosen type (in elements not bytes!!!)
-     */
-    uint32_t start_idx    :20; //start index in data_pool of chosen type (in elements not bytes!!!)     
+typedef struct{
+    void* data;
+    uint16_t dims_cnt     :4; 
+    uint16_t target_type  :4;
+    uint16_t updated      :1; 
+    uint16_t context_id   :3;  
+    uint16_t _reserved    :4;    
 } emu_mem_instance_s_t;
 
 
-typedef struct __attribute__((packed)) {
-    uint32_t dims_cnt     :4; //see emu_mem_instance_s_t
-    uint32_t target_type  :4; //see emu_mem_instance_s_t
-    uint32_t updated      :1; //see emu_mem_instance_s_t
-    uint32_t context_id   :3; //see emu_mem_instance_s_t
-    uint32_t start_idx    :20; //start index in data_pool of chosen type (in elements not bytes!!!)
-    /**
-     * @brief Sizes of each dimension of the array (up to 4D arrays supported) this defines storge space used by array
-     * Values are storeged as uint8_t so max size per dimension is 255 elements inside this struct
-     */
+typedef struct{
+    void* data;
+    uint16_t dims_cnt     :4; 
+    uint16_t target_type  :4;
+    uint16_t updated      :1;
+    uint16_t context_id   :3; 
+    uint16_t _reserved    :4;  
     uint8_t  dim_sizes[];     
 } emu_mem_instance_arr_t;
 
@@ -234,19 +215,8 @@ typedef union {
 /**
  * @brief This struct is used for acces to scalar instances in memory contexts
  */
-typedef struct __attribute__((packed)) {
-        uint8_t  dims_cnt     :4; //coresponds to emu_mem_instance_s_t dims_cnt
-        uint8_t  target_type  :4; //coresponds to emu_mem_instance_s_t target_type
-        uint8_t  context_id   :3; //coresponds to emu_mem_instance_s_t context_id
-        uint8_t  is_resolved  :1; //If resolved we have direct pointer to data else we need to search for instance using instance_idx
-        uint8_t _reserved     :4; 
-        /**
-         * @brief instance index in selected emu_mem_t in selected type instances array
-         */
-        uint16_t instance_idx;   
-        /** 
-         * @brief Direct pointer to data if is_resolved is set to 1, please note that pointer type must match target_type field 
-        */ 
+typedef struct{
+        void *instance;
         union{
             uint8_t*    static_ui8;
             uint16_t*   static_ui16;
@@ -256,8 +226,10 @@ typedef struct __attribute__((packed)) {
             int32_t*    static_i32;
             float*      static_f;
             double*     static_d;
-            bool*       static_b;
-        }direct_ptr;       
+            bool*       static_b; 
+        }direct_ptr;
+        uint8_t  is_resolved  :1;  
+        uint8_t  reserved     :7; 
 } mem_access_s_t;
 
 
@@ -265,30 +237,22 @@ typedef struct __attribute__((packed)) {
  * @brief This struct is used for acces to array instances in memory contexts
  * see mem_access_s_t for more info
  */
-typedef struct __attribute__((packed)) { 
-
-    uint8_t  dims_cnt     :4; 
-    uint8_t  target_type  :4;
-    uint8_t  context_id    :3; 
-    uint8_t  is_resolved  :1;  
-    uint8_t  idx_types    :4;    //mark for each dimension if index is static or instance (so need to search recursively)
-    uint16_t instance_idx;  
-    union{
-        uint8_t*    static_ui8;
-        uint16_t*   static_ui16;
-        uint32_t*   static_ui32;
-        int8_t*     static_i8;
-        int16_t*    static_i16;
-        int32_t*    static_i32;
-        float*      static_f;
-        double*     static_d;
-        bool*       static_b; 
-    }direct_ptr;
-    /**
-     * @brief Indices for each dimension of the array. Can be static or refer to other instance see idx_u definition
-     */    
+typedef struct { 
+    void *instance;
+        union{
+            uint8_t*    static_ui8;
+            uint16_t*   static_ui16;
+            uint32_t*   static_ui32;
+            int8_t*     static_i8;
+            int16_t*    static_i16;
+            int32_t*    static_i32;
+            float*      static_f;
+            double*     static_d;
+            bool*       static_b; 
+        }direct_ptr;
+        uint8_t  is_resolved   :1;  
+        uint8_t  is_idx_static :7;    
     idx_u indices[];        
-
 } mem_access_arr_t;
 
 

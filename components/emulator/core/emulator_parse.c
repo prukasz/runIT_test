@@ -8,7 +8,7 @@
 #include <string.h>
 
 static const char *TAG = "EMU_PARSE";
-
+extern emu_mem_t *s_mem_contexts[];
 extern chr_msg_buffer_t *source;
 
 static emu_code_handle_t code;

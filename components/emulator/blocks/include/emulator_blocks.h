@@ -74,7 +74,6 @@ emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *b
  * NOTE: 
  * Please run emu_parse_blocks_verify_all before using those functions to ensure code integrity when code crashes
  ***************************************************************************************************************/
-extern emu_mem_t* s_mem_contexts[];
 
 /**
  * @brief Check if all inputs in block updated (this is required for most blocks to run (like in PLC) / behaves like "IF PREV EXECUTED I CAN RUN")
@@ -83,17 +82,27 @@ extern emu_mem_t* s_mem_contexts[];
 static __always_inline bool emu_block_check_inputs_updated(block_handle_t *block) {
 
     for (uint8_t i = 0; i < block->cfg.in_cnt; i++) {
+        // Sprawdzenie bitowe czy wejście jest podłączone
         if ((block->cfg.in_connected >> i) & 0x01) {
-            mem_access_s_t *access_node = (mem_access_s_t*)block->inputs[i];
-            if (unlikely(!access_node)) {return false;}
-
-            emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)(s_mem_contexts[access_node->context_id]->instances[access_node->target_type][access_node->instance_idx]);
             
-            if (unlikely(instance == NULL)) {return false;}
+            mem_access_s_t *access_node = (mem_access_s_t*)block->inputs[i];
+            
+            // Safety check dla access node
+            if (unlikely(!access_node)) { return false; }
 
-            if (instance->updated == 0) {return false;}
+            // ZAMIANA: Bezpośredni wskaźnik do instancji
+            // Wcześniej: s_mem_contexts[id]->instances[type][idx] (wolne!)
+            // Teraz: access_node->instance (szybkie!)
+            emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)access_node->instance;
+            
+            // Safety check dla instancji
+            if (unlikely(!instance)) { return false; }
+
+            // Logika: Jeśli KTÓREKOLWIEK podłączone wejście nie jest zaktualizowane -> Stop
+            if (instance->updated == 0) { return false; }
         }
     }
+    // Jeśli przeszliśmy pętlę, znaczy że wszystkie podłączone wejścia są 'updated'
     return true;
 }
 
@@ -102,19 +111,26 @@ static __always_inline bool emu_block_check_inputs_updated(block_handle_t *block
  * @brief Check if specific input in block is updated (look into mem instance updated flag)
  */
 static __always_inline bool block_in_updated(block_handle_t *block, uint8_t num) {
-    //Check if input can even exist
-    if (unlikely(num >= block->cfg.in_cnt)){return false;}
-    //first check mask provided is input connected. 
-    if (!((block->cfg.in_connected >> num) & 0x01)) {return false;}
+    // 1. Sprawdzenie czy numer wejścia mieści się w zakresie
+    if (unlikely(num >= block->cfg.in_cnt)) { return false; }
 
+    // 2. Sprawdzenie czy wejście jest fizycznie podłączone (maska bitowa)
+    if (!((block->cfg.in_connected >> num) & 0x01)) { return false; }
+
+    // 3. Pobranie węzła dostępu
     mem_access_s_t *access_node = (mem_access_s_t*)block->inputs[num];
-    if (unlikely(!access_node)) {return false;}
+    if (unlikely(!access_node)) { return false; }
 
-    //next get right instance that mem_access is potinting at
-    emu_mem_instance_s_t* instance = (emu_mem_instance_s_t*)(s_mem_contexts[access_node->context_id]->instances[access_node->target_type][access_node->instance_idx]);
-    if (unlikely(!instance)) {return false;}
+    // 4. Pobranie instancji BEZPOŚREDNIO ze wskaźnika
+    // ZAMIANA: Usuwamy s_mem_contexts[...]. access_node->instance wskazuje prosto na metadane.
+    emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)access_node->instance;
 
-    return instance->updated;
+    // 5. Sprawdzenie i zwrot flagi
+    if (likely(instance)) {
+        return instance->updated;
+    }
+
+    return false;
 }
 
 
@@ -150,20 +166,26 @@ static __always_inline emu_result_t block_set_output(block_handle_t *block, emu_
  * @brief Reset all outputs "updated" status in block (for context 1 only)
  */
 static __always_inline void emu_block_reset_outputs_status(block_handle_t *block) {
-    //if there is no outputs just return
-    if (block->cfg.q_cnt == 0) { return; }
+    // Szybkie wyjście
+    if (unlikely(block->cfg.q_cnt == 0)) { return; }
 
     for (uint8_t i = 0; i < block->cfg.q_cnt; i++) {
         mem_access_s_t *access_node = (mem_access_s_t*)block->outputs[i];
+        
+        // Safety checks
         if (unlikely(!access_node)) continue;
 
-        //Important!!!!: We hardcoded 1 for block outputs context here we only reset outputs in context 1.
-        if(access_node->context_id != 1)continue;
-        
-        emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)(s_mem_contexts[access_node->context_id]->instances[access_node->target_type][access_node->instance_idx]);
+        // 1. Pobieramy instancję bezpośrednio ze wskaźnika
+        // (Brak kosztownego szukania w globalnych tablicach s_mem_contexts)
+        emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)access_node->instance;
 
-        if (likely(instance)) {
-            instance->updated = 0;
-        }
+        if (unlikely(!instance)) continue;
+
+        // 2. Sprawdzamy Context ID wewnątrz metadanych instancji
+        // Hardcoded 1 for block outputs context check
+        if (instance->context_id != 1) continue;
+        
+        // 3. Reset flagi
+        instance->updated = 0;
     }
 }

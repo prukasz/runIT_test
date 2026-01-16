@@ -29,7 +29,7 @@ if __name__ == "__main__":
     # Zmienne globalne
     mem_glob.add("x", DataTypes.DATA_F, 2) # Zmienna sterująca / licznik pętli
     mem_glob.add("en", DataTypes.DATA_B, True) # Zmienna sterująca
-    mem_glob.add("array", DataTypes.DATA_UI32, [1]*100, [100])
+    mem_glob.add("array", DataTypes.DATA_UI32, [1]*255, [255])
     
     # Przeliczenie indeksów globalnych
     mem_glob.recalculate_indices()
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         storage=storage,
         condition = ForCondition.LT,
         start=0,
-        limit=10,
+        limit=255,
         step=1,
         chain_len=2,
         en=blk_clock.out[0]
