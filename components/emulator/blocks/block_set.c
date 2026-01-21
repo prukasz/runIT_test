@@ -18,7 +18,11 @@ static const char* TAG = __FILE_NAME__;
 emu_result_t block_set(block_handle_t *block) {
     emu_result_t res= EMU_RESULT_OK();
     if(!block_in_updated(block, BLOCK_SET_VALUE)){ EMU_RETURN_OK(EMU_LOG_block_inactive, EMU_OWNER_block_set, block->cfg.block_idx, TAG, "Block Disabled"); }
-    res = mem_set(block->inputs[BLOCK_SET_TARGET], mem_get(block->inputs[BLOCK_SET_VALUE], false));
+    emu_variable_t v_value;
+    res = mem_get(block->inputs[BLOCK_SET_VALUE], false, &v_value);
+    LOG_I(TAG, "value TYPE %d", v_value.type);
+    
+    res = mem_set(block->inputs[BLOCK_SET_TARGET], v_value);
     if(!res.code){LOG_I(TAG, "SET CODE %s", EMU_ERR_TO_STR(res.code));}
     return res;
 }

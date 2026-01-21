@@ -17,6 +17,7 @@ idf_component_register(
         "blocks/block_set.c"
         "blocks/block_counter.c"
         "blocks/block_clock.c"
+        "blocks/block_selector.c"
 
     INCLUDE_DIRS 
         "blocks/include"

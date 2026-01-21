@@ -59,8 +59,7 @@ emu_result_t block_logic(block_handle_t* block) {
     //skip input 0 (EN)
     for (uint8_t i = 1; i < block->cfg.in_cnt; i++) {
         if(block->cfg.in_connected & (1 << i)){
-            if (likely(!(res.code=MEM_GET(&inputs[i], block->inputs[i])))) {
-            } else {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_logic, block->cfg.block_idx, 1, TAG, "Input acces error: %s", EMU_ERR_TO_STR(res.code));}
+            MEM_GET(&inputs[i], block->inputs[i]);
         }
     }
 

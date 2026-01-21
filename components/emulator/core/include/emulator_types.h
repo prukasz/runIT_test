@@ -85,6 +85,7 @@ typedef enum{
     BLOCK_CLOCK = 0x05,
     BLOCK_FOR = 0x08,
     BLOCK_TIMER = 0x09,
+    BLOCK_SELECTOR = 0x0A,
 }block_type_t;
 
 

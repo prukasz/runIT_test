@@ -113,19 +113,21 @@ static __always_inline emu_err_t _resolve_mem_offset(void *access_node, uint32_t
     uint32_t final_index = 0;
     uint32_t stride = 1;
 
-    // Iteracja od ostatniego wymiaru (Row-major order)
+    //iterate over dimensions to count index
     for (int8_t i = (int8_t)dims_cnt - 1; i >= 0; i--) {
         uint32_t index_val = 0;
-
+        emu_variable_t idx_var;
         if (IDX_IS_DYNAMIC(node, i)) { 
-            emu_variable_t idx_var = mem_get(node->indices[i].next_instance, false);
-            if (unlikely(idx_var.error)) { return idx_var.error; }
+            emu_result_t res = mem_get(node->indices[i].next_instance, false, &idx_var);
+            if (unlikely(res.code != EMU_OK)) { return res.code; }
             index_val = MEM_CAST(idx_var, (uint32_t)0);
         } else {
-            index_val = node->indices[i].static_idx;
+            index_val = (uint32_t)node->indices[i].static_idx;
         }
 
-        // Sprawdzenie granic (Bounds Check)
+
+        //check out of bounds for current dimension 
+        //This may occur as user might eaisly provide invalid index during execution
         if (unlikely(index_val >= instance->dim_sizes[i])) {
             EMU_REPORT(EMU_LOG_access_out_of_bounds, EMU_OWNER__resolve_mem_offset, 0, TAG, 
                        "Array OOB Dim %d: %ld >= %d", i, index_val, instance->dim_sizes[i]);
@@ -135,161 +137,147 @@ static __always_inline emu_err_t _resolve_mem_offset(void *access_node, uint32_t
         final_index += index_val * stride;
         stride *= instance->dim_sizes[i];
     }
-
     *out_offset = final_index;
     return EMU_OK;
 }
-//This function must be as fast as possible as we use it very often, for nearly every operation
-emu_variable_t mem_get(void *mem_access_x, bool by_reference) {
-    emu_variable_t var = {0};
-    
+
+
+/**
+ * @brief mem_get function retrieves the value of a variable from memory access descriptor
+ * @param mem_access_x Pointer to memory access descriptor (mem_access_s_t or mem_access_arr_t)
+ * @param by_reference Flag indicating if value should be retrieved by reference (direct pointer) or by value (copy)
+ * @param val_out Pointer to emu_variable_t struct where retrieved value will be stored
+ * @return emu_result_t struct indicating success or error code 
+ * EMU_OK on success, EMU_ERR_OUT_OF_BOUNDS if index is out of bounds (for arrays)
+ * @note This function handles both scalar and array accesses based on mem_access_x type
+ * most likely error is EMU_ERR_OOB if index is invalid during execution,
+ * NULL pointers shall be checked earlier before calling this function 
+ * For now this function  checks for NULL pointers and returns error if so
+ */
+emu_result_t mem_get(void *mem_access_x, bool by_reference, emu_variable_t *val_out) {
     mem_access_s_t *target = (mem_access_s_t*)mem_access_x;
-    if (unlikely(!target)) { var.error = EMU_ERR_NULL_PTR; goto error_early; }
-
+    
+    if (unlikely(!target)) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_mem_get, 0, 0, TAG, "No target descriptor");}
+    
     emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)target->instance;
-    if (unlikely(!instance)) { var.error = EMU_ERR_NULL_PTR; goto error_early; }
+    if (unlikely(!instance)) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_mem_get, 0, 0, TAG, "No instance");}
 
-    // Pobieramy typ z instancji (jest pewniejszy)
     uint8_t type = instance->target_type;
-    var.type = type;
+    val_out->type = type;
+    
+    //calculate final pointer to data
+    void *final_ptr;
 
-    // --- ŚCIEŻKA SZYBKA: Resolved (używamy Unii w target) ---
+    //If resolved we have direct pointer to data available and can use it directly
     if (likely(target->is_resolved)) {
-        if (by_reference) {
-            var.by_reference = 1;
-            switch (type) {
-                case DATA_UI8:  var.reference.u8  = target->direct_ptr.static_ui8; break;
-                case DATA_UI16: var.reference.u16 = target->direct_ptr.static_ui16; break;
-                case DATA_UI32: var.reference.u32 = target->direct_ptr.static_ui32; break;
-                case DATA_I8:   var.reference.i8  = target->direct_ptr.static_i8; break;
-                case DATA_I16:  var.reference.i16 = target->direct_ptr.static_i16; break;
-                case DATA_I32:  var.reference.i32 = target->direct_ptr.static_i32; break;
-                case DATA_F:    var.reference.f   = target->direct_ptr.static_f; break;
-                case DATA_D:    var.reference.d   = target->direct_ptr.static_d; break;
-                case DATA_B:    var.reference.b   = target->direct_ptr.static_b; break;
-                default: var.error = EMU_ERR_MEM_INVALID_DATATYPE; goto error;
-            }
-        } else {
-            var.by_reference = 0;
-            switch (type) {
-                case DATA_UI8:  var.data.u8  = *target->direct_ptr.static_ui8; break;
-                case DATA_UI16: var.data.u16 = *target->direct_ptr.static_ui16; break;
-                case DATA_UI32: var.data.u32 = *target->direct_ptr.static_ui32; break;
-                case DATA_I8:   var.data.i8  = *target->direct_ptr.static_i8; break;
-                case DATA_I16:  var.data.i16 = *target->direct_ptr.static_i16; break;
-                case DATA_I32:  var.data.i32 = *target->direct_ptr.static_i32; break;
-                case DATA_F:    var.data.f   = *target->direct_ptr.static_f; break;
-                case DATA_D:    var.data.d   = *target->direct_ptr.static_d; break;
-                case DATA_B:    var.data.b   = *target->direct_ptr.static_b; break;
-                default: var.error = EMU_ERR_MEM_INVALID_DATATYPE; goto error;
-            }
-        }
+        final_ptr = target->direct_ptr.static_void;
+    } else { //else go to resolve index via recursive access
+
+        uint32_t elem_idx = 0;
+        emu_err_t err = _resolve_mem_offset(target, &elem_idx); 
+        
+        if (unlikely(err != EMU_OK)) {EMU_REPORT_ERROR_CRITICAL(err, EMU_OWNER_mem_get, 0, 1, TAG, "Error occured during index resolving %s", EMU_ERR_TO_STR(err));}
+        
+        //calculate offsets in bytes for unified access
+        uint32_t byte_offset = elem_idx * DATA_TYPE_SIZES[type];
+        final_ptr = (uint8_t*)instance->data + byte_offset;
+    }
+    if (unlikely(!final_ptr)) {EMU_REPORT_ERROR_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_mem_get, 0,0, TAG, "Final result is NULL");}
+    //copy data to output as void pointer
+    if (by_reference) {
+        val_out->by_reference = 1;
+        val_out->reference.raw = final_ptr;
     } 
-    // --- ŚCIEŻKA WOLNA: Dynamiczna (obliczanie offsetu) ---
     else {
-        uint32_t elem_offset = 0;
-        
-        var.error = _resolve_mem_offset(mem_access_x, &elem_offset);
-        if (unlikely(var.error != EMU_OK)) goto error;
-
-        // ZMIANA: Bierzemy wskaźnik bazowy z instancji!
-        void *base_ptr = instance->data;
-        if (unlikely(!base_ptr)) { var.error = EMU_ERR_NULL_PTR; goto error; }
-
-        if (by_reference) {
-            var.by_reference = 1;
-            switch (type) {
-                // Rzutowanie (typ*)base_ptr przesuwa wskaźnik o (elem_offset * sizeof(typ))
-                case DATA_UI8:  var.reference.u8  = &((uint8_t*)base_ptr)[elem_offset]; break;
-                case DATA_UI16: var.reference.u16 = &((uint16_t*)base_ptr)[elem_offset]; break;
-                case DATA_UI32: var.reference.u32 = &((uint32_t*)base_ptr)[elem_offset]; break;
-                case DATA_I8:   var.reference.i8  = &((int8_t*)base_ptr)[elem_offset]; break;
-                case DATA_I16:  var.reference.i16 = &((int16_t*)base_ptr)[elem_offset]; break;
-                case DATA_I32:  var.reference.i32 = &((int32_t*)base_ptr)[elem_offset]; break;
-                case DATA_F:    var.reference.f   = &((float*)base_ptr)[elem_offset]; break;
-                case DATA_D:    var.reference.d   = &((double*)base_ptr)[elem_offset]; break;
-                case DATA_B:    var.reference.b   = &((bool*)base_ptr)[elem_offset]; break;
-                default: var.error = EMU_ERR_MEM_INVALID_DATATYPE; goto error;
-            }
-        } else {
-            var.by_reference = 0;
-            switch (type) {
-                case DATA_UI8:  var.data.u8  = ((uint8_t*)base_ptr)[elem_offset]; break;
-                case DATA_UI16: var.data.u16 = ((uint16_t*)base_ptr)[elem_offset]; break;
-                case DATA_UI32: var.data.u32 = ((uint32_t*)base_ptr)[elem_offset]; break;
-                case DATA_I8:   var.data.i8  = ((int8_t*)base_ptr)[elem_offset]; break;
-                case DATA_I16:  var.data.i16 = ((int16_t*)base_ptr)[elem_offset]; break;
-                case DATA_I32:  var.data.i32 = ((int32_t*)base_ptr)[elem_offset]; break;
-                case DATA_F:    var.data.f   = ((float*)base_ptr)[elem_offset]; break;
-                case DATA_D:    var.data.d   = ((double*)base_ptr)[elem_offset]; break;
-                case DATA_B:    var.data.b   = ((bool*)base_ptr)[elem_offset]; break;
-                default: var.error = EMU_ERR_MEM_INVALID_DATATYPE; goto error;
-            }
+    //dereference and copy data to output
+        val_out->by_reference = 0;
+        switch (type) {
+            case DATA_UI8:  val_out->data.u8  = *(uint8_t*)final_ptr; break;
+            case DATA_D:    val_out->data.d   = *(double*)final_ptr; break;
+            case DATA_B:    val_out->data.b   = *(bool*)final_ptr; break; 
+            case DATA_UI32: val_out->data.u32 = *(uint32_t*)final_ptr; break;
+            case DATA_UI16: val_out->data.u16 = *(uint16_t*)final_ptr; break;
+            case DATA_I8:   val_out->data.i8  = *(int8_t*)final_ptr; break;
+            case DATA_I16:  val_out->data.i16 = *(int16_t*)final_ptr; break;
+            case DATA_I32:  val_out->data.i32 = *(int32_t*)final_ptr; break;           
+            case DATA_F:    val_out->data.f   = *(float*)final_ptr; break;
+            default: 
         }
     }
-    
-    return var;
-
-error:
-    EMU_REPORT(EMU_LOG_mem_get_failed, EMU_OWNER_mem_get, 0, TAG_VARS, 
-               "Failed:%s, Type:%d, OffsetCheck", EMU_ERR_TO_STR(var.error), type);
-    return var;
-
-error_early:
-    return var;
-}
-
-
-emu_result_t mem_set(void *mem_access_x, emu_variable_t val) {
-    mem_access_s_t *dst = (mem_access_s_t*)mem_access_x;
-    
-    if (unlikely(!dst)) {
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_mem_set, 0, 0, TAG, "Access node is NULL");
-    }
-
-    // 1. Pobierz wskaźnik do pamięci docelowej (By Reference = true)
-    // To wywołanie załatwia za nas całą matematykę offsetów (dla tablic) i typów.
-    emu_variable_t dst_ptr = mem_get(mem_access_x, true);
-    
-    if (unlikely(dst_ptr.error != EMU_OK)) {
-        EMU_RETURN_CRITICAL(dst_ptr.error, EMU_OWNER_mem_set, 0, 1, TAG, "Dst resolve error: %s", EMU_ERR_TO_STR(dst_ptr.error));
-    }
-
-    emu_mem_instance_s_t *meta = (emu_mem_instance_s_t*)dst->instance;
-    
-    if (likely(meta)) {
-        meta->updated = 1;
-    } else {
-        // To rzadki błąd krytyczny - mamy dostęp, ale brak instancji?
-        EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR_INSTANCE, EMU_OWNER_mem_set, 0, 0, TAG, "Instance meta is NULL");
-    }
-
-    // 3. Konwersja i rzutowanie wartości (bez zmian, logika jest dobra)
-    double src_val = MEM_CAST(val, (double)0);
-    double rnd = (dst_ptr.type < DATA_F) ? round(src_val) : src_val;
-
-    // 4. Zapis wartości pod uzyskany adres
-    switch (dst_ptr.type) {
-        case DATA_UI8:  *dst_ptr.reference.u8  = CLAMP_CAST(rnd, 0, UINT8_MAX, uint8_t); break;
-        case DATA_UI16: *dst_ptr.reference.u16 = CLAMP_CAST(rnd, 0, UINT16_MAX, uint16_t); break;
-        case DATA_UI32: *dst_ptr.reference.u32 = CLAMP_CAST(rnd, 0, UINT32_MAX, uint32_t); break;
-        case DATA_I8:   *dst_ptr.reference.i8  = CLAMP_CAST(rnd, INT8_MIN, INT8_MAX, int8_t); break;
-        case DATA_I16:  *dst_ptr.reference.i16 = CLAMP_CAST(rnd, INT16_MIN, INT16_MAX, int16_t); break;
-        case DATA_I32:  *dst_ptr.reference.i32 = CLAMP_CAST(rnd, INT32_MIN, INT32_MAX, int32_t); break;
-        case DATA_F:    *dst_ptr.reference.f   = (float)src_val; break;
-        case DATA_D:    *dst_ptr.reference.d   = src_val; break;
-        case DATA_B:    *dst_ptr.reference.b   = (src_val != 0.0); break;
-        
-        default: 
-            EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, EMU_OWNER_mem_set, 0, 0, TAG, "Invalid Dest Type %d", dst_ptr.type);
-    }
+    //don't report success via macro to avoid extra spam each call
     return EMU_RESULT_OK();
 }
 
 
+emu_result_t mem_set(void *mem_access_x, emu_variable_t val) {
+    //check input pointer
+    mem_access_s_t *dst = (mem_access_s_t*)mem_access_x;
+    if (unlikely(!dst)) {
+        return (emu_result_t){.code = EMU_ERR_NULL_PTR};
+    }
+
+    //get destination via mem_get to resolve any indices and get type info 
+    emu_variable_t dst_var;
+    emu_result_t res = mem_get(mem_access_x, true, &dst_var); //use by_reference = true to get direct pointer
+    
+    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_mem_set, 0, ++res.depth, TAG, "Dst Resolve Error");}
+
+    //mark instance as updated (for outputs mainly)
+    ((emu_mem_instance_s_t*)dst->instance)->updated = 1;
+
+    void *dest_addr = dst_var.reference.raw;
+    
+    // Fast path: if types match, do direct assignment without conversion
+    if (dst_var.type == val.type) {
+        switch (dst_var.type) {
+            case DATA_UI8:  *(uint8_t*)dest_addr  = val.data.u8; break;
+            case DATA_UI16: *(uint16_t*)dest_addr = val.data.u16; break;
+            case DATA_UI32: *(uint32_t*)dest_addr = val.data.u32; break;
+            case DATA_I8:   *(int8_t*)dest_addr   = val.data.i8; break;
+            case DATA_I16:  *(int16_t*)dest_addr  = val.data.i16; break;
+            case DATA_I32:  *(int32_t*)dest_addr  = val.data.i32; break;
+            case DATA_F:    *(float*)dest_addr    = val.data.f; break;
+            case DATA_D:    *(double*)dest_addr   = val.data.d; break;
+            case DATA_B:    *(bool*)dest_addr     = val.data.b; break;
+            default: 
+                EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, EMU_OWNER_mem_set, 0, 0, TAG, "Invalid Dest Type in fast path");
+        }
+        return (emu_result_t){.code = EMU_OK};
+    }
+
+    // Slow path: types differ, need conversion
+    double src_val = MEM_CAST(val, (double)0);
+    
+    double rnd;
+    if (dst_var.type < DATA_F) { 
+        rnd = round(src_val); 
+    } else {
+        rnd = src_val; 
+    }
+
+    //assingmnemt after clamp and cast macros
+    switch (dst_var.type) {
+        case DATA_UI8:  *(uint8_t*)dest_addr  = CLAMP_CAST(rnd, 0, UINT8_MAX, uint8_t); break;
+        case DATA_UI16: *(uint16_t*)dest_addr = CLAMP_CAST(rnd, 0, UINT16_MAX, uint16_t); break;
+        case DATA_UI32: *(uint32_t*)dest_addr = CLAMP_CAST(rnd, 0, UINT32_MAX, uint32_t); break;
+        
+        case DATA_I8:   *(int8_t*)dest_addr   = CLAMP_CAST(rnd, INT8_MIN, INT8_MAX, int8_t); break;
+        case DATA_I16:  *(int16_t*)dest_addr  = CLAMP_CAST(rnd, INT16_MIN, INT16_MAX, int16_t); break;
+        case DATA_I32:  *(int32_t*)dest_addr  = CLAMP_CAST(rnd, INT32_MIN, INT32_MAX, int32_t); break;
+        
+        case DATA_F:    *(float*)dest_addr    = (float)src_val; break; 
+        case DATA_D:    *(double*)dest_addr   = src_val; break;
+        case DATA_B:    *(bool*)dest_addr     = (src_val != 0.0); break;
+
+        default: 
+            EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, EMU_OWNER_mem_set, 0, 0, TAG, "Invalid Dest Type");
+    }
+    return (emu_result_t){.code = EMU_OK};
+}
+
 /*****************************************************************************
  * 
- * References allocation (similar to instances one)
+ * References allocation (similar to instances case)
  * 
  ***************************************************************************/
 
@@ -475,12 +463,15 @@ emu_result_t mem_access_parse_node_recursive(uint8_t **cursor, size_t *len, void
             switch (type) {
                 case DATA_UI8:  n->direct_ptr.static_ui8  = ((uint8_t*)meta.arr->data)  + final_element_offset; break;
                 case DATA_UI16: n->direct_ptr.static_ui16 = ((uint16_t*)meta.arr->data) + final_element_offset; break;
-                // ... (reszta typów)
+                case DATA_UI32: n->direct_ptr.static_ui32 = ((uint32_t*)meta.arr->data) + final_element_offset; break;
+                case DATA_I8:   n->direct_ptr.static_i8   = ((int8_t*)meta.arr->data)   + final_element_offset; break;
+                case DATA_I16:  n->direct_ptr.static_i16  = ((int16_t*)meta.arr->data)  + final_element_offset; break;
+                case DATA_I32:  n->direct_ptr.static_i32  = ((int32_t*)meta.arr->data)  + final_element_offset; break;
                 case DATA_F:    n->direct_ptr.static_f    = ((float*)meta.arr->data)    + final_element_offset; break;
-                // ...
+                case DATA_D:    n->direct_ptr.static_d    = ((double*)meta.arr->data)   + final_element_offset; break;
+                case DATA_B:    n->direct_ptr.static_b    = ((bool*)meta.arr->data)     + final_element_offset; break;
                 default: 
-                     // Obsłuż błąd
-                     break;
+                    EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Invalid Array Type %d", type);
             }
 
         } else {            

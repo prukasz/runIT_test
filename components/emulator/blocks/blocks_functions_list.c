@@ -11,7 +11,8 @@ emu_block_func blocks_main_functions_table[255]={
     [BLOCK_TIMER]=block_timer,
     [BLOCK_SET]=block_set,
     [BLOCK_COUNTER]=block_counter,
-    [BLOCK_CLOCK]=block_clock
+    [BLOCK_CLOCK]=block_clock,
+    [BLOCK_SELECTOR]=block_selector
 };
 
 
@@ -24,7 +25,8 @@ emu_block_parse_func emu_block_parsers_table[255]={
     [BLOCK_FOR]=block_for_parse,
     [BLOCK_TIMER]=block_timer_parse,
     [BLOCK_COUNTER]=block_counter_parse,
-    [BLOCK_CLOCK]=block_clock_parse
+    [BLOCK_CLOCK]=block_clock_parse,
+    [BLOCK_SELECTOR]=block_selector_parse
 };
 
 /**
@@ -36,7 +38,8 @@ emu_block_free_func emu_block_free_table[255]={
     [BLOCK_FOR]=block_for_free,
     [BLOCK_TIMER]=block_timer_free,
     [BLOCK_COUNTER]=block_counter_free,
-    [BLOCK_CLOCK]=block_clock_free
+    [BLOCK_CLOCK]=block_clock_free,
+    [BLOCK_SELECTOR]=block_selector_free
 };
 
 /**
@@ -48,6 +51,7 @@ emu_block_verify_func emu_block_verify_table[255]={
     [BLOCK_FOR]=block_for_verify,
     [BLOCK_TIMER]=block_timer_verify,
     [BLOCK_COUNTER]=block_counter_verify,
+    [BLOCK_SELECTOR]=block_selector_verify,
     [BLOCK_CLOCK]=block_clock_verify
 };
 

@@ -140,11 +140,11 @@ static __always_inline bool block_in_updated(block_handle_t *block, uint8_t num)
 static __always_inline bool block_check_EN(block_handle_t *block, uint8_t num) {
     if (!block_in_updated(block, num)) {return false;}
     bool en = false; 
-    emu_err_t err = MEM_GET(&en, block->inputs[num]);
+    emu_result_t err = MEM_GET(&en, block->inputs[num]);
 
     //we report error but still return the value (false if error occurs)
-    if(unlikely(err != EMU_OK)){
-        EMU_REPORT_ERROR_WARN(err, EMU_OWNER_block_check_EN, block->cfg.block_idx, 1,  "block_check_EN", "Failed to get EN value block %d", block->cfg.block_idx);
+    if (unlikely(err.code != EMU_OK)) {
+        EMU_REPORT_ERROR_WARN(err.code, EMU_OWNER_block_check_EN, block->cfg.block_idx, 1,  "block_check_EN", "Failed to get EN value block %d", block->cfg.block_idx);
     }
     return en;
 }

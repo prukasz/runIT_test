@@ -58,6 +58,7 @@ typedef enum {
     EMU_ERR_WTD_TRIGGERED           = 0xA000,
     EMU_ERR_MEM_INVALID_ACCESS, 
     EMU_ERR_LOOP_NOT_INITIALIZED,
+    EMU_ERR_BLOCK_SELECTOR_OOB,
 
 } emu_err_t;
 
@@ -123,6 +124,10 @@ typedef enum {
     EMU_OWNER__resolve_mem_offset,
     EMU_OWNER_mem_get,
     EMU_OWNER_block_check_EN,
+    EMU_OWNER_block_selector,
+    EMU_OWNER_block_selector_parse,
+    EMU_OWNER_block_selector_verify,
+    EMU_OWNER_block_selector_free
 }emu_owner_t;
 
 /** 
@@ -192,6 +197,11 @@ typedef enum {
     EMU_LOG_parsed_block_outputs,
     EMU_LOG_block_inactive,
     EMU_LOG_finished,
+    EMU_LOG_block_selector_executed,
+    EMU_LOG_block_selector_verified,
+    EMU_LOG_block_selector_freed,
+    EMU_LOG_block_selector_parsed,
+    
 } emu_log_t;
 
 

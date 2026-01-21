@@ -20,7 +20,7 @@
  * @param by_reference Allows  receiveing pointer to destination variable
  * @return emu_variable_t varaible (check its error code for errors)
  */
-emu_variable_t mem_get(void * mem_access_x, bool by_reference);
+emu_result_t mem_get(void * mem_access_x, bool by_reference, emu_variable_t * val_out);
 
 
 /**
@@ -67,6 +67,8 @@ emu_result_t mem_access_parse_node_recursive(uint8_t **cursor, size_t *len, void
 __always_inline static inline T_TYPE emu_var_to_##T_NAME(emu_variable_t v) { \
     if (v.by_reference) { \
         switch (v.type) { \
+            case DATA_D:    return CLAMP_CAST(*v.reference.d,   T_MIN, T_MAX, T_TYPE); \
+            case DATA_B:    return (*v.reference.b) ? (T_TYPE)1 : (T_TYPE)0; \
             case DATA_UI8:  return CLAMP_CAST(*v.reference.u8,  T_MIN, T_MAX, T_TYPE); \
             case DATA_UI16: return CLAMP_CAST(*v.reference.u16, T_MIN, T_MAX, T_TYPE); \
             case DATA_UI32: return CLAMP_CAST(*v.reference.u32, T_MIN, T_MAX, T_TYPE); \
@@ -74,12 +76,12 @@ __always_inline static inline T_TYPE emu_var_to_##T_NAME(emu_variable_t v) { \
             case DATA_I16:  return CLAMP_CAST(*v.reference.i16, T_MIN, T_MAX, T_TYPE); \
             case DATA_I32:  return CLAMP_CAST(*v.reference.i32, T_MIN, T_MAX, T_TYPE); \
             case DATA_F:    return CLAMP_CAST(*v.reference.f,   T_MIN, T_MAX, T_TYPE); \
-            case DATA_D:    return CLAMP_CAST(*v.reference.d,   T_MIN, T_MAX, T_TYPE); \
-            case DATA_B:    return (*v.reference.b) ? (T_TYPE)1 : (T_TYPE)0; \
             default: return 0; \
         } \
     } else { \
         switch (v.type) { \
+            case DATA_D:    return CLAMP_CAST(v.data.d,   T_MIN, T_MAX, T_TYPE); \
+            case DATA_B:    return (v.data.b) ? (T_TYPE)1 : (T_TYPE)0; \
             case DATA_UI8:  return CLAMP_CAST(v.data.u8,  T_MIN, T_MAX, T_TYPE); \
             case DATA_UI16: return CLAMP_CAST(v.data.u16, T_MIN, T_MAX, T_TYPE); \
             case DATA_UI32: return CLAMP_CAST(v.data.u32, T_MIN, T_MAX, T_TYPE); \
@@ -87,8 +89,6 @@ __always_inline static inline T_TYPE emu_var_to_##T_NAME(emu_variable_t v) { \
             case DATA_I16:  return CLAMP_CAST(v.data.i16, T_MIN, T_MAX, T_TYPE); \
             case DATA_I32:  return CLAMP_CAST(v.data.i32, T_MIN, T_MAX, T_TYPE); \
             case DATA_F:    return CLAMP_CAST(v.data.f,   T_MIN, T_MAX, T_TYPE); \
-            case DATA_D:    return CLAMP_CAST(v.data.d,   T_MIN, T_MAX, T_TYPE); \
-            case DATA_B:    return (v.data.b) ? (T_TYPE)1 : (T_TYPE)0; \
             default: return 0; \
         } \
     } \
@@ -104,15 +104,15 @@ DEFINE_INT_CONVERTER(i32, int32_t,  INT32_MIN, INT32_MAX)
 //we need custom for floats and doubles and bools
 __always_inline static inline float emu_var_to_f(emu_variable_t v) {
     switch (v.type) {
-        case DATA_F:   return GET_VAL(v, f);
         case DATA_D:   return (float)GET_VAL(v, d);
+        case DATA_B:   return GET_VAL(v, b) ? 1.0f : 0.0f;
+        case DATA_F:   return GET_VAL(v, f);
         case DATA_UI8: return (float)GET_VAL(v, u8);
         case DATA_UI16:return (float)GET_VAL(v, u16);
         case DATA_UI32:return (float)GET_VAL(v, u32);
         case DATA_I8:  return (float)GET_VAL(v, i8);
         case DATA_I16: return (float)GET_VAL(v, i16);
         case DATA_I32: return (float)GET_VAL(v, i32);
-        case DATA_B:   return GET_VAL(v, b) ? 1.0f : 0.0f;
         default: return 0.0f;
     }
 }
@@ -120,6 +120,7 @@ __always_inline static inline float emu_var_to_f(emu_variable_t v) {
 __always_inline static inline double emu_var_to_d(emu_variable_t v) {
     switch (v.type) {
         case DATA_D:   return GET_VAL(v, d);
+        case DATA_B:   return GET_VAL(v, b) ? 1.0 : 0.0;
         case DATA_F:   return (double)GET_VAL(v, f);
         case DATA_UI8: return (double)GET_VAL(v, u8);
         case DATA_UI16:return (double)GET_VAL(v, u16);
@@ -127,7 +128,6 @@ __always_inline static inline double emu_var_to_d(emu_variable_t v) {
         case DATA_I8:  return (double)GET_VAL(v, i8);
         case DATA_I16: return (double)GET_VAL(v, i16);
         case DATA_I32: return (double)GET_VAL(v, i32);
-        case DATA_B:   return GET_VAL(v, b) ? 1.0 : 0.0;
         default: return 0.0;
     }
 }
@@ -135,6 +135,7 @@ __always_inline static inline double emu_var_to_d(emu_variable_t v) {
 __always_inline static inline bool emu_var_to_b(emu_variable_t v) {
     switch (v.type) {
         case DATA_B:    return GET_VAL(v, b);
+        case DATA_D:    return GET_VAL(v, d) != 0.0;
         case DATA_UI8:  return GET_VAL(v, u8) != 0;
         case DATA_UI16: return GET_VAL(v, u16) != 0;
         case DATA_UI32: return GET_VAL(v, u32) != 0;
@@ -142,7 +143,6 @@ __always_inline static inline bool emu_var_to_b(emu_variable_t v) {
         case DATA_I16:  return GET_VAL(v, i16) != 0;
         case DATA_I32:  return GET_VAL(v, i32) != 0;
         case DATA_F:    return GET_VAL(v, f) != 0.0f;
-        case DATA_D:    return GET_VAL(v, d) != 0.0;
         default: return false;
     }
 }
@@ -162,7 +162,8 @@ __always_inline static inline bool emu_var_to_b(emu_variable_t v) {
 
 //Get variable then cast and set to provided value (Return error if occured in mem_get)
 #define MEM_GET(dst_ptr, mem_access_x) ({ \
-    emu_variable_t _tmp_var = mem_get((mem_access_x), false); \
+    emu_variable_t _tmp_var; \
+    emu_result_t _emu_res = mem_get((mem_access_x), false, &_tmp_var); \
     *(dst_ptr) = MEM_CAST(_tmp_var,(__typeof__(*(dst_ptr)))0); \
-    _tmp_var.error; \
+    _emu_res; \
 })

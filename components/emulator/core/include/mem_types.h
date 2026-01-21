@@ -156,10 +156,6 @@ typedef struct {
      */
     uint8_t   type;  
     /**
-     * @brief Error code (emu_err_t) from last operation (EMU_OK if no error)
-     */
-    uint16_t  error;
-    /**
      * @brief Flag indicating if data is stored by reference (direct pointer) or by value (copy)
      * By reference means that reference union contains direct pointer to data and then we can set/get value directly
      */
@@ -218,6 +214,7 @@ typedef union {
 typedef struct{
         void *instance;
         union{
+            void*       static_void;
             uint8_t*    static_ui8;
             uint16_t*   static_ui16;
             uint32_t*   static_ui32;
