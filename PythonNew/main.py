@@ -1,5 +1,5 @@
 import sys
-from EmulatorMemory import EmulatorMemory, emu_types_t as DataTypes
+from EmulatorMemory import EmulatorMemory
 from EmulatorMemoryReferences import Ref
 from BlocksStorage import BlocksStorage
 from BlockLogic import BlockLogic
@@ -10,6 +10,7 @@ from BlockSet import BlockSet
 from FullDump import FullDump
 from BlockFor import BlockFor, ForCondition, ForOperator
 from BlockSelector import BlockSelector
+from Enums import emu_types_t
 
 
 if __name__ == "__main__":
@@ -18,21 +19,20 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     # 1. SETUP PAMIĘCI
     # -------------------------------------------------------------------------
-    Ref.clear_memories()
-    
+    Ref.clear_contexts()
     # Konteksty
     mem_glob = EmulatorMemory(context_id=0) # Zmienne globalne
     mem_blk  = EmulatorMemory(context_id=6) # Wyjścia bloków
     
-    Ref.register_memory(mem_glob)
-    Ref.register_memory(mem_blk)
+    Ref.register_context(mem_glob)
+    Ref.register_context(mem_blk)
 
     # Zmienne globalne
-    mem_glob.add("selector", DataTypes.DATA_UI8, 0) # Zmienna sterująca / licznik pętli
-    mem_glob.add("en", DataTypes.DATA_B, True) # Zmienna sterująca
-    mem_glob.add("array1", DataTypes.DATA_UI32, [1]*255, [255])
-    mem_glob.add("array2", DataTypes.DATA_UI32, [2]*255, [255])
-    mem_glob.add("array3", DataTypes.DATA_UI32, [0]*255, [255])
+    mem_glob.add("selector", emu_types_t.DATA_UI8, 0) # Zmienna sterująca / licznik pętli
+    mem_glob.add("en", emu_types_t.DATA_B, True) # Zmienna sterująca
+    mem_glob.add("array1", emu_types_t.DATA_UI32, [1]*255, [255])
+    mem_glob.add("array2", emu_types_t.DATA_UI32, [2]*255, [255])
+    mem_glob.add("array3", emu_types_t.DATA_UI32, [0]*255, [255])
     
     # Przeliczenie indeksów globalnych
     mem_glob.recalculate_indices()

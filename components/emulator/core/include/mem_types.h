@@ -118,21 +118,21 @@ typedef struct {
  **/ 
 typedef struct{
     void* data;
-    uint16_t dims_cnt     :4; 
-    uint16_t target_type  :4;
+    uint16_t context_id   :3; 
+    uint16_t dims_cnt     :3; 
+    uint16_t target_type  :4; 
     uint16_t updated      :1; 
-    uint16_t context_id   :3;  
-    uint16_t _reserved    :4;    
+    uint16_t _reserved    :5;    
 } emu_mem_instance_s_t;
 
 
 typedef struct{
     void* data;
-    uint16_t dims_cnt     :4; 
-    uint16_t target_type  :4;
-    uint16_t updated      :1;
     uint16_t context_id   :3; 
-    uint16_t _reserved    :4;  
+    uint16_t dims_cnt     :3; 
+    uint16_t target_type  :4; 
+    uint16_t updated      :1; 
+    uint16_t _reserved    :5;  
     uint8_t  dim_sizes[];     
 } emu_mem_instance_arr_t;
 
@@ -225,8 +225,9 @@ typedef struct{
             double*     static_d;
             bool*       static_b; 
         }direct_ptr;
-        uint8_t  is_resolved  :1;  
-        uint8_t  reserved     :7; 
+        uint8_t  can_be_resolved :1; 
+        uint8_t  is_resolved     :1;  
+        uint8_t  reserved        :6; 
 } mem_access_s_t;
 
 
@@ -247,8 +248,9 @@ typedef struct {
             double*     static_d;
             bool*       static_b; 
         }direct_ptr;
-        uint8_t  is_resolved   :1;  
-        uint8_t  is_idx_static :7;    
+        uint8_t  can_be_resolved :1; 
+        uint8_t  is_resolved     :1; 
+        uint8_t  is_idx_static   :6;    
     idx_u indices[];        
 } mem_access_arr_t;
 
