@@ -59,6 +59,10 @@ typedef enum {
     EMU_ERR_MEM_INVALID_ACCESS, 
     EMU_ERR_LOOP_NOT_INITIALIZED,
     EMU_ERR_BLOCK_SELECTOR_OOB,
+    EMU_ERR_CTX_INVALID_ID,
+    EMU_ERR_CTX_ALREADY_CREATED,
+    EMU_ERR_INVALID_PACKET_SIZE,
+
 
 } emu_err_t;
 
@@ -127,7 +131,16 @@ typedef enum {
     EMU_OWNER_block_selector,
     EMU_OWNER_block_selector_parse,
     EMU_OWNER_block_selector_verify,
-    EMU_OWNER_block_selector_free
+    EMU_OWNER_block_selector_free,
+    EMU_OWNER_mem_context_delete,
+    EMU_OWNER_mem_allocate_context,
+    EMU_OWNER_mem_access_allocate_space,
+
+    EMU_OWNER_mem_parse_instance_packet,
+    EMU_OWNER_emu_mem_fill_instance_scalar,
+    EMU_OWNER_emu_mem_fill_instance_array,
+    EMU_OWNER_emu_mem_parse_access_create,
+
 }emu_owner_t;
 
 /** 
@@ -201,7 +214,9 @@ typedef enum {
     EMU_LOG_block_selector_verified,
     EMU_LOG_block_selector_freed,
     EMU_LOG_block_selector_parsed,
-    
+    EMU_LOG_CTX_DESTROYED,
+    EMU_LOG_ctx_created,
+    EMU_LOG_created_ctx
 } emu_log_t;
 
 

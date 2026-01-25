@@ -10,7 +10,7 @@
 //#define unlikely(x)    __builtin_expect(!!(x), 0)
 
 
-#define TYPES_COUNT 9 
+#define MEM_TYPES_COUNT 9 
 
 /**
 * @brief Data types used within emulator
@@ -91,3 +91,7 @@ typedef enum{
 
 
 
+typedef enum{
+    PACKET_H_CONTEXT_CFH = 0xF000,
+    PACKET_H_INSTANCE =  0xF001,
+}packet_header_t;

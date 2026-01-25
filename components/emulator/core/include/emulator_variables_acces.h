@@ -69,9 +69,9 @@ __always_inline static inline T_TYPE emu_var_to_##T_NAME(emu_variable_t v) { \
         switch (v.type) { \
             case DATA_D:    return CLAMP_CAST(*v.reference.d,   T_MIN, T_MAX, T_TYPE); \
             case DATA_B:    return (*v.reference.b) ? (T_TYPE)1 : (T_TYPE)0; \
-            case DATA_UI8:  return CLAMP_CAST(*v.reference.u8,  T_MIN, T_MAX, T_TYPE); \
-            case DATA_UI16: return CLAMP_CAST(*v.reference.u16, T_MIN, T_MAX, T_TYPE); \
-            case DATA_UI32: return CLAMP_CAST(*v.reference.u32, T_MIN, T_MAX, T_TYPE); \
+            case DATA_U8:  return CLAMP_CAST(*v.reference.u8,  T_MIN, T_MAX, T_TYPE); \
+            case DATA_U16: return CLAMP_CAST(*v.reference.u16, T_MIN, T_MAX, T_TYPE); \
+            case DATA_U32: return CLAMP_CAST(*v.reference.u32, T_MIN, T_MAX, T_TYPE); \
             case DATA_I8:   return CLAMP_CAST(*v.reference.i8,  T_MIN, T_MAX, T_TYPE); \
             case DATA_I16:  return CLAMP_CAST(*v.reference.i16, T_MIN, T_MAX, T_TYPE); \
             case DATA_I32:  return CLAMP_CAST(*v.reference.i32, T_MIN, T_MAX, T_TYPE); \
@@ -82,9 +82,9 @@ __always_inline static inline T_TYPE emu_var_to_##T_NAME(emu_variable_t v) { \
         switch (v.type) { \
             case DATA_D:    return CLAMP_CAST(v.data.d,   T_MIN, T_MAX, T_TYPE); \
             case DATA_B:    return (v.data.b) ? (T_TYPE)1 : (T_TYPE)0; \
-            case DATA_UI8:  return CLAMP_CAST(v.data.u8,  T_MIN, T_MAX, T_TYPE); \
-            case DATA_UI16: return CLAMP_CAST(v.data.u16, T_MIN, T_MAX, T_TYPE); \
-            case DATA_UI32: return CLAMP_CAST(v.data.u32, T_MIN, T_MAX, T_TYPE); \
+            case DATA_U8:  return CLAMP_CAST(v.data.u8,  T_MIN, T_MAX, T_TYPE); \
+            case DATA_U16: return CLAMP_CAST(v.data.u16, T_MIN, T_MAX, T_TYPE); \
+            case DATA_U32: return CLAMP_CAST(v.data.u32, T_MIN, T_MAX, T_TYPE); \
             case DATA_I8:   return CLAMP_CAST(v.data.i8,  T_MIN, T_MAX, T_TYPE); \
             case DATA_I16:  return CLAMP_CAST(v.data.i16, T_MIN, T_MAX, T_TYPE); \
             case DATA_I32:  return CLAMP_CAST(v.data.i32, T_MIN, T_MAX, T_TYPE); \
@@ -107,9 +107,9 @@ __always_inline static inline float emu_var_to_f(emu_variable_t v) {
         case DATA_D:   return (float)GET_VAL(v, d);
         case DATA_B:   return GET_VAL(v, b) ? 1.0f : 0.0f;
         case DATA_F:   return GET_VAL(v, f);
-        case DATA_UI8: return (float)GET_VAL(v, u8);
-        case DATA_UI16:return (float)GET_VAL(v, u16);
-        case DATA_UI32:return (float)GET_VAL(v, u32);
+        case DATA_U8: return (float)GET_VAL(v, u8);
+        case DATA_U16:return (float)GET_VAL(v, u16);
+        case DATA_U32:return (float)GET_VAL(v, u32);
         case DATA_I8:  return (float)GET_VAL(v, i8);
         case DATA_I16: return (float)GET_VAL(v, i16);
         case DATA_I32: return (float)GET_VAL(v, i32);
@@ -122,9 +122,9 @@ __always_inline static inline double emu_var_to_d(emu_variable_t v) {
         case DATA_D:   return GET_VAL(v, d);
         case DATA_B:   return GET_VAL(v, b) ? 1.0 : 0.0;
         case DATA_F:   return (double)GET_VAL(v, f);
-        case DATA_UI8: return (double)GET_VAL(v, u8);
-        case DATA_UI16:return (double)GET_VAL(v, u16);
-        case DATA_UI32:return (double)GET_VAL(v, u32);
+        case DATA_U8: return (double)GET_VAL(v, u8);
+        case DATA_U16:return (double)GET_VAL(v, u16);
+        case DATA_U32:return (double)GET_VAL(v, u32);
         case DATA_I8:  return (double)GET_VAL(v, i8);
         case DATA_I16: return (double)GET_VAL(v, i16);
         case DATA_I32: return (double)GET_VAL(v, i32);
@@ -136,9 +136,9 @@ __always_inline static inline bool emu_var_to_b(emu_variable_t v) {
     switch (v.type) {
         case DATA_B:    return GET_VAL(v, b);
         case DATA_D:    return GET_VAL(v, d) != 0.0;
-        case DATA_UI8:  return GET_VAL(v, u8) != 0;
-        case DATA_UI16: return GET_VAL(v, u16) != 0;
-        case DATA_UI32: return GET_VAL(v, u32) != 0;
+        case DATA_U8:  return GET_VAL(v, u8) != 0;
+        case DATA_U16: return GET_VAL(v, u16) != 0;
+        case DATA_U32: return GET_VAL(v, u32) != 0;
         case DATA_I8:   return GET_VAL(v, i8) != 0;
         case DATA_I16:  return GET_VAL(v, i16) != 0;
         case DATA_I32:  return GET_VAL(v, i32) != 0;

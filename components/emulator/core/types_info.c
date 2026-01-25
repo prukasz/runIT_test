@@ -14,9 +14,9 @@ const uint8_t DATA_TYPE_SIZES[DATA_TYPES_CNT] = {
 };
 
 const char *EMU_DATATYPE_TO_STR[9] = {
-    "DATA_UI8",
-    "DATA_UI16",
-    "DATA_UI32",
+    "DATA_U8",
+    "DATA_U16",
+    "DATA_U32",
     "DATA_I8",
     "DATA_I16",
     "DATA_I32",
