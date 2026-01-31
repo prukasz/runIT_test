@@ -12,201 +12,152 @@
 static const char* TAG = __FILE_NAME__;
 
 // Internal Helpers
-static __always_inline bool is_greater(double a, double b);
-static __always_inline bool is_equal(double a, double b);
-static __always_inline bool is_zero(double a);
+static __always_inline bool is_greater(float a, float b);
+static __always_inline bool is_equal(float a, float b);
+static __always_inline bool is_zero(float a);
 
-// Forward Declarations
-emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
-emu_err_t _emu_parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code);
-emu_err_t _emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt);
-emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table);
-emu_err_t _clear_expression_internals(expression_t* expr);
+typedef enum{
+    OP_VAR   = 0x00,      
+    OP_CONST = 0x01,      
+    OP_ADD   = 0x02,     
+    OP_MUL   = 0x03,      
+    OP_DIV   = 0x04,      
+    OP_COS   = 0x05,     
+    OP_SIN   = 0x06,      
+    OP_POW   = 0x07,      
+    OP_ROOT  = 0x08,      
+    OP_SUB   = 0x09, 
+}op_code_t;
+     
+
+typedef struct {
+    op_code_t op;
+    uint8_t input_index; //for operator it's 00, for constant index in constant table
+} instruction_t;
+
+
+typedef struct{
+    instruction_t *code;
+    uint8_t count;
+    float *constant_table;
+    uint8_t const_count;
+} expression_t;
+
 
 /* ============================================================================
-    PARSING LOGIC
+    PARSING LOGIC - New packet-based approach
+    Packet format: [block_idx:u16][block_type:u8][packet_id:u8][data...]
    ============================================================================ */
 
-emu_result_t block_math_parse(chr_msg_buffer_t *source, block_handle_t *block)
-{
-    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_math_parse, 0, 0, TAG, "Null ptr provided");
-
-    emu_result_t res = {.code = EMU_OK};
-    uint8_t *data;
-    size_t len;
+/**
+ * @brief Parse constants packet
+ * Format: [count:u8][float0][float1]...
+ */
+static emu_err_t _parse_constants(const uint8_t *data, uint16_t len, expression_t *expr) {
+    if (len < 1) return EMU_ERR_PACKET_INCOMPLETE;
     
-    // Get ID from the block struct provided
-    uint16_t block_idx = block->cfg.block_idx;
+    uint8_t count = data[0];
+    if (len < 1 + count * sizeof(float)) return EMU_ERR_PACKET_INCOMPLETE;
+    
+    if (expr->constant_table) free(expr->constant_table);
+    expr->constant_table = (float*)calloc(count, sizeof(float));
+    if (!expr->constant_table) return EMU_ERR_NO_MEM;
+    
+    expr->const_count = count;
+    for (uint8_t i = 0; i < count; i++) {
+        memcpy(&expr->constant_table[i], &data[1 + i * sizeof(float)], sizeof(float));
+    }
+    
+    LOG_I(TAG, "Parsed %d constants", count);
+    return EMU_OK;
+}
 
-    size_t buff_size = chr_msg_buffer_size(source);
-    size_t search_idx = 0;
+/**
+ * @brief Parse instructions packet
+ * Format: [count:u8][op0:u8][idx0:u8][op1:u8][idx1:u8]...
+ */
+static emu_err_t _parse_instructions(const uint8_t *data, uint16_t len, expression_t *expr) {
+    if (len < 1) return EMU_ERR_PACKET_INCOMPLETE;
+    
+    uint8_t count = data[0];
+    if (len < 1 + count * 2) return EMU_ERR_PACKET_INCOMPLETE;
+    
+    if (expr->code) free(expr->code);
+    expr->code = (instruction_t*)calloc(count, sizeof(instruction_t));
+    if (!expr->code) return EMU_ERR_NO_MEM;
+    
+    expr->count = count;
+    for (uint8_t i = 0; i < count; i++) {
+        expr->code[i].op = data[1 + i * 2];
+        expr->code[i].input_index = data[1 + i * 2 + 1];
+    }
+    
+    LOG_I(TAG, "Parsed %d instructions", count);
+    return EMU_OK;
+}
 
-    // --- PASS 1: EXPRESSION CODE (Subtype 0x02) ---
-    while(search_idx < buff_size)
-    {
-        chr_msg_buffer_get(source, search_idx, &data, &len);
-
-        // Check header bytes safely
-        if (len > 3 && data[0] == 0xBB && data[1] == BLOCK_MATH && data[2] == EMU_H_BLOCK_PACKET_CUSTOM) 
-        {
-            uint16_t packet_blk_id;
-            memcpy(&packet_blk_id, &data[3], 2); 
-
-            if (packet_blk_id == block_idx) 
-            {
-                LOG_I(TAG, "Detected Expression header for block %d", block_idx);
-                
-                // Allocate custom data if not exists
-                if (!block->custom_data) {
-                    block->custom_data = calloc(1, sizeof(expression_t));
-                    if(!block->custom_data){EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "No memory for custom_data block %d", block_idx);}
-                }
-
-                size_t const_msg_cnt = 1;
-                if(_emu_parse_math_expr(source, search_idx, (expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
-                    block_math_free(block);
-                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "Expr parse error block %d", block_idx);
-                }
-            }
+#undef OWNER
+#define OWNER EMU_OWNER_block_math_parse
+emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block_ptr)
+{
+    block_handle_t block = (block_handle_t)block_ptr;
+    if (!block) RET_E(EMU_ERR_NULL_PTR, "Null block ptr");
+    
+    // Packet: [packet_id:u8][data...]
+    if (packet_len < 1) RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet too short");
+    
+    uint8_t packet_id = packet_data[0];
+    const uint8_t *payload = &packet_data[1];
+    uint16_t payload_len = packet_len - 1;
+    
+    // Allocate custom data if not exists
+    if (!block->custom_data) {
+        block->custom_data = calloc(1, sizeof(expression_t));
+        if (!block->custom_data) {
+            RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "No memory for custom_data");
         }
-        search_idx++;
     }
-
-    // PASS 2: CONSTANT TABLE (Subtype 0x01) ---
-    search_idx = 0;
-    while(search_idx < buff_size)
-    {
-        chr_msg_buffer_get(source, search_idx, &data, &len);
-
-        if (len > 3 && data[0] == 0xBB && data[1] == BLOCK_MATH && data[2] == EMU_H_BLOCK_PACKET_CONST) 
-        {
-            uint16_t packet_blk_id;
-            memcpy(&packet_blk_id, &data[3], 2);
-
-            if (packet_blk_id == block_idx) 
-            {
-                LOG_I(TAG, "Detected Constant Table header for block %d", block_idx);
-                
-                // Ensure custom_data exists
-                if (!block->custom_data) {
-                     block->custom_data = calloc(1, sizeof(expression_t));
-                     if(!block->custom_data){EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "No memory for custom_data block %d", block_idx);}
-                }
-
-                size_t const_msg_cnt = 1;
-                if(_emu_parse_math_const(source, search_idx, (expression_t*)(block->custom_data), &const_msg_cnt) != EMU_OK){
-                    //block_math_free(block);
-                    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_math_parse, block_idx, 0, TAG, "Const parse error block %d", block_idx);
-                }
-            }
-        }
-        search_idx++;
-    }
-    return res;
-}
-
-emu_err_t _emu_parse_math_expr(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt)
-{
-    uint8_t *data;
-    size_t len;
-    uint8_t op_count = 0;
-    uint8_t idx_start = 0;
-
-    chr_msg_buffer_get(source, msg_index, &data, &len);
-    if(len < 6) return EMU_ERR_PACKET_INCOMPLETE;
-
-    op_count = data[5];
-    expression->count = op_count;
     
-    expression->code = (instruction_t*)calloc(op_count, sizeof(instruction_t));
-    if(!expression->code){
-        LOG_E(TAG, "Expr code alloc failed");
-        return EMU_ERR_NO_MEM;
-    }
-
-    size_t len_total = op_count * 2 + 1;
-    _emu_parse_math_expr_msg(data, len, 6, &idx_start, expression->code);
-
-    while(len_total > (len - 5)){
-        len_total = len_total - (len - 5);
-        msg_index++;
-        chr_msg_buffer_get(source, msg_index, &data, &len);
-        
-        if (!data) break; 
-
-        _emu_parse_math_expr_msg(data, len, 5, &idx_start, expression->code);
-        (*const_msg_cnt)++;
-    }
-    return EMU_OK;
-}
-
-emu_err_t _emu_parse_math_expr_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, instruction_t* code)
-{
-    for(int i = start_index; i < len - 1; i += 2){ 
-        code[*idx_start].op = data[i];
-        code[*idx_start].input_index = data[i+1];
-        (*idx_start)++;
-    }
-    return EMU_OK;
-}
-
-emu_err_t _emu_parse_math_const(chr_msg_buffer_t *source, size_t msg_index, expression_t* expression, size_t *const_msg_cnt){
-    uint8_t *data;
-    size_t len;
-    uint8_t const_cnt = 0;
-    uint8_t idx_start = 0;
-
-    chr_msg_buffer_get(source, msg_index, &data, &len);
-    if(len < 6) return EMU_ERR_PACKET_INCOMPLETE;
-
-    const_cnt = data[5];
-    size_t len_total = const_cnt * sizeof(double) + 1;
+    expression_t *expr = (expression_t*)block->custom_data;
+    emu_err_t err = EMU_OK;
     
-    expression->constant_table = (double*)calloc(const_cnt, sizeof(double));
-    if(!expression->constant_table){
-        LOG_E(TAG, "Const table alloc failed");
-        return EMU_ERR_NO_MEM;
+    switch (packet_id) {
+        case BLOCK_PKT_CONSTANTS:
+            err = _parse_constants(payload, payload_len, expr);
+            break;
+        case BLOCK_PKT_INSTRUCTIONS:
+            err = _parse_instructions(payload, payload_len, expr);
+            break;
+        default:
+            LOG_W(TAG, "Unknown packet_id: 0x%02X", packet_id);
+            break;
     }
-
-    _emu_parse_math_const_msg(data, len, 6, &idx_start, expression->constant_table);
-
-    while(len_total > (len - 5)){
-        len_total = len_total - (len - 5);
-        msg_index++;
-        chr_msg_buffer_get(source, msg_index, &data, &len);
-        if(!data) break;
-
-        _emu_parse_math_const_msg(data, len, 5, &idx_start, expression->constant_table);
-        (*const_msg_cnt)++;
+    
+    if (err != EMU_OK) {
+        RET_ED(err, block->cfg.block_idx, 0, "Parse error for packet_id 0x%02X", packet_id);
     }
-    return EMU_OK;
-}
-
-emu_err_t _emu_parse_math_const_msg(uint8_t *data, uint16_t len, size_t start_index, uint8_t *idx_start, double* table){
-    for(size_t i = start_index; i <= len - sizeof(double); i += sizeof(double)){
-        memcpy(&(table[*idx_start]), &data[i], sizeof(double));
-        (*idx_start)++;
-    }
-    return EMU_OK;
+    
+    return EMU_RESULT_OK();
 }
 
 /* ============================================================================
     EXECUTION LOGIC
    ============================================================================ */
 
-emu_result_t block_math(block_handle_t* block){
+#undef OWNER
+#define OWNER EMU_OWNER_block_math
+emu_result_t block_math(block_handle_t block){
     emu_result_t res = {.code = EMU_OK};
     (void)res; // May be used by macros
-    
-    if (!emu_block_check_inputs_updated(block)) { EMU_RETURN_OK(EMU_LOG_block_inactive, EMU_OWNER_block_math, block->cfg.block_idx, TAG, "Block Disabled"); }
-    if(!block_check_EN(block, 0)){ EMU_RETURN_OK(EMU_LOG_block_inactive, EMU_OWNER_block_math, block->cfg.block_idx, TAG, "Block Disabled"); }
+    LOG_I(TAG,"trying to execute math block %d", block->cfg.block_idx);
+    if (!emu_block_check_inputs_updated(block)) { RET_OKD(block->cfg.block_idx, "Block Disabled"); }
+    if(!block_check_EN(block, 0)){ RET_OKD(block->cfg.block_idx, "Block Disabled"); }
     
     expression_t* eval = (expression_t*)block->custom_data;
-    //double inputs[16]
-    double stack[16];
+    float stack[16];
     int over_top = 0;
-    double result = 0;
-    double tmp = 0;
+    float result = 0.0f;
+    float tmp = 0.0f;
     for(uint16_t i = 0; i < eval->count; i++){
         instruction_t *ins = &(eval->code[i]);
         switch(ins->op){
@@ -226,22 +177,22 @@ emu_result_t block_math(block_handle_t* block){
                 break;
             case OP_DIV:
                 if(over_top >= 2) {
-                    if(is_zero(stack[over_top-1])){EMU_RETURN_NOTICE(EMU_ERR_BLOCK_DIV_BY_ZERO, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Div by zero");}
+                    if(is_zero(stack[over_top-1])){RET_ND(EMU_ERR_BLOCK_DIV_BY_ZERO, block->cfg.block_idx, 0, "Div by zero");}
                     stack[over_top-2] /= stack[over_top-1];
                     over_top--;
                 }
                 break;
             case OP_COS:
-                if(over_top >= 1) stack[over_top-1] = cos(stack[over_top-1]);
+                if(over_top >= 1) stack[over_top-1] = cosf(stack[over_top-1]);
                 break;
             case OP_SIN:
-                if(over_top >= 1) stack[over_top-1] = sin(stack[over_top-1]);
+                if(over_top >= 1) stack[over_top-1] = sinf(stack[over_top-1]);
                 break; 
             case OP_POW:
-                if(over_top >= 2) { stack[over_top-2] = pow(stack[over_top-2], stack[over_top-1]); over_top--; }
+                if(over_top >= 2) { stack[over_top-2] = powf(stack[over_top-2], stack[over_top-1]); over_top--; }
                 break;
             case OP_ROOT:
-                if(over_top >= 1) stack[over_top-1] = sqrt(stack[over_top-1]);
+                if(over_top >= 1) stack[over_top-1] = sqrtf(stack[over_top-1]);
                 break;
             case OP_SUB:
                 if(over_top >= 2) { stack[over_top-2] -= stack[over_top-1]; over_top--; }
@@ -249,15 +200,15 @@ emu_result_t block_math(block_handle_t* block){
         }
     }
 
-    result = (over_top > 0) ? stack[0] : 0.0;
+    result = (over_top > 0) ? stack[0] : 0.0f;
     
     // Set Outputs
-    emu_variable_t v_eno = { .type = DATA_B, .data.b = true };
-    res =block_set_output(block, &v_eno, 0);
-    LOG_I(TAG, "[%d]result %lf", block->cfg.block_idx, result);
-    emu_variable_t v_res = { .type = DATA_D, .data.d = result };
-    res = block_set_output(block, &v_res, 1);
-    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_math, block->cfg.block_idx, 0, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));}
+    mem_var_t v_eno = { .type = MEM_B, .data.val.b = true };
+    res = block_set_output(block, v_eno, 0);
+    LOG_I(TAG, "[%d]result %f", block->cfg.block_idx, result);
+    mem_var_t v_res = { .type = MEM_F, .data.val.f = result };
+    res = block_set_output(block, v_res, 1);
+    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, 0, "Output acces error %s", EMU_ERR_TO_STR(res.code));}
     return res;      
 } 
 
@@ -265,16 +216,16 @@ emu_result_t block_math(block_handle_t* block){
     HELPERS
    ============================================================================ */
 
-static __always_inline bool is_equal(double a, double b){
-    return fabs(a-b) < DBL_EPSILON;
+static __always_inline bool is_equal(float a, float b){
+    return fabsf(a-b) < FLT_EPSILON;
 }
     
-static __always_inline bool is_zero(double a){
-    return fabs(a) < DBL_EPSILON;
+static __always_inline bool is_zero(float a){
+    return fabsf(a) < FLT_EPSILON;
 }
 
-static __always_inline bool is_greater(double a, double b){
-    return (a - b) > DBL_EPSILON;
+static __always_inline bool is_greater(float a, float b){
+    return (a - b) > FLT_EPSILON;
 }
 
 emu_err_t _clear_expression_internals(expression_t* expr){
@@ -283,7 +234,7 @@ emu_err_t _clear_expression_internals(expression_t* expr){
     return EMU_OK;
 }
 
-void block_math_free(block_handle_t* block){
+void block_math_free(block_handle_t block){
     if(block && block->custom_data){
         expression_t* expr = (expression_t*)block->custom_data;
         _clear_expression_internals(expr);
@@ -292,13 +243,15 @@ void block_math_free(block_handle_t* block){
         LOG_D(TAG, "Cleared math block memory");
     }
 }
-emu_result_t block_math_verify(block_handle_t *block) {
-    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_math_verify, block->cfg.block_idx, 0, TAG, "Custom Data is NULL");}
+#undef OWNER
+#define OWNER EMU_OWNER_block_math_verify
+emu_result_t block_math_verify(block_handle_t block) {
+    if (!block->custom_data) {RET_ED(EMU_ERR_NULL_PTR, block->cfg.block_idx, 0, "Custom Data is NULL");}
 
     expression_t *data = (expression_t*)block->custom_data;
 
-    if (data->count == 0) {EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_math_verify, block->cfg.block_idx, 0, TAG, "Empty expression (count=0)");}
+    if (data->count == 0) {RET_WD(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, 0, "Empty expression (count=0)");}
 
-    if (data->count > 0 && data->code == NULL) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_math_verify, block->cfg.block_idx, 0, TAG, "Code pointer is NULL");}
+    if (data->count > 0 && data->code == NULL) {RET_ED(EMU_ERR_NULL_PTR, block->cfg.block_idx, 0, "Code pointer is NULL");}
     return EMU_RESULT_OK();
 }

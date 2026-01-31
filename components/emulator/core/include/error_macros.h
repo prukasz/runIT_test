@@ -166,7 +166,7 @@ extern QueueHandle_t logs_queue_t;
 
 #define EMU_REPORT_ERROR_CRITICAL(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
     do { \
-        _EMU_LOG_SAFE(LOG_E, tag, "ERROR REPORTED: " fmt, ##__VA_ARGS__); \
+        _EMU_LOG_SAFE(LOG_E, tag, fmt, ##__VA_ARGS__); \
         emu_result_t _err = { \
             .code = code_arg, \
             .owner = owner_name_enum, \
@@ -183,7 +183,7 @@ extern QueueHandle_t logs_queue_t;
 
 #define EMU_REPORT_ERROR_WARN(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
     do { \
-        _EMU_LOG_SAFE(LOG_E, tag, "ERROR REPORTED: " fmt, ##__VA_ARGS__); \
+        _EMU_LOG_SAFE(LOG_W, tag, fmt, ##__VA_ARGS__); \
         emu_result_t _err = { \
             .code = code_arg, \
             .owner = owner_name_enum, \
@@ -200,7 +200,7 @@ extern QueueHandle_t logs_queue_t;
 
 #define EMU_REPORT_ERROR_NOTICE(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
     do { \
-        _EMU_LOG_SAFE(LOG_E, tag, "ERROR REPORTED: " fmt, ##__VA_ARGS__); \
+        _EMU_LOG_SAFE(LOG_I, tag, fmt, ##__VA_ARGS__); \
         emu_result_t _err = { \
             .code = code_arg, \
             .owner = owner_name_enum, \
@@ -270,3 +270,43 @@ extern QueueHandle_t logs_queue_t;
 #endif
 
 #define EMU_RESULT_OK() ((emu_result_t){ .code = EMU_OK })
+
+// --- ULTRA-SIMPLIFIED MACROS ---
+// TAG is already defined per-file as: static const char* TAG = __FILE_NAME__;
+// Before each function: #undef OWNER
+//                       #define OWNER EMU_OWNER_function_name
+// (undef is safe even if OWNER not defined)
+
+#define RET_E(code, msg, ...) EMU_RETURN_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+#define RET_W(code, msg, ...) EMU_RETURN_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+#define RET_N(code, msg, ...) EMU_RETURN_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+
+#define RET_ED(code, block_idx, depth, msg, ...) EMU_RETURN_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+#define RET_WD(code, block_idx, depth, msg, ...) EMU_RETURN_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+#define RET_ND(code, block_idx, depth, msg, ...) EMU_RETURN_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+
+#ifdef ENABLE_REPORT
+    #define RET_OK(msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
+    #define RET_OKD(block_idx, msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
+
+    #define REP_E(code, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+    #define REP_W(code, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+    #define REP_N(code, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+    #define REP_ED(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+    #define REP_WD(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+    #define REP_ND(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+    #define REP_OK(msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
+    #define REP_OKD(block_idx, msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
+#else
+    #define RET_OK(...) do { return (emu_result_t){ .code = EMU_OK }; } while(0)
+    #define RET_OKD(...) do { return (emu_result_t){ .code = EMU_OK }; } while(0)
+    #define REP_E(...) do {} while(0)
+    #define REP_W(...) do {} while(0)
+    #define REP_N(...) do {} while(0)
+    #define REP_ED(...) do {} while(0)
+    #define REP_WD(...) do {} while(0)
+    #define REP_ND(...) do {} while(0)
+    #define REP_OK(...) do {} while(0)
+    #define REP_OKD(...) do {} while(0)
+#endif
+

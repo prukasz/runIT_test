@@ -11,7 +11,7 @@ UUID_WRITE   = "00000000-0000-0000-0000-000000000003"   # emu_in
 UUID_NOTIFY  = "00000000-0000-0000-0000-000000000003"   # emu_out
 UUID_READ  = "00000000-0000-0000-0000-000000000002"
 
-CMD_FILE = "test.txt" # Zmieniono na plik generowany przez FullDump
+CMD_FILE = "test_dump.txt" # Zmieniono na plik generowany przez FullDump
 
 current_message_chunks = []  # Only current message
 current_message_expected_len = 0
@@ -116,14 +116,18 @@ async def send_file(client, write_char):
         lines = f.readlines()
 
     for i, line in enumerate(lines, start=1):
-        # --- MODYFIKACJA START ---
-        # 1. Usuń wszystko co znajduje się pomiędzy # a # (włącznie z #)
-        #    Regex: #.*?# (dopasowanie leniwe)
-        line_no_comments = re.sub(r'#.*?#', '', line)
+        # Strip whitespace first
+        stripped = line.strip()
         
-        # 2. Usuń wszystkie białe znaki (spacje, entery)
+        # Skip empty lines
+        if not stripped:
+            continue
+        
+        # Remove all #...# comment blocks (greedy to handle multiple)
+        line_no_comments = re.sub(r'#[^#]*#', '', stripped)
+        
+        # Remove all whitespace
         clean_line = "".join(line_no_comments.split())
-        # --- MODYFIKACJA KONIEC ---
 
         if not clean_line:
             continue

@@ -10,8 +10,8 @@
 static const char* TAG = __FILE_NAME__;
 
 typedef struct {
-    double   default_period;
-    double   default_width;
+    float    default_period;
+    float    default_width;
     uint64_t start_time_ms; // 
     bool     prev_en;       //
 } block_clock_handle_t;
@@ -22,24 +22,25 @@ typedef struct {
 #define CLK_OUT_Q      0
 
 
-
-emu_result_t block_clock(block_handle_t *block) {
+#undef OWNER
+#define OWNER EMU_OWNER_block_clock
+emu_result_t block_clock(block_handle_t block) {
 
     block_clock_handle_t *data = (block_clock_handle_t*)block->custom_data;
 
     bool en = block_check_EN(block, CLK_IN_EN);
     if (!en) {
         data->prev_en = false;
-        emu_variable_t v_out = { .type = DATA_B, .data.b = false };
-        emu_result_t res = block_set_output(block, &v_out, CLK_OUT_Q);
-        if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_clock, block->cfg.block_idx, 0, TAG, "Output Set Fail");
+        mem_var_t v_out = { .type = MEM_B, .data.val.b = false };
+        emu_result_t res = block_set_output(block, v_out, CLK_OUT_Q);
+        if (unlikely(res.code != EMU_OK)) RET_ED(res.code, block->cfg.block_idx, 0, "Output Set Fail");
         return EMU_RESULT_OK();
     }
 
-    double period = data->default_period;
+    float period = data->default_period;
     if(block_in_updated(block, CLK_IN_PERIOD)){MEM_GET(&period, block->inputs[CLK_IN_PERIOD]);}
 
-    double width = data->default_width;
+    float width = data->default_width;
     if(block_in_updated(block, CLK_IN_WIDTH)){MEM_GET(&width, block->inputs[CLK_IN_WIDTH]);}
 
     if (period < 1.0) period = 1.0; 
@@ -54,17 +55,17 @@ emu_result_t block_clock(block_handle_t *block) {
 
     uint64_t local_time = now - data->start_time_ms;
     
-    double phase = fmod((double)local_time, period);
+    float phase = fmodf((float)local_time, period);
 
     bool q_state = (phase < width);
     LOG_I(TAG, "phase%lf,width %lf", phase, width);
 
-    emu_variable_t v_out = { .type = DATA_B, .data.b = q_state };
+    mem_var_t v_out = { .type = MEM_B, .data.val.b = q_state };
     LOG_I(TAG, "time %lld", local_time);
     LOG_I(TAG, "out %d ", q_state);
-    emu_result_t res = block_set_output(block, &v_out, CLK_OUT_Q);
+    emu_result_t res = block_set_output(block, v_out, CLK_OUT_Q);
     
-    if (unlikely(res.code != EMU_OK)) {EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_clock, block->cfg.block_idx, 0, TAG, "Output Set Fail");}
+    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, 0, "Output Set Fail");}
     return EMU_RESULT_OK();
 }
 
@@ -72,63 +73,56 @@ emu_result_t block_clock(block_handle_t *block) {
     HELPERY (PARSE / VERIFY / FREE)
    ============================================================================ */
 
-emu_result_t block_clock_parse(chr_msg_buffer_t *source, block_handle_t *block) {
-    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_clock_parse, 0, 0, TAG, "Block NULL");
-
-    uint8_t *data;
-    size_t len;
-    size_t buff_size = chr_msg_buffer_size(source);
-    uint16_t target_idx = block->cfg.block_idx;
-
-    for (size_t i = 0; i < buff_size; i++) {
-        chr_msg_buffer_get(source, i, &data, &len);
-
-        if (len < 5) continue;
-
-        if (data[0] == 0xBB && data[1] == block->cfg.block_type) { 
-            uint16_t pkt_idx;
-            memcpy(&pkt_idx, &data[3], 2);
-
-            if (pkt_idx == target_idx) {
-                
-                if (block->custom_data == NULL) {
-                    block->custom_data = calloc(1, sizeof(block_clock_handle_t));
-                    if (!block->custom_data) {
-                        EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_clock_parse, target_idx, 0, TAG, "Alloc failed");
-                    }
-                }
-                block_clock_handle_t *config = (block_clock_handle_t*)block->custom_data;
-
-                if (data[2] == EMU_H_BLOCK_PACKET_CONST) {
-                    if (len < (5 + 16)) {
-                        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, EMU_OWNER_block_clock_parse, target_idx, 0, TAG, "Packet too short");
-                    }
-                    size_t offset = 5;
-                    memcpy(&config->default_period, &data[offset], 8); offset += 8;
-                    memcpy(&config->default_width,  &data[offset], 8); offset += 8;
-
-                    LOG_I(TAG, "Parsed Config: Period=%.2f ms, Width=%.2f ms", 
-                          config->default_period, config->default_width);
-                }
-            }
-        }
+#undef OWNER
+#define OWNER EMU_OWNER_block_clock_parse
+emu_result_t block_clock_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block_ptr) {
+    block_handle_t block = (block_handle_t)block_ptr;
+    if (!block) RET_E(EMU_ERR_NULL_PTR, "Block NULL");
+    
+    // Packet: [packet_id:u8][data...]
+    if (packet_len < 1) RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet too short");
+    
+    uint8_t packet_id = packet_data[0];
+    const uint8_t *payload = &packet_data[1];
+    uint16_t payload_len = packet_len - 1;
+    
+    // Allocate custom data if not exists
+    if (!block->custom_data) {
+        block->custom_data = calloc(1, sizeof(block_clock_handle_t));
+        if (!block->custom_data) RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "Alloc failed");
     }
+    
+    block_clock_handle_t *config = (block_clock_handle_t*)block->custom_data;
+    
+    // PKT_CFG (0x01): [period:f32][width:f32]
+    if (packet_id == BLOCK_PKT_CFG) {
+        if (payload_len < 8) RET_ED(EMU_ERR_PACKET_INCOMPLETE, block->cfg.block_idx, 0, "Config payload too short");
+        
+        memcpy(&config->default_period, &payload[0], 4);
+        memcpy(&config->default_width,  &payload[4], 4);
+        
+        LOG_I(TAG, "Parsed Config: Period=%.2f ms, Width=%.2f ms", 
+              config->default_period, config->default_width);
+    }
+    
     return EMU_RESULT_OK();
 }
 
-emu_result_t block_clock_verify(block_handle_t *block) {
-    if (!block) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_clock_verify, 0, 0, TAG, "Block NULL");
-    if (!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_clock_verify, block->cfg.block_idx, 0, TAG, "Custom Data Missing");
+#undef OWNER
+#define OWNER EMU_OWNER_block_clock_verify
+emu_result_t block_clock_verify(block_handle_t block) {
+    if (!block) RET_E(EMU_ERR_NULL_PTR, "Block NULL");
+    if (!block->custom_data) RET_ED(EMU_ERR_NULL_PTR, block->cfg.block_idx, 0, "Custom Data Missing");
 
     block_clock_handle_t *config = (block_clock_handle_t*)block->custom_data;
 
     if (config->default_period < 0.001) {
-        EMU_RETURN_WARN(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_clock_verify, block->cfg.block_idx, 0, TAG, "Default Period near zero");
+        RET_WD(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, 0, "Default Period near zero");
     }
     return EMU_RESULT_OK();
 }
 
-void block_clock_free(block_handle_t* block) {
+void block_clock_free(block_handle_t block) {
     if (block && block->custom_data) {
         free(block->custom_data);
         block->custom_data = NULL;

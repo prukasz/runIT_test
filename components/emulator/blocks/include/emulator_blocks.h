@@ -7,63 +7,83 @@
 #include "emulator_variables_acces.h"
 
 /**
+ * @brief Block data packet IDs - identifies type of data in PACKET_H_BLOCK_DATA packets
+ * @note Packet format after header: [block_idx:u16][block_type:u8][packet_id:u8][data...]
+ */
+typedef enum {
+    // Data packets (0x00-0x0F)
+    BLOCK_PKT_CONSTANTS      = 0x00,  // Constants: [cnt:u8][float...]
+    BLOCK_PKT_CFG            = 0x01,  // Configuration: block-specific config data
+    
+    // Code/expression packets (0x10-0x1F)
+    BLOCK_PKT_INSTRUCTIONS   = 0x10,  // Instructions: bytecode for Math, Logic blocks
+    
+    // Dynamic option packets (0x20+)
+    BLOCK_PKT_OPTIONS_BASE   = 0x20,  // Selector options: 0x20 + option_index
+} block_packet_id_t;
+
+/**
  * @brief Function pointer for block code execution
  */
-typedef emu_result_t (*emu_block_func)(block_handle_t *block);
+typedef emu_result_t (*emu_block_func)(block_handle_t block);
 /**
  * @brief Function pointer for block parser
+ * @param packet_data Raw packet data (block_idx/block_type already stripped by dispatcher)
+ * @param packet_len Length of packet data
+ * @param block Block handle to configure
+ * @note Packet format: [packet_id:u8][data...]
  */
-typedef emu_result_t (*emu_block_parse_func)(chr_msg_buffer_t *source, block_handle_t *block);
+typedef emu_result_t (*emu_block_parse_func)(const uint8_t *packet_data, const uint16_t packet_len, void *block);
 /**
  * @brief Function pointer for block free function
  */
-typedef void (*emu_block_free_func)(block_handle_t *block);
+typedef void (*emu_block_free_func)(block_handle_t block);
 /**
  * @brief Function pointer for block verification function
  */
-typedef emu_result_t (*emu_block_verify_func)(block_handle_t *block);
+typedef emu_result_t (*emu_block_verify_func)(block_handle_t block);
 
 /**
- * @brief Reset all blocks in list
+ * @brief Parse and create list for all blocks
+ * @param data packet buff (skip header)
+ * @param data_len packet buff len (-header len)
+ * @param emu_code_handle code handle where space will be created 
+ * @note Packet [uint16_t blocks_count]
  */
-void emu_blocks_free_all(emu_code_handle_t code); 
+emu_result_t emu_block_parse_create_list(const uint8_t *data, const uint16_t data_len, void * emu_code_handle);
 
 /**
- * @brief Get packet with total block count and create table
- */
-emu_result_t emu_parse_blocks_total_cnt(chr_msg_buffer_t *source, emu_code_handle_t code);
+ * @brief Parse and create block with config
+ * @param data packet buff (skip header)
+ * @param data_len packet buff len (-header len)
+ * @param emu_code_handle code handle where block will be created
+ * @note Packet [uint16_t block_idx] + [uint16_t in_connected_mask] + [uint8_t block_type] + [uint8_t in_cnt] + [uint8_t q_cnt]
+ */ 
+emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t data_len, void * emu_code_handle);
 
 /**
- * @brief Parse blocks/block and it's content using provided functions
+ * @brief Parse and assign block input
+ * @param data packet buff (skip header)
+ * @param data_len packet buff len (-header len)
+ * @param emu_code_handle code handle where block input will be assinged
+ * @note Packet [uint16_t block_idx] + [uint8_t in_idx] + mem_access_t parse packet 
  */
-emu_result_t emu_parse_block(chr_msg_buffer_t *source, emu_code_handle_t code);
-   
-/**
- * @brief Verify all blocks in code for integrity and correctness
- * This checks if all blocks are properly configured and linked
- * It is recommended to run this after parsing and before executing the code
- * @return emu_result_t Result of verification
- * @note This function uses block specific verify functions from "emu_block_verify_table" 
- * please ensure those are properly implemented for each block type if blocks create custom data in parse step
- */
-emu_result_t emu_parse_blocks_verify_all(emu_code_handle_t code);
-
+emu_result_t emu_block_parse_input(const uint8_t *data, const uint16_t data_len, void * emu_code_handle);
 
 /**
- * @brief Parse inputs for single block from message buffer 
- * @return emu_result_t Result of parsing
- * @note This function is used internally by emu_parse_block but can be used externally if needed
- * This autodetects inputs based on block index and input count and packet headers
+ * @brief Parse and assign block output 
+ * @param data packet buff (skip header)
+ * @param data_len packet buff len (-header len)
+ * @param emu_code_handle code handle where block output will be assinged
+ * @note Packet [uint16_t block_idx] + [uint8_t q_idx] + mem_access_t parse packet 
  */
-emu_result_t emu_parse_block_inputs(chr_msg_buffer_t *source, block_handle_t *block);
+emu_result_t emu_block_parse_output(const uint8_t *data, const uint16_t data_len, void * emu_code_handle);
 
 /**
- * @brief Parse outputs for single block from message buffer 
- * @return emu_result_t Result of parsing
- * @note This function is used internally by emu_parse_block but can be used externally if needed
- * This autodetects outputs based on block index and output count and packet headers
+ * @brief Free all blocks in code handle
  */
-emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *block);
+void emu_blocks_free_all(void* emu_code_handle);
+
 
 /****************************************************************************************************************
  * Helper inline functions for blocks operations
@@ -79,30 +99,13 @@ emu_result_t emu_parse_block_outputs(chr_msg_buffer_t *source, block_handle_t *b
  * @brief Check if all inputs in block updated (this is required for most blocks to run (like in PLC) / behaves like "IF PREV EXECUTED I CAN RUN")
  * @note This checks instances of blocks outputs in context memory (s_mem_contexts)[1] only
  */
-static __always_inline bool emu_block_check_inputs_updated(block_handle_t *block) {
+static __always_inline bool emu_block_check_inputs_updated(block_handle_t block) {
+    uint16_t mask = block->cfg.in_connceted_mask;
 
     for (uint8_t i = 0; i < block->cfg.in_cnt; i++) {
-        // Sprawdzenie bitowe czy wejście jest podłączone
-        if ((block->cfg.in_connected >> i) & 0x01) {
-            
-            mem_access_s_t *access_node = (mem_access_s_t*)block->inputs[i];
-            
-            // Safety check dla access node
-            if (unlikely(!access_node)) { return false; }
-
-            // ZAMIANA: Bezpośredni wskaźnik do instancji
-            // Wcześniej: s_mem_contexts[id]->instances[type][idx] (wolne!)
-            // Teraz: access_node->instance (szybkie!)
-            emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)access_node->instance;
-            
-            // Safety check dla instancji
-            if (unlikely(!instance)) { return false; }
-
-            // Logika: Jeśli KTÓREKOLWIEK podłączone wejście nie jest zaktualizowane -> Stop
-            if (instance->updated == 0) { return false; }
-        }
+        if ((mask & 1) && !block->inputs[i]->instance->updated) {return false;}
+        mask >>= 1;
     }
-    // Jeśli przeszliśmy pętlę, znaczy że wszystkie podłączone wejścia są 'updated'
     return true;
 }
 
@@ -110,34 +113,16 @@ static __always_inline bool emu_block_check_inputs_updated(block_handle_t *block
 /**
  * @brief Check if specific input in block is updated (look into mem instance updated flag)
  */
-static __always_inline bool block_in_updated(block_handle_t *block, uint8_t num) {
-    // 1. Sprawdzenie czy numer wejścia mieści się w zakresie
+static __always_inline bool block_in_updated(block_handle_t block, uint8_t num) {
     if (unlikely(num >= block->cfg.in_cnt)) { return false; }
-
-    // 2. Sprawdzenie czy wejście jest fizycznie podłączone (maska bitowa)
-    if (!((block->cfg.in_connected >> num) & 0x01)) { return false; }
-
-    // 3. Pobranie węzła dostępu
-    mem_access_s_t *access_node = (mem_access_s_t*)block->inputs[num];
-    if (unlikely(!access_node)) { return false; }
-
-    // 4. Pobranie instancji BEZPOŚREDNIO ze wskaźnika
-    // ZAMIANA: Usuwamy s_mem_contexts[...]. access_node->instance wskazuje prosto na metadane.
-    emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)access_node->instance;
-
-    // 5. Sprawdzenie i zwrot flagi
-    if (likely(instance)) {
-        return instance->updated;
-    }
-
-    return false;
+    return (((block->cfg.in_connceted_mask>>num) & 1) && block->inputs[num]->instance->updated);
 }
 
 
 /**
  * @brief This wrapper is made to eaisly check is input updated and is value true (EN conditions)
 */
-static __always_inline bool block_check_EN(block_handle_t *block, uint8_t num) {
+static __always_inline bool block_check_EN(block_handle_t block, uint8_t num) {
     if (!block_in_updated(block, num)) {return false;}
     bool en = false; 
     emu_result_t err = MEM_GET(&en, block->inputs[num]);
@@ -153,39 +138,24 @@ static __always_inline bool block_check_EN(block_handle_t *block, uint8_t num) {
 /**
  * @brief Set output value in block (wrapper around mem_set just to clarify usage)
  */
-static __always_inline emu_result_t block_set_output(block_handle_t *block, emu_variable_t *var, uint8_t num) {
+static __always_inline emu_result_t block_set_output(block_handle_t block, mem_var_t var, uint8_t num) {
     //check if output can even exist
-    if (unlikely(num >= block->cfg.q_cnt)) {
-        EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_set_output, block->cfg.block_idx, 0, "set output", "num exceeds total outs");
-    }
+    if (unlikely(num >= block->cfg.q_cnt)) {EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_set_output, block->cfg.block_idx, 0, "set output", "num exceeds total outs");}
     //as said just wrapper around mem_set
-    return mem_set(block->outputs[num], *var);
+    return mem_set(var, block->outputs[num]);
 }
 
 /**
  * @brief Reset all outputs "updated" status in block (for context 1 only)
  */
-static __always_inline void emu_block_reset_outputs_status(block_handle_t *block) {
-    // Szybkie wyjście
+static __always_inline void emu_block_reset_outputs_status(block_handle_t block) {
+    //for no output block
     if (unlikely(block->cfg.q_cnt == 0)) { return; }
 
     for (uint8_t i = 0; i < block->cfg.q_cnt; i++) {
-        mem_access_s_t *access_node = (mem_access_s_t*)block->outputs[i];
-        
-        // Safety checks
-        if (unlikely(!access_node)) continue;
-
-        // 1. Pobieramy instancję bezpośrednio ze wskaźnika
-        // (Brak kosztownego szukania w globalnych tablicach s_mem_contexts)
-        emu_mem_instance_s_t *instance = (emu_mem_instance_s_t*)access_node->instance;
-
-        if (unlikely(!instance)) continue;
-
-        // 2. Sprawdzamy Context ID wewnątrz metadanych instancji
-        // Hardcoded 1 for block outputs context check
-        if (instance->context_id != 1) continue;
-        
-        // 3. Reset flagi
-        instance->updated = 0;
+        //we can clear only if instance says so 
+        if (block->outputs[i]->instance->can_clear) {
+            block->outputs[i]->instance->updated = 0;
+        }
     }
 }

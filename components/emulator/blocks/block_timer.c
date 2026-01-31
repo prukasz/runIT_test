@@ -49,7 +49,9 @@ typedef struct {
 /* LOGIKA WYKONAWCZA                                                         */
 /* ========================================================================= */
 
-emu_result_t block_timer(block_handle_t *block) {
+#undef OWNER
+#define OWNER EMU_OWNER_block_timer
+emu_result_t block_timer(block_handle_t block) {
 
     uint64_t now_ms = emu_loop_get_time();
     block_timer_t* data = (block_timer_t*)block->custom_data;
@@ -148,80 +150,76 @@ emu_result_t block_timer(block_handle_t *block) {
 
     data->prev_in = IN;
     
-    emu_variable_t v_en = { .type = DATA_B, .data.b = data->q_out};
+    mem_var_t v_en = { .type = MEM_B, .data.val.b = data->q_out};
     LOG_I(TAG, "is out active %d", data->q_out);
-    res = block_set_output(block, &v_en, 0);
+    res = block_set_output(block, v_en, 0);
     if (unlikely(res.code != EMU_OK)) {
-        EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_timer, block->cfg.block_idx, 0, TAG, "Output acces error %s", EMU_ERR_TO_STR(res.code));
+        RET_ED(res.code, block->cfg.block_idx, 0, "Output acces error %s", EMU_ERR_TO_STR(res.code));
     }
     
     // Ustawienie wyjścia ET (czasu) - brakowało tego w twoim kodzie, ale zgodnie z logiką timera powinno być
     // Zakładam, że chcesz to dodać, skoro liczysz delta_time.
     // Jeśli nie chcesz zmieniać logiki, usuń poniższy blok.
-    emu_variable_t v_et = { .type = DATA_D, .data.d = (double)data->delta_time };
-    res = block_set_output(block, &v_et, BLOCK_TIMER_OUT_ET);
+    mem_var_t v_et = { .type = MEM_F, .data.val.f = (float)data->delta_time };
+    res = block_set_output(block, v_et, BLOCK_TIMER_OUT_ET);
     if (unlikely(res.code != EMU_OK)) {
-         EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_timer, block->cfg.block_idx, 0, TAG, "Output ET error %s", EMU_ERR_TO_STR(res.code));
+         RET_ED(res.code, block->cfg.block_idx, 0, "Output ET error %s", EMU_ERR_TO_STR(res.code));
     }
 
     return EMU_RESULT_OK();
 }
 
 
-#define MSG_TIMER_CONFIG 0x01
-
-static emu_err_t _emu_parse_timer_config(uint8_t *data, uint16_t len, block_timer_t* handle) {
-    size_t offset = 5;
-    handle->type = (block_timer_type_t)data[offset++];
-
-    memcpy(&handle->default_pt, &data[offset], sizeof(uint32_t));
+#undef OWNER
+#define OWNER EMU_OWNER_block_timer_parse
+emu_result_t block_timer_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block_ptr) {
+    block_handle_t block = (block_handle_t)block_ptr;
+    if (!block) RET_E(EMU_ERR_NULL_PTR, "NULL block");
     
-    LOG_I(TAG, "Config Loaded -> Type=%d, DefaultPT=%lu ms", handle->type, (unsigned long)handle->default_pt);
-    return EMU_OK;
-}
-
-emu_result_t block_timer_parse(chr_msg_buffer_t *source, block_handle_t *block) {
-    uint8_t *data;
-    size_t len;
-    size_t buff_size = chr_msg_buffer_size(source);
+    // Packet: [packet_id:u8][data...]
+    if (packet_len < 1) RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet too short");
     
-    for (size_t i = 0; i < buff_size; i++) {
-        chr_msg_buffer_get(source, i, &data, &len);
-
-        if (data[0] == 0xBB && data[1] == BLOCK_TIMER) {
-            uint16_t block_idx = 0;
-            memcpy(&block_idx, &data[3], 2);
-            if(block_idx==block->cfg.block_idx){
-            
-                if (block->custom_data == NULL) {
-                    block->custom_data = calloc(1, sizeof(block_timer_t));
-                    if (!block->custom_data) EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_timer_parse, block->cfg.block_idx, 0, TAG, "Custom data alloc failed");
-                }
-                
-                if (data[2] == EMU_H_BLOCK_PACKET_CONST) {
-                    if (_emu_parse_timer_config(data, len, (block_timer_t*)block->custom_data) != EMU_OK) {
-                        EMU_RETURN_CRITICAL(EMU_ERR_INVALID_DATA, EMU_OWNER_block_timer_parse, block->cfg.block_idx, 0, TAG, "cfg parsing issue");
-                    }
-                }
-            }
-        }
+    uint8_t packet_id = packet_data[0];
+    const uint8_t *payload = &packet_data[1];
+    uint16_t payload_len = packet_len - 1;
+    
+    // Allocate custom data if not exists
+    if (!block->custom_data) {
+        block->custom_data = calloc(1, sizeof(block_timer_t));
+        if (!block->custom_data) RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "Custom data alloc failed");
     }
+    
+    block_timer_t *handle = (block_timer_t*)block->custom_data;
+    
+    // PKT_CFG (0x01): [timer_type:u8][default_pt:u32]
+    if (packet_id == BLOCK_PKT_CFG) {
+        if (payload_len < 5) RET_ED(EMU_ERR_PACKET_INCOMPLETE, block->cfg.block_idx, 0, "Config payload too short");
+        
+        handle->type = (block_timer_type_t)payload[0];
+        memcpy(&handle->default_pt, &payload[1], sizeof(uint32_t));
+        
+        LOG_I(TAG, "Timer Config Loaded -> Type=%d, DefaultPT=%lu ms", handle->type, (unsigned long)handle->default_pt);
+    }
+    
     return EMU_RESULT_OK();
 }
 
-void block_timer_free(block_handle_t *block) {
+void block_timer_free(block_handle_t block) {
     if (block->custom_data) {
         free(block->custom_data);
         block->custom_data = NULL;
         LOG_D(TAG, "Cleared timer data");
     }
 }
-emu_result_t block_timer_verify(block_handle_t *block) {
-    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_timer_verify, block->cfg.block_idx, 0, TAG, "Custom Data is NULL");}
+
+#undef OWNER
+#define OWNER EMU_OWNER_block_timer_verify
+emu_result_t block_timer_verify(block_handle_t block) {
+    if (!block->custom_data) {RET_ED(EMU_ERR_NULL_PTR, block->cfg.block_idx, 0, "Custom Data is NULL");}
 
     block_timer_t *data = (block_timer_t*)block->custom_data;
 
-    if (data->type > TIMER_TYPE_TP_INV) {EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_timer_verify, block->cfg.block_idx, 0, TAG, "Invalid Timer Type: %d", data->type);}
+    if (data->type > TIMER_TYPE_TP_INV) {RET_ED(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, 0, "Invalid Timer Type: %d", data->type);}
 
     return EMU_RESULT_OK();
 }

@@ -10,12 +10,20 @@
 
 typedef enum {
     /********PARSER ORDERS **************/
-    ORD_CREATE_CONTEXT        = 0xFFFF,  //Create context with provided size
-    ORD_PARSE_VARIABLES       = 0xEEEE,  //Parse variables types and arrays sizes
-    ORD_PARSE_VARIABLES_DATA  = 0xDDDD,  //Fill created variables with provided data
-    ORD_EMU_CREATE_BLOCK_LIST = 0xb100,  //Create list for number of provided blocks (Total blocks in code)
-    ORD_EMU_CREATE_BLOCKS     = 0xb200,  //Create blocks (Inputs, Outputs, Type, Custom data)
-    ORD_CHECK_CODE            = 0x0030,  //Check code completeness before start (once after parsing finish)
+    ORD_PARSE_CONTEXT_CFG        = 0xAAF0,  /*Parse and create context*/
+    ORD_PARSE_VARIABLES          = 0xAAF1,  //Parse and create variables instances 
+    ORD_PARSE_VARIABLES_S_DATA   = 0xAAFA,  //Fill created scalar variables with data
+    ORD_PARSE_VARIABLES_ARR_DATA = 0xAAFB, 
+
+    ORD_PARSE_LOOP_CFG           = 0xAAA0,     //Create loop with provided config
+    ORD_PARSE_CODE_CFG           = 0xAAAA,  //Create code context with provided config (block list)
+
+    ORD_PARSE_BLOCK_HEADER       = 0xAAB0,
+    ORD_PARSE_BLOCK_INPUTS       = 0xAAB1,
+    ORD_PARSE_BLOCK_OUTPUTS      = 0xAAB2,
+    ORD_PARSE_BLOCK_DATA         = 0xAABA,
+
+    ORD_PARSE_RESET_STATUS       = 0xAA00, //Reset parser status to initial state (for new code parsing)
 
     /********RESET ORDERS  ***************/ 
     ORD_RESET_ALL             = 0x0001,  //Brings emulator to startup state, provides way to eaisly send new code

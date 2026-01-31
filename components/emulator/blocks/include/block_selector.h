@@ -58,8 +58,8 @@ When provided output of other block please verify order of execution first
 This block doesn't update state of it's output
 */
 
-emu_result_t block_selector(block_handle_t *block);
+emu_result_t block_selector(block_handle_t block);
 
-emu_result_t block_selector_parse(chr_msg_buffer_t *source, block_handle_t *block);
-void block_selector_free(block_handle_t* block);
-emu_result_t block_selector_verify(block_handle_t *block);
+emu_result_t block_selector_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
+void block_selector_free(block_handle_t block);
+emu_result_t block_selector_verify(block_handle_t block);

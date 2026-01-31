@@ -5,38 +5,42 @@
 
 static const char *TAG = __FILE_NAME__;
 
-__attribute__((aligned(32)))mem_context_t contexts[MAX_CONTEXTS];
+__attribute__((aligned(32)))mem_context_t mem_contexts[MAX_CONTEXTS];
 static bool is_ctx_allocated[MAX_CONTEXTS];
 
 
 typedef struct {
-    uint32_t heap_elements[MAX_CONTEXTS];  // How much raw data capacity?
-    uint16_t max_instances[MAX_CONTEXTS];  // How many variables?
-    uint16_t max_dims[MAX_CONTEXTS];       // How many dimensions total?
+    uint32_t heap_elements[MAX_CONTEXTS];  /*Capacity in elements of given type*/
+    uint16_t max_instances[MAX_CONTEXTS];  /*Total isntances of given type*/
+    uint16_t max_dims[MAX_CONTEXTS];       /*Sum of dimensions for every non scalar instance dims>0*/
 } mem_ctx_config_t;
 
-// CTX ID (uint8_t) + TYPES CNT (9)*  struct memebers
-#define CTX_CFG_PACKET_SIZE  sizeof(uint8_t)+TYPES_COUNT*(sizeof(uint32_t) + sizeof(uint16_t)+ sizeof(uint16_t))
+// CTX ID (uint8_t) + TYPES CNT (9)* mem_ctx_config_t members
+#define CTX_CFG_PACKET_SIZE  sizeof(uint8_t)+MEM_TYPES_COUNT*(sizeof(uint32_t) + sizeof(uint16_t)+ sizeof(uint16_t))
 
-void mem_context_delete(ctx_id){
-    if (ctx_id >= MAX_CONTEXTS) {EMU_RETURN_CRITICAL(EMU_ERR_CTX_INVALID_ID, EMU_OWNER_mem_context_delete, ctx_id, 0, TAG, "Invalid Context ID %d", ctx_id);}
-    mem_context_t* ctx = &contexts[ctx_id];
-    for (uint8_t i = 0; i < TYPES_COUNT; i++) {
+#undef OWNER
+#define OWNER EMU_OWNER_mem_context_delete
+void mem_context_delete(uint8_t ctx_id){
+    if (ctx_id >= MAX_CONTEXTS) {REP_WD(EMU_ERR_CTX_INVALID_ID, ctx_id, 0, "Invalid Context ID %d", ctx_id);}
+    //get selected context
+    mem_context_t* ctx = &mem_contexts[ctx_id];
+    for (uint8_t i = 0; i < MEM_TYPES_COUNT; i++) {
+        //for each type struct perform cleanup
         type_manager_t* mgr = &ctx->types[i];
 
         if (mgr->data_heap.raw != NULL) {
-            free(mgr->data_heap.raw); 
+            free(mgr->data_heap.raw);
             mgr->data_heap.raw = NULL;
         }
-        mgr->data_heap_size   = 0;
-        mgr->data_cursor = 0;
+        mgr->data_heap_cap   = 0;
+        mgr->data_heap_cursor = 0;
 
         if (mgr->instances != NULL) {
             free(mgr->instances);
             mgr->instances = NULL;
         }
-        mgr->inst_cnt   = 0;
-        mgr->inst_cursor = 0;
+        mgr->instances_cap   = 0;
+        mgr->instances_cursor = 0;
 
         if (mgr->dims_pool != NULL) {
             free(mgr->dims_pool);
@@ -47,26 +51,31 @@ void mem_context_delete(ctx_id){
     }
 
     is_ctx_allocated[ctx_id] = 0;
-    EMU_REPORT(EMU_LOG_CTX_DESTROYED, EMU_OWNER_mem_context_delete, ctx_id, TAG, "Context %d destroyed/cleaned", ctx_id);
+    REP_OKD(ctx_id, "Context %d destroyed/cleaned", ctx_id);
 
 }
 
 
+#undef OWNER
+#define OWNER EMU_OWNER_mem_allocate_context
 emu_result_t mem_context_allocate(uint8_t ctx_id, const mem_ctx_config_t* config){
-    if (ctx_id >= MAX_CONTEXTS) EMU_RETURN_CRITICAL(EMU_ERR_CTX_INVALID_ID, EMU_OWNER_mem_allocate_context, ctx_id, 0, TAG, "Context id %d exceeds MAX_CONTEXTS", ctx_id);
-    if (is_ctx_allocated[ctx_id]) EMU_RETURN_CRITICAL(EMU_ERR_CTX_ALREADY_CREATED, EMU_OWNER_mem_allocate_context, ctx_id, 0, TAG, "Context id %d already created, first destroy it", ctx_id);
-    mem_context_t* ctx = &contexts[ctx_id];
-
-    for (uint8_t i = 0; i < TYPES_COUNT; i++) {
+    if (ctx_id >= MAX_CONTEXTS) RET_ED(EMU_ERR_CTX_INVALID_ID, ctx_id, 0, "Context id %d exceeds MAX_CONTEXTS", ctx_id);
+    if (is_ctx_allocated[ctx_id]) {
+        LOG_W(TAG, "Context id %d already created, skipping", ctx_id);
+        return EMU_RESULT_OK();
+    }
+    mem_context_t* ctx = &mem_contexts[ctx_id];
+    //for each type create space of provided size
+    for (uint8_t i = 0; i < MEM_TYPES_COUNT; i++) {
 
         if(config->heap_elements[i]){
-            ctx->types[i].data_heap.raw = calloc(config->heap_elements[i], DATA_TYPE_SIZES[i]);
-            ctx->types[i].data_heap_size = config->heap_elements[i];
+            ctx->types[i].data_heap.raw = calloc(config->heap_elements[i], MEM_TYPE_SIZES[i]);
+            ctx->types[i].data_heap_cap = config->heap_elements[i];
             if(!ctx->types[i].data_heap.raw ){goto ERROR;}
         }
         if(config->max_instances[i]){
             ctx->types[i].instances  = (mem_instance_t*)calloc(config->max_instances[i], sizeof(mem_instance_t));
-            ctx->types[i].inst_cnt = config->max_instances[i];
+            ctx->types[i].instances_cap = config->max_instances[i];
             if(!ctx->types[i].instances){goto ERROR;}
         }
         if(config->max_dims[i]){
@@ -76,32 +85,37 @@ emu_result_t mem_context_allocate(uint8_t ctx_id, const mem_ctx_config_t* config
         }
         LOG_I(TAG, "Created: ctx: %d, type: %s, instances: %d, total elements: %ld, total dims: %d", ctx_id, EMU_DATATYPE_TO_STR[i], config->max_instances[i], config->heap_elements[i], config->max_dims[i]);
     }
+    //mark that context is created
     is_ctx_allocated[ctx_id] = 1;
-    EMU_RETURN_OK(EMU_LOG_ctx_created, EMU_OWNER_mem_allocate_context, ctx_id, TAG, "context %d created", ctx_id);
+    RET_OKD(ctx_id, "context %d created", ctx_id);
+
+    //in case of any calloc error delete context 
     ERROR:
     mem_context_delete(ctx_id);
-    EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_mem_allocate_context, ctx_id, 0,  TAG, "falied to create space context id %d", ctx_id);
+    RET_ED(EMU_ERR_NO_MEM, ctx_id, 0, "falied to create space context id %d", ctx_id);
 }
 
-//We asume that index is deterministic/already known;
-static emu_err_t context_create_instance(uint8_t ctx_id, uint8_t type, uint8_t dims_cnt, uint16_t* dims_size, bool can_clear){
-    if(type>TYPES_COUNT || dims_cnt>MAX_DIMS){return EMU_ERR_INVALID_ARG;}
-    if(!is_ctx_allocated[ctx_id]){return EMU_ERR_CTX_INVALID_ID;}
-    mem_context_t* ctx = &contexts[ctx_id];
-    type_manager_t* mgr = &ctx->types[type];
-    //total sizes
-    uint32_t total_size = 1;
 
+//Instances indices are determined by packet order 
+static emu_err_t context_create_instance(uint8_t ctx_id, uint8_t type, uint8_t dims_cnt, uint16_t* dims_size, bool can_clear){
+    if(type>MEM_TYPES_COUNT || dims_cnt>MAX_DIMS){return EMU_ERR_INVALID_ARG;}
+    if(!is_ctx_allocated[ctx_id]){return EMU_ERR_CTX_INVALID_ID;}
+    mem_context_t* ctx = &mem_contexts[ctx_id];
+    type_manager_t* mgr = &ctx->types[type];
+
+    //calculate total elements required by instance
+    uint32_t total_size = 1;
     for(uint8_t i = 0; i<dims_cnt; i++){total_size *= dims_size[i];}
 
-    if(mgr->data_cursor+total_size > mgr->data_heap_size) {return EMU_ERR_NO_MEM;}
-    if(mgr->inst_cursor==mgr->inst_cnt){return EMU_ERR_NO_MEM;}
+    //check is there space (should be but who knows)
+    if(mgr->data_heap_cursor+total_size > mgr->data_heap_cap) {return EMU_ERR_NO_MEM;}
+    if(mgr->instances_cursor==mgr->instances_cap){return EMU_ERR_NO_MEM;}
     if (mgr->dims_cursor + dims_cnt > mgr->dims_cap) { return EMU_ERR_NO_MEM; }
 
     
 
-    mem_instance_t *instance = &mgr->instances[mgr->inst_cursor];
-    mgr->inst_cursor++;
+    mem_instance_t *instance = &mgr->instances[mgr->instances_cursor];
+    mgr->instances_cursor++;
 
     instance->dims_cnt = dims_cnt;
     instance->context = ctx_id;
@@ -120,14 +134,17 @@ static emu_err_t context_create_instance(uint8_t ctx_id, uint8_t type, uint8_t d
     mgr->dims_cursor += dims_cnt;
 
     uint8_t* base_addr = (uint8_t*)mgr->data_heap.raw;
-    uint32_t byte_offset = mgr->data_cursor * DATA_TYPE_SIZES[type];
+    uint32_t byte_offset = mgr->data_heap_cursor * MEM_TYPE_SIZES[type];
 
     instance->data.raw = (void*)(base_addr + byte_offset);
-    mgr->data_cursor += total_size;
+    mgr->data_heap_cursor += total_size;
     return EMU_OK;
 }
 
-typedef struct{
+
+
+//Helper struct (this is data transmitted in packet )
+typedef struct __packed {
     uint16_t context   : 3; 
     uint16_t dims_cnt  : 4;
     uint16_t type      : 4;
@@ -136,28 +153,35 @@ typedef struct{
     uint16_t reserved  : 3;
 }instance_head_t;
 
-emu_result_t mem_parse_instance_packet(uint8_t *data, uint16_t data_len) {
+
+#undef OWNER
+#define OWNER EMU_OWNER_mem_parse_instance_packet
+emu_result_t emu_mem_parse_instance_packet(const uint8_t *data,const uint16_t data_len, void* nothing) {
     instance_head_t head;
+
+    //index in data packet
     uint16_t idx = 0;
+
+    //dim sizes are located after instance head
     uint16_t dim_sizes[MAX_DIMS];
 
     while (idx < data_len) {
         
-        if (idx + sizeof(instance_head_t) > data_len) {EMU_RETURN_CRITICAL(EMU_ERR_INVALID_PACKET_SIZE, EMU_OWNER_mem_parse_instance_packet ,0, 0 ,TAG, "Instances packet incomplete");}
+        if (idx + sizeof(instance_head_t) > data_len) {RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Instances packet incomplete");}
 
         memcpy(&head, data + idx, sizeof(instance_head_t));
-        
         uint16_t next_offset = idx + sizeof(instance_head_t);
 
+        //each dim_size is uint16 
         uint16_t dims_bytes = head.dims_cnt * sizeof(uint16_t);
         
-        if (next_offset + dims_bytes > data_len) {EMU_RETURN_CRITICAL(EMU_ERR_INVALID_PACKET_SIZE, EMU_OWNER_mem_parse_instance_packet ,0, 0 ,TAG, "Instances packet incomplete");}
+        //check if dims really provided
+        if (next_offset + dims_bytes > data_len) {RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Instances packet incomplete");}
 
-        if (head.dims_cnt > 0) {
-            memcpy(dim_sizes, data + next_offset, dims_bytes);
-        }
+        //copy provided dimensions
+        if (head.dims_cnt > 0) {memcpy(dim_sizes, data + next_offset, dims_bytes);}
 
-
+        //create instation with collected data
         emu_err_t err = context_create_instance(
             head.context,
             head.type, 
@@ -165,27 +189,27 @@ emu_result_t mem_parse_instance_packet(uint8_t *data, uint16_t data_len) {
             dim_sizes, 
             head.can_clear
         );
-        if(err != EMU_OK){EMU_RETURN_CRITICAL(err, EMU_OWNER_mem_parse_instance_packet ,0, 1 ,TAG, "While creating instance error: %s", EMU_ERR_TO_STR);}
+        LOG_I(TAG, "Created instance in ctx %d, type %s, dims cnt %d", head.context, EMU_DATATYPE_TO_STR[head.type], head.dims_cnt);
+        if(err != EMU_OK){RET_ED(err, 0, 1, "While creating instance error: %s", EMU_ERR_TO_STR(err));}
         idx = next_offset + dims_bytes;
     }
 
     return EMU_RESULT_OK();
 }
 
-#define CTX_CFG_PACKET_SIZE  sizeof(uint8_t)+TYPES_COUNT*(sizeof(uint32_t) + sizeof(uint16_t)+ sizeof(uint16_t))
 
-/**
-*@brief Create context of ctx id with provided data
-*@note Packet looks like uint8_t ctx_id TYPES_CNT*(uint32_t heap_elements, uint16_t max_instances, uint16_t max_dims)
-*/
-emu_result_t emu_mem_parse_create_context(const uint8_t *data,const uint16_t data_len){
-    if (data_len != CTX_CFG_PACKET_SIZE){EMU_RETURN_CRITICAL(EMU_ERR_INVALID_PACKET_SIZE, EMU_OWNER_emu_mem_parse_create_context, 0, 0, TAG, "Invalid packet size for ctx config");}
+#define CTX_CFG_PACKET_SIZE  sizeof(uint8_t)+MEM_TYPES_COUNT*(sizeof(uint32_t) + sizeof(uint16_t)+ sizeof(uint16_t))
+
+#undef OWNER
+#define OWNER EMU_OWNER_emu_mem_parse_create_context
+emu_result_t emu_mem_parse_create_context(const uint8_t *data,const uint16_t data_len, void *nothing){
+    if (data_len != CTX_CFG_PACKET_SIZE){RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Invalid packet size for ctx config");}
 
     mem_ctx_config_t cfg = {0};
     uint16_t idx = 0;
     uint8_t ctx_id = data[idx++];
-
-    for(uint8_t i = 0; i<TYPES_COUNT; i++){
+    //get info from packet into helper struct 
+    for(uint8_t i = 0; i<MEM_TYPES_COUNT; i++){
         cfg.heap_elements[i]=parse_get_u32(data, idx);
         idx+= sizeof(uint32_t);
         cfg.max_instances[i]=parse_get_u16(data, idx);
@@ -193,69 +217,75 @@ emu_result_t emu_mem_parse_create_context(const uint8_t *data,const uint16_t dat
         cfg.max_dims[i]=parse_get_u16(data, idx);
         idx+= sizeof(uint16_t);
     }
+    //create context
     emu_result_t res  = mem_context_allocate(ctx_id, &cfg);
-    if(res.code != EMU_OK){EMU_REPORT_ERROR_CRITICAL(res.code, EMU_OWNER_emu_mem_parse_create_context, ctx_id, ++res.depth, TAG, "Failed to allocate parsed ctx %d: %s", ctx_id, EMU_ERR_TO_STR(res.code));}
-    EMU_RETURN_OK(EMU_LOG_created_ctx, EMU_OWNER_emu_mem_parse_create_context, ctx_id, TAG, "Succesfully created context %d", ctx_id);
+    if(res.code != EMU_OK){REP_ED(res.code, ctx_id, ++res.depth, "Failed to allocate parsed ctx %d: %s", ctx_id, EMU_ERR_TO_STR(res.code));}
+    RET_OKD(ctx_id, "Succesfully created context %d", ctx_id);
 }
 
-/**
-*@brief Fill context instance with provided data (scalar)
-*@note Packet looks like uint8_t ctx_id, uint8_t type, uint8_t count, count* [uint16_t instance_idx,1* sizeof(type) [data]]
-*/
-emu_result_t emu_mem_fill_instance_scalar(const uint8_t* data, const uint16_t data_len){
+#undef OWNER
+#define OWNER EMU_OWNER_emu_mem_fill_instance_scalar
+emu_result_t emu_mem_fill_instance_scalar(const uint8_t* data, const uint16_t data_len, void* nothing){
     uint16_t idx = 0;
     uint8_t ctx_id = data[idx++];
     uint8_t type = data[idx++];
     uint8_t count = data[idx++];
-    size_t el_size = DATA_TYPE_SIZES[type];
-    if(data_len<(DATA_TYPE_SIZES[type]+sizeof(uint16_t))*count+3*sizeof(uint8_t)){EMU_REPORT_ERROR_CRITICAL(EMU_ERR_INVALID_PACKET_SIZE, EMU_OWNER_emu_mem_fill_instance_scalar, ctx_id, 0, TAG, "Size of instances data to fill incomplete")}
+    //we need size of element 
+    size_t el_size = MEM_TYPE_SIZES[type];
+    //check packet size [uint8_t ctx_id] + [uint8_t type] + [uint8_t count] + count*([uint16_t inst_idx]+[sizeof(type) data])
+    if(data_len<(3*sizeof(uint8_t))+ (sizeof(uint16_t)+MEM_TYPE_SIZES[type])*count){REP_ED(EMU_ERR_INVALID_PACKET_SIZE, ctx_id, 0, "Size of instances data to fill incomplete");}
 
-    type_manager_t *mgr = &contexts[ctx_id].types[type];
+    type_manager_t *mgr = &mem_contexts[ctx_id].types[type];
 
     for (uint8_t i = 0; i < count; i++) {
         uint16_t inst_idx = parse_get_u16(data, idx);
         idx += sizeof(uint16_t);
 
-        if (inst_idx >= mgr->inst_cursor) {EMU_REPORT_ERROR_WARN(EMU_ERR_MEM_INVALID_IDX, EMU_OWNER_emu_mem_fill_instance_scalar, ctx_id, 0, TAG, "Invalid instance idx %d for ctx %d", inst_idx, ctx_id);}
+        if (inst_idx >= mgr->instances_cursor) {REP_WD(EMU_ERR_MEM_INVALID_IDX, ctx_id, 0, "Invalid instance idx %d for ctx %d", inst_idx, ctx_id);}
 
         mem_instance_t* instance = &mgr->instances[inst_idx];
 
         memcpy(instance->data.raw, data + idx, el_size);
         idx += el_size;
         instance->updated = 1;
+        LOG_I(TAG, "Filled scalar instance %d in ctx %d of type %s", inst_idx, ctx_id, EMU_DATATYPE_TO_STR[type]);
     }
     return EMU_RESULT_OK();
 }
 
-/**
-*@brief Fill context with provided data (array)
-*@note Packet looks like uint8_t ctx_id, uint8_t type, uint8_t count, count* [uint16_t instance_idx, uint16_t start_idx, uint16_t items, items* sizeof(type) [data]]
-*/
-emu_result_t emu_mem_fill_instance_array(const uint8_t* data, const uint16_t data_len){
+#undef OWNER
+#define OWNER EMU_OWNER_emu_mem_fill_instance_array
+emu_result_t emu_mem_fill_instance_array(const uint8_t* data, const uint16_t data_len, void* nothing){
     uint16_t idx = 0;
     uint8_t ctx_id = data[idx++];
     uint8_t type = data[idx++];
     uint8_t count = data[idx++];
-    size_t el_size = DATA_TYPE_SIZES[type];
+    size_t el_size = MEM_TYPE_SIZES[type];
 
-    type_manager_t *mgr = &contexts[ctx_id].types[type];
+    type_manager_t *mgr = &mem_contexts[ctx_id].types[type];
     for (uint8_t i = 0; i < count; i++) {
+        //first get index of target instance
         uint16_t inst_idx = parse_get_u16(data, idx);
         idx += sizeof(uint16_t);
+        //then get start index in array
         uint16_t start_idx = parse_get_u16(data, idx);
         idx += sizeof(uint16_t);
 
-        if (inst_idx >= mgr->inst_cursor) {EMU_RETURN_WARN(EMU_ERR_MEM_INVALID_IDX, EMU_OWNER_emu_mem_fill_instance_array, ctx_id, 0, TAG, "Invalid instance idx %d for ctx %d", inst_idx, ctx_id);}
+        //check for size
+        if (inst_idx >= mgr->instances_cursor) {RET_WD(EMU_ERR_MEM_INVALID_IDX, ctx_id, 0, "Invalid instance idx %d for ctx %d", inst_idx, ctx_id);}
 
         mem_instance_t* instance = &mgr->instances[inst_idx];
+        //get items count 
         uint16_t items = parse_get_u16(data, idx);
         idx += sizeof(uint16_t);
 
+        //copy required size into instance data 
         memcpy(instance->data.u8 + start_idx*el_size, data + idx, items*el_size);
         idx += items*el_size;
         instance->updated = 1; 
-    return EMU_RESULT_OK();
+        LOG_I(TAG, "Filled array instance %d in ctx %d of type %s, items %d from index %d", inst_idx, ctx_id, EMU_DATATYPE_TO_STR[type], items, start_idx);
     }
+    return EMU_RESULT_OK();
 }
 
 emu_err_t emu_mem_fill_instance_scalar_fast(const uint8_t* data) {
@@ -265,9 +295,9 @@ emu_err_t emu_mem_fill_instance_scalar_fast(const uint8_t* data) {
     uint8_t type   = data[idx++];
     uint8_t count  = data[idx++];
     
-    type_manager_t *mgr = &contexts[ctx_id].types[type];
-    size_t el_size      = DATA_TYPE_SIZES[type];
-    uint16_t max_inst   = mgr->inst_cursor;
+    type_manager_t *mgr = &mem_contexts[ctx_id].types[type];
+    size_t el_size      = MEM_TYPE_SIZES[type];
+    uint16_t max_inst   = mgr->instances_cursor;
 
     for (uint8_t i = 0; i < count; i++) {
         uint16_t inst_idx;
@@ -290,9 +320,9 @@ emu_err_t emu_mem_fill_instance_array_fast(const uint8_t* data) {
     uint8_t type   = data[idx++];
     uint8_t count  = data[idx++];
 
-    type_manager_t *mgr = &contexts[ctx_id].types[type];
-    size_t el_size      = DATA_TYPE_SIZES[type];
-    uint16_t max_inst   = mgr->inst_cursor;
+    type_manager_t *mgr = &mem_contexts[ctx_id].types[type];
+    size_t el_size      = MEM_TYPE_SIZES[type];
+    uint16_t max_inst   = mgr->instances_cursor;
 
     for (uint8_t i = 0; i < count; i++) {
         uint16_t inst_idx, start_idx, items;

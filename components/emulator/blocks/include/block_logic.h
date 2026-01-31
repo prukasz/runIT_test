@@ -5,9 +5,9 @@
 #include <stdbool.h>
 
 
-emu_result_t block_logic_parse(chr_msg_buffer_t *source, block_handle_t *block);
-void block_logic_free(block_handle_t* block);
-emu_result_t block_logic_verify(block_handle_t *block);
+emu_result_t block_logic_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
+void block_logic_free(block_handle_t block);
+emu_result_t block_logic_verify(block_handle_t block);
 
 /****************************************************************************
                             LOGIC BLOCK
@@ -43,5 +43,5 @@ NOTE:
 BLOCK can have only one input: EN input, then it has hardcoded expression like "100>101"
 
 *****************************************************************************/
-emu_result_t block_logic(block_handle_t *block);
+emu_result_t block_logic(block_handle_t block);
 

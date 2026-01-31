@@ -47,8 +47,8 @@ When GPIO_2 rising edge occurs, the SR block will reset, affecting the output st
 
 
 
-emu_result_t block_clock(block_handle_t *block);
-emu_result_t block_clock_parse(chr_msg_buffer_t *source, block_handle_t *block);
-emu_result_t block_clock_verify(block_handle_t *block);
-void block_clock_free(block_handle_t* block);
+emu_result_t block_clock(block_handle_t block);
+emu_result_t block_clock_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
+emu_result_t block_clock_verify(block_handle_t block);
+void block_clock_free(block_handle_t block);
 

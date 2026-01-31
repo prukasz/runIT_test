@@ -4,12 +4,12 @@
 
 /****************************************************************************
                     SET BLOCK
-                ________________
-    -->VAL  [0]|            BOOL|[0]ENO     -->
-    -->IDX  [1]|OPT(U8)         |
-    -->IDX  [2]|OPT(U8) SET     |
-    -->IDX  [3]|OPT(U8)         |
-               |________________|
+                 ________________
+     -->VAL  [0]|            BOOL|[0]ENO     -->
+    -->TARGET[1 |                |
+                |        SET     |
+                |                |
+                |________________|
  
 ****************************************************************************/
 
@@ -21,5 +21,5 @@
  *  static provided in global reference, if there is only input 0 -> Double, then block will set value 
  *  fetching all from global references provded
  */
-emu_result_t block_set(block_handle_t* block_data);
+emu_result_t block_set(block_handle_t block_data);
 

@@ -15,16 +15,19 @@ static emu_code_handle_t global_code_ctx;
  * * @brief execute list of funinctions and corresponding block structs
  */
 uint64_t emu_loop_iterator;
+
+#undef OWNER
+#define OWNER EMU_OWNER_emu_execute_code
 static emu_result_t emu_execute_code(emu_code_handle_t code){
 
     emu_result_t res = {.code = EMU_OK};
  
     //don't execute if code is null
-    if (!code) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_execute_code, 0, 0, TAG, "Block struct list is NULL");}
+    if (!code) {RET_E(EMU_ERR_NULL_PTR, "Block struct list is NULL");}
     
     //execute all blocks in list
     for (emu_loop_iterator = 0; emu_loop_iterator < code->total_blocks; emu_loop_iterator++) {
-        EMU_REPORT(EMU_LOG_executing_block, EMU_OWNER_emu_execute_code, emu_loop_iterator, TAG, "Executing block %lld", emu_loop_iterator);
+        REP_ND(EMU_LOG_executing_block, emu_loop_iterator, 0, "Executing block %lld", emu_loop_iterator);
 
         //we need to reset outputs updated status before execution of block to ensure proper tracking of updates
         emu_block_reset_outputs_status(code->blocks_list[emu_loop_iterator]);
@@ -35,14 +38,14 @@ static emu_result_t emu_execute_code(emu_code_handle_t code){
             
             //check for errors return only if abort flag is set
             if (res.abort){
-                EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_execute_code, emu_loop_iterator, ++res.depth, TAG, 
+                RET_ED(res.code, emu_loop_iterator, ++res.depth, 
                                     "Block %lld (error owner idx: %d) failed during execution, error: %s", 
                                     emu_loop_iterator, res.owner_idx, EMU_ERR_TO_STR(res.code));
             }
 
         //If watchdog triggered during execution of block, abort further execution
         } else if(emu_loop_wtd_status()){
-            EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_WTD_TRIGGERED, EMU_OWNER_emu_execute_code, emu_loop_iterator, 0, TAG, 
+            RET_ED(EMU_ERR_BLOCK_WTD_TRIGGERED, emu_loop_iterator, 0, 
                                 "While executing loop %lld, after block %lld, watchdog triggered, total running time %lld ms, wtd is set to %lld ms",
                                 emu_loop_get_iteration(), emu_loop_iterator,
                                 emu_loop_get_time(), (uint64_t)(emu_loop_get_wtd_max_skipped() * emu_loop_get_period()) / 1000);

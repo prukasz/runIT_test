@@ -62,6 +62,7 @@ typedef enum {
     EMU_ERR_CTX_INVALID_ID,
     EMU_ERR_CTX_ALREADY_CREATED,
     EMU_ERR_INVALID_PACKET_SIZE,
+    EMU_ERR_SEQUENCE_VIOLATION,
 
 
 } emu_err_t;
@@ -95,6 +96,7 @@ typedef enum {
     EMU_OWNER_emu_loop_stop,
     EMU_OWNER_emu_loop_set_period,
     EMU_OWNER_emu_loop_run_once,
+    EMU_OWNER_emu_loop_deinit,
     EMU_OWNER_emu_execute_code,
     EMU_OWNER_interface_execute_loop_start_execution,
     EMU_OWNER_interface_execute_loop_stop_execution,
@@ -140,6 +142,10 @@ typedef enum {
     EMU_OWNER_emu_mem_fill_instance_scalar,
     EMU_OWNER_emu_mem_fill_instance_array,
     EMU_OWNER_emu_mem_parse_access_create,
+    EMU_OWNER_parse_cfg,
+    EMU_OWNER_emu_block_parse_input,
+    EMU_OWNER_emu_block_parse_output,
+    EMU_OWNER_parse_block_data,
 
 }emu_owner_t;
 
