@@ -437,7 +437,7 @@ if __name__ == "__main__":
     # Add for loop (idx 0, 100 iterations, chain_len=2, always active)
     for_loop = code.add_for(
         idx=0,
-        chain_len=2,  # Chain contains 2 blocks (math and set)
+        chain_len=3,  # Chain contains 2 blocks (math and set)
         start=0.0,
         limit=999.0,  # 100 iterations
         step=1.0,
@@ -458,12 +458,12 @@ if __name__ == "__main__":
         en=math.out[0]  # Controlled by for loop
     )
     
-    # Add set block (idx 2) - part of for loop chain
-    # set_blk = code.add_set(
-    #     idx=3,
-    #     target=code.ref("output"),
-    #     value=math2.out[1]  # RESULT
-    # )
+    #Add set block (idx 2) - part of for loop chain
+    set_blk = code.add_set(
+        idx=3,
+        target=code.ref("output"),
+        value=math2.out[1]  # RESULT
+    )
     
     print(f"\n{code}")
     print(f"Blocks: {[str(b) for b in code.get_blocks_sorted()]}")
