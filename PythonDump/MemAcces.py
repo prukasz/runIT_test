@@ -302,3 +302,4 @@ if __name__ == "__main__":
     print("  Bytes 2-3: instance_idx (uint16)")
     print("  Then for each dim: uint16 if static, or recursive packet if dynamic")
     print("=" * 60)
+

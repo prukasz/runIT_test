@@ -1,7 +1,7 @@
 #include "block_selector.h"
-#include "emulator_blocks.h"
+#include "emu_blocks.h"
 #include "string.h"
-#include "emulator_logging.h"
+#include "emu_logging.h"
 
 static const char *TAG = __FILE_NAME__;
 
@@ -120,4 +120,5 @@ emu_result_t block_selector_verify(block_handle_t block) {
     
     RET_OKD(block->cfg.block_idx, "Selector verified: %d output refs", cfg->out_cnt);
 }
+
 

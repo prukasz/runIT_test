@@ -1,9 +1,9 @@
 #pragma once 
 #include "error_types.h"
-#include "types_info.h"
+#include "emu_types_info.h"
 #include "error_macros.h"
 #include "esp_log.h"
-#include "emulator_logs_config.h"
+#include "emu_logs_config.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
@@ -30,3 +30,4 @@ extern TaskHandle_t logger_task_handle;
 
 // Logger Task Initialization
 BaseType_t logger_task_init(void);
+

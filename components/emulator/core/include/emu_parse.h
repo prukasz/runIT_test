@@ -2,7 +2,7 @@
 #include "error_types.h"
 #include "gatt_buff.h"
 #include "order_types.h"
-#include "emulator_body.h"
+#include "emu_body.h"
 
 typedef enum{
     PACKET_H_CONTEXT_CFG          = 0xF0,
@@ -31,5 +31,6 @@ extern emu_parse_func parse_dispatch_table[255];
  * @param extra_arg extra argument to provide to parser
  */
 emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_code_handle_t code_handle, void* extra_arg);
+
 
 

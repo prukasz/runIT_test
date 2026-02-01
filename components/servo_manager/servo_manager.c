@@ -127,3 +127,4 @@ esp_err_t servo_manager_neutral(uint8_t gpio){
     ESP_LOGI(TAG, "servo duty %d", pca9685.channel_pwm_value[gpio]);
     return ESP_OK;
 }
+

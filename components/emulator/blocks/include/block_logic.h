@@ -1,6 +1,6 @@
 #pragma once
-#include "emulator_variables_acces.h"
-#include "emulator_logging.h"
+#include "emu_variables_acces.h"
+#include "emu_logging.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -44,4 +44,5 @@ BLOCK can have only one input: EN input, then it has hardcoded expression like "
 
 *****************************************************************************/
 emu_result_t block_logic(block_handle_t block);
+
 

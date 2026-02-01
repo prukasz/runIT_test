@@ -127,3 +127,4 @@ class block_packet_id_t(IntEnum):
     
     # Dynamic option packets (0x20+)
     PKT_OPTIONS_BASE   = 0x20  # Selector options: 0x20 + option_index
+

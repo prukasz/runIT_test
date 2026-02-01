@@ -1,5 +1,5 @@
 #pragma once
-#include "emulator_types.h"
+#include "emu_types.h"
 #include <string.h>
 #include "mem_types.h"
 
@@ -45,5 +45,6 @@ static inline double parse_get_d(const uint8_t *data, uint16_t offset) {
     memcpy(&tmp, data + offset, sizeof(double));
     return tmp;
 }
+
 
 

@@ -7,9 +7,9 @@
 #include "driver/i2c_master.h"
 #include "servo_manager.h"
 #include "esc_manager.h"
-#include "emulator_loop.h"
-#include "emulator_interface.h"
-#include "emulator_types.h"
+#include "emu_loop.h"
+#include "emu_interface.h"
+#include "emu_types.h"
 
 
 
@@ -99,5 +99,6 @@ void app_main(void) {
         taskYIELD();
     }
 }
+
 
 

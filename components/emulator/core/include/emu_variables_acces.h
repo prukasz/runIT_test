@@ -1,6 +1,6 @@
 #pragma once 
-#include "emulator_variables.h"
-#include "emulator_logging.h"
+#include "emu_variables.h"
+#include "emu_logging.h"
 #include <stdint.h>
 #include <math.h>
 #include <stdbool.h>
@@ -193,3 +193,4 @@ static __always_inline float emu_var_to_f(mem_var_t v) {
     } \
     _res; \
 })
+

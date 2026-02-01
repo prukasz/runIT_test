@@ -77,3 +77,4 @@ void chr_msg_buffer_clear(chr_msg_buffer_t *buf)
     buf->count = 0;
     ESP_LOGI(TAG, "Message buffer cleared");
 }
+

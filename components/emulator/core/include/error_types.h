@@ -303,3 +303,4 @@ typedef struct {
      */
     uint64_t    cycle;
 } emu_result_t;
+

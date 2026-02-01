@@ -1,10 +1,10 @@
 #pragma once
-#include "emulator_types.h"
-#include "emulator_interface.h"
-#include "emulator_variables.h"
-#include "emulator_logging.h"
-#include "emulator_body.h"
-#include "emulator_variables_acces.h"
+#include "emu_types.h"
+#include "emu_interface.h"
+#include "emu_variables.h"
+#include "emu_logging.h"
+#include "emu_body.h"
+#include "emu_variables_acces.h"
 
 /**
  * @brief Block data packet IDs - identifies type of data in PACKET_H_BLOCK_DATA packets

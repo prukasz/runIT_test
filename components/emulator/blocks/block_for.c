@@ -1,9 +1,9 @@
 #include "block_for.h"
-#include "emulator_blocks.h"
-#include "emulator_variables_acces.h"
+#include "emu_blocks.h"
+#include "emu_variables_acces.h"
 #include "blocks_functions_list.h"
-#include "emulator_loop.h" 
-#include "emulator_body.h"
+#include "emu_loop.h" 
+#include "emu_body.h"
 #include "esp_log.h"
 #include <math.h>
 #include <float.h>

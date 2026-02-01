@@ -1,4 +1,4 @@
-#include "types_info.h"
+#include "emu_types_info.h"
 #include <stdbool.h>
 
 const uint8_t MEM_TYPE_SIZES[DATA_TYPES_CNT] = {
@@ -232,4 +232,5 @@ const char* EMU_ORDER_TO_STR(emu_order_t order) {
         default:                        return "UNKNOWN_ORDER";
     }
 }
+
 

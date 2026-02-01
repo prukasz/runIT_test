@@ -5,8 +5,8 @@
 #include <freertos/ringbuf.h>
 #include <esp_log.h>
 #include "error_types.h"
-#include "emulator_loop.h"
-#include "emulator_logs_config.h"
+#include "emu_loop.h"
+#include "emu_logs_config.h"
 
 // --- Global Queue Handles ---
 extern RingbufHandle_t error_logs_buff_t;
@@ -314,6 +314,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 #define REP_WD(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define REP_ND(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define REP_OKD(block_idx, msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
+
 
 
 

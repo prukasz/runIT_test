@@ -228,3 +228,4 @@ class Block:
     def __repr__(self) -> str:
         return (f"Block(idx={self.idx}, type={self.block_type.name}, "
                 f"in={len(self.in_conn)}, q={len(self.q_conn)})")
+

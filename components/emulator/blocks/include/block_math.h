@@ -1,4 +1,4 @@
-#include "emulator_variables_acces.h"
+#include "emu_variables_acces.h"
 
 emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
 void block_math_free(block_handle_t block);
@@ -48,3 +48,4 @@ BLOCK can have only one input: EN input, then it has hardcoded expression like "
 *@brief compute block - handling math operations
 */
 emu_result_t block_math(block_handle_t src);
+

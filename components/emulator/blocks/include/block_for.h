@@ -1,6 +1,6 @@
 #pragma once 
-#include "emulator_blocks.h"
-#include "emulator_logging.h"
+#include "emu_blocks.h"
+#include "emu_logging.h"
 
 
 

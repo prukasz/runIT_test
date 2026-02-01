@@ -1,5 +1,5 @@
 #pragma once
-#include "emulator_logging.h"
+#include "emu_logging.h"
 #include "mem_types.h"
 #include "gatt_buff.h"
 
@@ -69,6 +69,7 @@ emu_err_t emu_mem_fill_instance_scalar_fast(const uint8_t* data);
  * @note This version may not be complete / optimised
  */
 emu_err_t emu_mem_fill_instance_array_fast(const uint8_t* data);
+
 
 
 

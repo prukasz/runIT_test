@@ -12,3 +12,4 @@ static const ble_uuid128_t uuid_svc_emu =
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
     
 static const ble_uuid16_t uuid_chr_user_desc = BLE_UUID16_INIT(0x2901);
+

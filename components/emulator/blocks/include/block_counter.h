@@ -1,7 +1,7 @@
 #pragma once
-#include "emulator_variables_acces.h"
-#include "emulator_logging.h"
-#include "emulator_blocks.h"
+#include "emu_variables_acces.h"
+#include "emu_logging.h"
+#include "emu_blocks.h"
 
 /****************************************************************************
                 COUNTER BLOCK
@@ -56,3 +56,4 @@ emu_result_t block_counter(block_handle_t block);
 emu_result_t block_counter_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
 emu_result_t block_counter_verify(block_handle_t block);
 void block_counter_free(block_handle_t block);
+

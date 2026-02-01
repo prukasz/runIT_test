@@ -365,3 +365,4 @@ if __name__ == "__main__":
     print("  Outputs: [ENO (bool), RESULT (float)]")
     print("  Expression evaluated using RPN instructions")
     print("=" * 60)
+

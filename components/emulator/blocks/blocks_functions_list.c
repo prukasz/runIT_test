@@ -55,3 +55,4 @@ emu_block_verify_func emu_block_verify_table[255]={
     [BLOCK_CLOCK]=block_clock_verify
 };
 
+

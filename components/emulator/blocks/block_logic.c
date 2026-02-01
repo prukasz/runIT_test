@@ -1,7 +1,7 @@
 #include "block_logic.h"
-#include "emulator_logging.h"
-#include "emulator_variables_acces.h"
-#include "emulator_blocks.h" 
+#include "emu_logging.h"
+#include "emu_variables_acces.h"
+#include "emu_blocks.h" 
 #include "esp_log.h"
 #include <math.h>
 #include <float.h>

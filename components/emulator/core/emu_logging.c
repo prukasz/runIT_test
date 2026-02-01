@@ -1,4 +1,4 @@
-#include "emulator_logging.h"
+#include "emu_logging.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -13,7 +13,7 @@ TaskHandle_t logger_task_handle = NULL;
 
 
 //todo implement proper logger task
-static const char *TAG = "emulator_logger";
+static const char *TAG = "emu_logger";
 
 static void vLoggerTask(void *pvParameters){
     emu_result_t error_item;
@@ -100,3 +100,4 @@ BaseType_t logger_task_init(void) {
 
     return pdPASS;
 }
+

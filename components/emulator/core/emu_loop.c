@@ -1,13 +1,13 @@
-#include "emulator_loop.h"
-#include "emulator_logging.h"
-#include "emulator_interface.h"
-#include "emulator_body.h"
-#include "emulator_parse.h"
+#include "emu_loop.h"
+#include "emu_logging.h"
+#include "emu_interface.h"
+#include "emu_body.h"
+#include "emu_parse.h"
 #include "string.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 
-static const char *TAG = "EMULATOR_LOOP";
+static const char *TAG = "emu_LOOP";
 
 static const uint32_t stack_depth = 10*1024;
 
@@ -383,3 +383,4 @@ uint64_t emu_loop_get_period() {
     }
     return loop_handle->timer.loop_period;
 }
+

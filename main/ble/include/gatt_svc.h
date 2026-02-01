@@ -3,7 +3,7 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "host/ble_gap.h"
 #include "gatt_buff.h"
-#include "emulator_interface.h"
+#include "emu_interface.h"
 
 
 void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg);
@@ -22,4 +22,5 @@ typedef struct{
 
 void send_indication();
 void chr_send_indication(indicate_status_t *indicate_status, int16_t chr_conn_handle, int16_t chr_val_handle);
+
 

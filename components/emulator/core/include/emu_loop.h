@@ -1,6 +1,6 @@
 #pragma once
 #include "esp_timer.h"
-#include "emulator_types.h"
+#include "emu_types.h"
 
 /*************************************************************************************************************************************************************************
 Emulator loop is responsible for timing and execution control of the blocks flow and

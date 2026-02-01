@@ -1,8 +1,8 @@
 #include "block_clock.h"
-#include "emulator_blocks.h"
-#include "emulator_logging.h"
-#include "emulator_variables_acces.h"
-#include "emulator_loop.h" 
+#include "emu_blocks.h"
+#include "emu_logging.h"
+#include "emu_variables_acces.h"
+#include "emu_loop.h" 
 #include "esp_log.h"
 #include <string.h>
 

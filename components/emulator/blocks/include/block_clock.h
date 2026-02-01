@@ -1,7 +1,7 @@
 #pragma once 
-#include "emulator_logging.h"
-#include "emulator_variables_acces.h"
-#include "emulator_blocks.h"
+#include "emu_logging.h"
+#include "emu_variables_acces.h"
+#include "emu_blocks.h"
 
 
 /****************************************************************************
@@ -51,4 +51,5 @@ emu_result_t block_clock(block_handle_t block);
 emu_result_t block_clock_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
 emu_result_t block_clock_verify(block_handle_t block);
 void block_clock_free(block_handle_t block);
+
 

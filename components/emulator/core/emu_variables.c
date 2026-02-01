@@ -1,5 +1,5 @@
-#include "emulator_variables.h"
-#include "emulator_logging.h"
+#include "emu_variables.h"
+#include "emu_logging.h"
 #include <string.h>
 #include "emu_helpers.h"
 

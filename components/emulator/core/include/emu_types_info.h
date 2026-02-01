@@ -19,3 +19,4 @@ extern const char* EMU_DATATYPE_TO_STR[DATA_TYPES_CNT];
 extern const char* EMU_OWNER_TO_STR(emu_owner_t owner);
 extern const char* EMU_LOG_TO_STR(emu_log_t log);
 
+

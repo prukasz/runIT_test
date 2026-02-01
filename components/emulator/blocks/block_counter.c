@@ -1,7 +1,7 @@
 #include "block_counter.h"
-#include "emulator_blocks.h"
-#include "emulator_logging.h"
-#include "emulator_variables_acces.h"
+#include "emu_blocks.h"
+#include "emu_logging.h"
+#include "emu_variables_acces.h"
 #include <string.h>
 
 static const char* TAG = __FILE_NAME__;
@@ -174,5 +174,6 @@ void block_counter_free(block_handle_t block){
     }
     return;
 }
+
 
 

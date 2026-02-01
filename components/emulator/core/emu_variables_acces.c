@@ -1,8 +1,8 @@
-#include "emulator_logging.h"
+#include "emu_logging.h"
 #include "mem_types.h"
 #include "emu_helpers.h"
-#include "emulator_variables.h"
-#include "emulator_variables_acces.h"
+#include "emu_variables.h"
+#include "emu_variables_acces.h"
 #include "string.h"
 static const char* TAG = __FILE_NAME__;
 
@@ -267,5 +267,6 @@ emu_result_t mem_set(const mem_var_t to_set, const mem_access_t *target) {
     
     return EMU_RESULT_OK();
 }
+
 
 

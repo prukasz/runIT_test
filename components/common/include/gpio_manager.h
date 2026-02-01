@@ -32,3 +32,4 @@ typedef enum{
 gpio_manager_pca_mode_t gpio_manager_check_pca9685(uint8_t channel);
 esp_err_t gpio_manager_set_pca9685(uint8_t channel, gpio_manager_pca_mode_t mode);
 gpio_manager_mode_t gpio_manager_check(uint8_t gpio);
+

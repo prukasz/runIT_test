@@ -114,3 +114,4 @@ int ble_gap_configure(void) {
     ble_att_set_preferred_mtu(517);
     return ble_svc_gap_device_name_set(DEVICE_NAME);
 }
+
