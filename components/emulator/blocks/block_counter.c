@@ -52,7 +52,7 @@ emu_result_t block_counter(block_handle_t block) {
 
 
     // RESET (Priority 1)
-    if (block_check_EN(block, IN_2_RESET)) {
+    if (block_check_in_true(block, IN_2_RESET)) {
             data->current_val = data->start;
             data->prev_ctu = false; // Clear edge detection state
             data->prev_ctd = false;
@@ -61,7 +61,7 @@ emu_result_t block_counter(block_handle_t block) {
 
     // CTU
     
-    if (block_check_EN(block, IN_0_CTU)) {
+    if (block_check_in_true(block, IN_0_CTU)) {
         
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctu){
@@ -80,7 +80,7 @@ emu_result_t block_counter(block_handle_t block) {
             data->prev_ctu = false;
         }
 
-        if (block_check_EN(block, IN_1_CTD)) {
+        if (block_check_in_true(block, IN_1_CTD)) {
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctd){
                 data->current_val -= data->step;

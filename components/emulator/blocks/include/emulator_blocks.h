@@ -57,7 +57,7 @@ emu_result_t emu_block_parse_create_list(const uint8_t *data, const uint16_t dat
  * @param data packet buff (skip header)
  * @param data_len packet buff len (-header len)
  * @param emu_code_handle code handle where block will be created
- * @note Packet [uint16_t block_idx] + [uint16_t in_connected_mask] + [uint8_t block_type] + [uint8_t in_cnt] + [uint8_t q_cnt]
+ * @note Packet block_data_t.cfg structure (packed)
  */ 
 emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t data_len, void * emu_code_handle);
 
@@ -122,14 +122,14 @@ static __always_inline bool block_in_updated(block_handle_t block, uint8_t num) 
 /**
  * @brief This wrapper is made to eaisly check is input updated and is value true (EN conditions)
 */
-static __always_inline bool block_check_EN(block_handle_t block, uint8_t num) {
+static __always_inline bool block_check_in_true(block_handle_t block, uint8_t num) {
     if (!block_in_updated(block, num)) {return false;}
     bool en = false; 
     emu_result_t err = MEM_GET(&en, block->inputs[num]);
 
     //we report error but still return the value (false if error occurs)
     if (unlikely(err.code != EMU_OK)) {
-        EMU_REPORT_ERROR_WARN(err.code, EMU_OWNER_block_check_EN, block->cfg.block_idx, 1,  "block_check_EN", "Failed to get EN value block %d", block->cfg.block_idx);
+        EMU_REPORT_ERROR_WARN(err.code, EMU_OWNER_block_check_EN, block->cfg.block_idx, 1,  "block_check_in_true", "Failed to get EN value block %d", block->cfg.block_idx);
     }
     return en;
 }

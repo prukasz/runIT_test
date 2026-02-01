@@ -149,7 +149,7 @@ emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_
 emu_result_t block_math(block_handle_t block){
     emu_result_t res = {.code = EMU_OK};
     if (!emu_block_check_inputs_updated(block)) { RET_OKD(block->cfg.block_idx, "Block Disabled"); }
-    if(!block_check_EN(block, 0)){ RET_OKD(block->cfg.block_idx, "Block Disabled"); }
+    if(!block_check_in_true(block, 0)){ RET_OKD(block->cfg.block_idx, "Block Disabled"); }
     
     expression_t* eval = (expression_t*)block->custom_data;
     float stack[16];
@@ -203,7 +203,6 @@ emu_result_t block_math(block_handle_t block){
     // Set Outputs
     mem_var_t v_eno = { .type = MEM_B, .data.val.b = true };
     res = block_set_output(block, v_eno, 0);
-    LOG_I(TAG, "[%d]result %f", block->cfg.block_idx, result);
     mem_var_t v_res = { .type = MEM_F, .data.val.f = result };
     res = block_set_output(block, v_res, 1);
     if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, 0, "Output acces error %s", EMU_ERR_TO_STR(res.code));}

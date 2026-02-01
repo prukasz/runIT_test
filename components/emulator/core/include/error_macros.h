@@ -9,122 +9,124 @@
 #include "emulator_logs_config.h"
 
 // --- Global Queue Handles ---
-extern RingbufHandle_t error_logs_queue_t;
-extern RingbufHandle_t logs_queue_t;
-/**
- * @brief This header contains macros for error handling and logging within the emulator.
- * It provides standardized ways to report errors, warnings, and notices,
- * as well as logging messages with context awareness (ISR safe).
- * It utilizes FreeRTOS queues to push error reports and logs for asynchronous processing.
- * 
- * There are 2 queues:
- * - error_logs_queue_t: for error reports (emu_result_t)
- * - logs_queue_t: for general logs and reports (emu_log_t - on status change mainly)
- * 
- * ERROR MACROS:
- * - EMU_RETURN_CRITICAL: for critical errors that should stop execution
- * - EMU_RETURN_WARN: for warnings that allow execution to continue
- * - EMU_RETURN_NOTICE: for informational notices
- * - EMU_REPORT_CRITICAL: for reporting errors without returning
- * - EMU_REPORT_WARN: for reporting warnings without returning
- * - EMU_REPORT_NOTICE: for reporting notices without returning
- * LOGGING MACROS:
- * - LOG_I, LOG_W, LOG_E, LOG_D: for logging info, warnings, errors, and debug messages directly to ESP log
- * - These macros are ISR safe and check context before logging.
- * - EMU_RETURN_OK: for returning success results we add to logs_queue_t not error queue as its not an error
- * - EMU_REPORT: for reporting success results we add to logs_queue_t not error queue as its not an error
- * 
- * For more details on each macro, see their definitions below.
- * For error code definitions, see error_types.h
- * For log configuration, see emulator_logs_config.h
- * For emu_result_t structure, see error_types.h
- * 
- * PLEASE NOTE:
- * Use constant Enum names for owner_name_enum parameters to ensure consistency in error reporting.
- * Use constant TAG strings for logging to maintain clarity in log outputs.
- * Use constant owner_idx values to identify specific instances (like block IDs). Use 0x0/0xFFFF if not applicable or unknown.
- * Use depth_arg to trace error origin in call stack (0 for direct, increment for each layer).
- * Use constant naming for enums used in reporting to ensure consistency when want to reuse.
- ********************************************************************************************/
+extern RingbufHandle_t error_logs_buff_t;
+extern RingbufHandle_t status_logs_buff_t;
 
 
+//Wrapper macros for logging with function name, can be disabled when not needed 
 
-// --- Logging Macros (ISR Safe) ---
-// If ENABLE_LOGGING is defined, maps to ESP_LOGx.
-// Includes a check for ISR context to prevent crashes during interrupts.
-#ifdef ENABLE_DEBUG_LOGS
+#ifdef ENABLE_LOG_I
     #define LOG_I(tag, fmt, ...) ESP_LOGI(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
-    #define LOG_E(tag, fmt, ...) ESP_LOGE(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
-    #define LOG_W(tag, fmt, ...) ESP_LOGW(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
-    #define LOG_D(tag, fmt, ...) ESP_LOGD(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
-    
-    #define _EMU_LOG_SAFE(level_macro, tag, fmt, ...) \
-        do { \
-            if (!xPortInIsrContext()) { \
-                level_macro(tag, fmt, ##__VA_ARGS__); \
-            } \
-        } while(0)
-#else
+#else 
     #define LOG_I(...)
-    #define LOG_E(...)
-    #define LOG_W(...)
-    #define LOG_D(...)
-    #define _EMU_LOG_SAFE(...)
 #endif
 
-// --- Ring Buffer Push Helper (ISR Safe, overwrite oldest) ---
-// Sends to ring buffer; if full, drops oldest item to keep freshest messages.
-#define _EMU_PUSH_TO_QUEUE(_rb, _struct_ptr) \
-    do { \
-        if ((_rb) != NULL) { \
-            size_t _sz = sizeof(*(_struct_ptr)); \
-            if (xPortInIsrContext()) { \
-                BaseType_t _hpw = pdFALSE; \
-                if (xRingbufferSendFromISR((_rb), (_struct_ptr), _sz, &_hpw) != pdTRUE) { \
-                    size_t _isize = 0; \
-                    void *_old = xRingbufferReceiveFromISR((_rb), &_isize); \
-                    if (_old) { \
-                        vRingbufferReturnItemFromISR((_rb), _old, &_hpw); \
-                        (void)xRingbufferSendFromISR((_rb), (_struct_ptr), _sz, &_hpw); \
-                    } \
-                } \
-            } else { \
-                if (xRingbufferSend((_rb), (_struct_ptr), _sz, 0) != pdTRUE) { \
-                    size_t _isize = 0; \
-                    void *_old = xRingbufferReceive((_rb), &_isize, 0); \
-                    if (_old) { \
-                        vRingbufferReturnItem((_rb), _old); \
-                        (void)xRingbufferSend((_rb), (_struct_ptr), _sz, 0); \
-                    } \
-                } \
-            } \
-        } \
-    } while(0)
+#ifdef ENABLE_LOG_E 
+    #define LOG_E(tag, fmt, ...) ESP_LOGE(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
+#else
+    #define LOG_E(...)
+#endif
 
-// --- Internal Error Builder ---
-// populates emu_result_t and pushes it to the error queue.
-#define _EMU_RETURN_ERR(_code, _owner_name_enum, _owner_custom_idx, _depth_arg, _is_notice, _is_warn, _is_abort) \
-    do { \
+#ifdef ENABLE_LOG_W
+    #define LOG_W(tag, fmt, ...) ESP_LOGW(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
+#else
+    #define LOG_W(...)
+#endif
+
+#ifdef ENABLE_LOG_D
+    #define LOG_D(tag, fmt, ...) ESP_LOGD(tag, "[%s] " fmt, __func__, ##__VA_ARGS__)
+#else
+    #define LOG_D(...)
+#endif
+
+
+#define _EMU_LOG_SAFE(log_x, tag, fmt, ...) ({ \
+        if (likely(!xPortInIsrContext())) { \
+            log_x(tag, fmt, ##__VA_ARGS__); \
+        } \
+    })
+
+static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *struct_ptr, size_t struct_size) {
+    if (rb == NULL) return;
+
+    if (unlikely(xPortInIsrContext())) {
+        BaseType_t hpw = pdFALSE;
+        // Try to send
+        if (xRingbufferSendFromISR(rb, struct_ptr, struct_size, &hpw) != pdTRUE) {
+            // If full, remove old item
+            size_t isize = 0;
+            void *old = xRingbufferReceiveFromISR(rb, &isize);
+            if (old) {
+                vRingbufferReturnItemFromISR(rb, old, &hpw);
+                // Retry send
+                (void)xRingbufferSendFromISR(rb, struct_ptr, struct_size, &hpw);
+            }
+        }
+        if (hpw == pdTRUE) {
+            portYIELD_FROM_ISR();
+        }
+    } else {
+        // Task Context
+        if (xRingbufferSend(rb, struct_ptr, struct_size, 0) != pdTRUE) {
+            size_t isize = 0;
+            void *old = xRingbufferReceive(rb, &isize, 0);
+            if (old) {
+                vRingbufferReturnItem(rb, old);
+                (void)xRingbufferSend(rb, struct_ptr, struct_size, 0);
+            }
+        }
+    }
+}
+
+#define _PUSH_TO_BUF(_rb, _struct_ptr) _push_to_buf_overwrite((_rb), (_struct_ptr), sizeof(*(_struct_ptr)))   
+
+#ifdef ENABLE_ERROR_BUFF
+    #define _TRY_ADD_ERROR(_err_ptr)  _PUSH_TO_BUF(error_logs_buff_t, (_err_ptr))
+#else
+    #define _TRY_ADD_ERROR(_err_ptr)  ((void)0)
+#endif
+
+#ifdef ENABLE_STATUS_BUFF
+    #define _TRY_ADD_STATUS(_rep_ptr)  _PUSH_TO_BUF(status_logs_buff_t, (_rep_ptr))
+#else 
+    #define _TRY_ADD_STATUS(_rep_ptr)  ((void)0)
+#endif
+
+#define _EMU_RETURN_ERR(_code, _owner, _idx, _depth, _is_notice, _is_warn, _is_abort) \
+    ({ \
         emu_result_t _err = { \
-            .code = _code, \
-            .owner = _owner_name_enum, \
-            .owner_idx = _owner_custom_idx, /* Maps to owner_idx (Block ID) */ \
-            .notice = _is_notice, \
-            .warning = _is_warn, \
-            .abort = _is_abort, \
-            .depth = _depth_arg, \
-            .time = emu_loop_get_time(), \
-            .cycle = emu_loop_get_iteration() \
+            .code      = (_code), \
+            .owner     = (_owner), \
+            .owner_idx = (_idx),        /* Maps to owner_idx (Block ID) */ \
+            .notice    = (_is_notice), \
+            .warning   = (_is_warn), \
+            .abort     = (_is_abort), \
+            .depth     = (_depth), \
+            .time      = emu_loop_get_time(), \
+            .cycle     = emu_loop_get_iteration() \
         }; \
-        _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
+        _TRY_ADD_ERROR(&_err); \
         return _err; \
-    } while(0)  
+    })
 
 /*********************************************************************************************
 
                         PUBLIC MACOROS FOR REPORTING AND ERRORS
 
 *******************************************************************************************/
+
+#ifdef ENABLE_LOG_X_FROM_ERROR_MACROS
+    #define _LOG_X_FROM_ERR(log_x, tag, fmt, ...) _EMU_LOG_SAFE(log_x, tag, fmt, ##__VA_ARGS__)
+#else
+    #define _LOG_X_FROM_ERR(log_x, tag, fmt, ...) ((void)0)
+#endif
+
+#ifdef ENABLE_LOG_X_FROM_STATUS_MACROS
+    #define _LOG_X_FROM_STAT(log_x, tag, fmt, ...) _EMU_LOG_SAFE(log_x, tag, fmt, ##__VA_ARGS__)
+#else
+    #define _LOG_X_FROM_STAT(log_x, tag, fmt, ...) ((void)0)
+#endif
+
 
     /**
      * @brief Critical: Code should handle this error and stop execution
@@ -136,10 +138,10 @@ extern RingbufHandle_t logs_queue_t;
      * @param fmt standard log fmt
      */
 #define EMU_RETURN_CRITICAL(code, owner_name_enum, owner_idx, depth_arg, tag, fmt, ...) \
-    do { \
-        _EMU_LOG_SAFE(LOG_E, tag, "CRITICAL: " fmt, ##__VA_ARGS__); \
+    ({ \
+        _LOG_X_FROM_ERR(LOG_E, tag, "CRITICAL: " fmt, ##__VA_ARGS__); \
         _EMU_RETURN_ERR(code, owner_name_enum, owner_idx, depth_arg, 0, 0, 1); \
-    } while(0)
+    })
 
     /**
      * @brief Warning: Suspicious state but execution continues (warning=1)
@@ -151,10 +153,10 @@ extern RingbufHandle_t logs_queue_t;
      * @param fmt standard log fmt
      */
 #define EMU_RETURN_WARN(code, owner_name_enum, owner_idx, depth_arg, tag, fmt, ...) \
-    do { \
-        _EMU_LOG_SAFE(LOG_W, tag, "WARNING: " fmt, ##__VA_ARGS__); \
+    ({ \
+        _LOG_X_FROM_ERR(LOG_W, tag, "WARNING: " fmt, ##__VA_ARGS__); \
         _EMU_RETURN_ERR(code, owner_name_enum, owner_idx, depth_arg, 0, 1, 0); \
-    } while(0)
+    })
 
     /**
      * @brief Notice: Informational event pushed to error queue (notice=1)
@@ -166,10 +168,10 @@ extern RingbufHandle_t logs_queue_t;
      * @param fmt standard log fmt
      */
 #define EMU_RETURN_NOTICE(code, owner_name_enum, owner_idx, depth_arg, tag, fmt, ...) \
-    do { \
-        _EMU_LOG_SAFE(LOG_I, tag, "NOTICE: " fmt, ##__VA_ARGS__); \
+    ({ \
+        _LOG_X_FROM_ERR(LOG_I, tag, "NOTICE: " fmt, ##__VA_ARGS__); \
         _EMU_RETURN_ERR(code, owner_name_enum, owner_idx, depth_arg, 1, 0, 0); \
-    } while(0)
+    })
 
     /**
      * @brief Report an error without returning (no abort, warning, notice)
@@ -182,8 +184,8 @@ extern RingbufHandle_t logs_queue_t;
      */
 
 #define EMU_REPORT_ERROR_CRITICAL(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
-    do { \
-        _EMU_LOG_SAFE(LOG_E, tag, fmt, ##__VA_ARGS__); \
+    ({ \
+        _LOG_X_FROM_ERR(LOG_E, tag, fmt, ##__VA_ARGS__); \
         emu_result_t _err = { \
             .code = code_arg, \
             .owner = owner_name_enum, \
@@ -195,12 +197,12 @@ extern RingbufHandle_t logs_queue_t;
             .time = emu_loop_get_time(), \
             .cycle = emu_loop_get_iteration() \
         }; \
-        _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
-    } while(0)
+        _TRY_ADD_ERROR(&_err); \
+    }) 
 
 #define EMU_REPORT_ERROR_WARN(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
-    do { \
-        _EMU_LOG_SAFE(LOG_W, tag, fmt, ##__VA_ARGS__); \
+    ({ \
+        _LOG_X_FROM_ERR(LOG_W, tag, fmt, ##__VA_ARGS__); \
         emu_result_t _err = { \
             .code = code_arg, \
             .owner = owner_name_enum, \
@@ -212,12 +214,12 @@ extern RingbufHandle_t logs_queue_t;
             .time = emu_loop_get_time(), \
             .cycle = emu_loop_get_iteration() \
         }; \
-        _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
-    } while(0)
+        _TRY_ADD_ERROR(&_err); \
+    })
 
 #define EMU_REPORT_ERROR_NOTICE(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
-    do { \
-        _EMU_LOG_SAFE(LOG_I, tag, fmt, ##__VA_ARGS__); \
+    ({ \
+        _LOG_X_FROM_ERR(LOG_I, tag, fmt, ##__VA_ARGS__); \
         emu_result_t _err = { \
             .code = code_arg, \
             .owner = owner_name_enum, \
@@ -229,13 +231,11 @@ extern RingbufHandle_t logs_queue_t;
             .time = emu_loop_get_time(), \
             .cycle = emu_loop_get_iteration() \
         }; \
-        _EMU_PUSH_TO_QUEUE(error_logs_queue_t, &_err); \
-    } while(0)
+        _TRY_ADD_ERROR(&_err); \
+    })
 
 
-
-
-#ifdef ENABLE_REPORT
+#ifdef ENABLE_STATUS_BUFF
     /* Returns EMU_OK and pushes a report to log_queue */
     /**
      * @brief Return EMU_OK code and push logs if enabled
@@ -246,8 +246,8 @@ extern RingbufHandle_t logs_queue_t;
      * @param fmt standard log fmt
      */
     #define EMU_RETURN_OK(log_msg_enum, owner_name_enum, owner_custom_idx,  tag, fmt, ...) \
-        do { \
-            _EMU_LOG_SAFE(LOG_I, tag, "OK: " fmt, ##__VA_ARGS__); \
+        ({ \
+            _LOG_X_FROM_STAT(LOG_I, tag, "OK: " fmt, ##__VA_ARGS__); \
             emu_report_t _rep = { \
                 .log = log_msg_enum, \
                 .owner = owner_name_enum, \
@@ -255,9 +255,9 @@ extern RingbufHandle_t logs_queue_t;
                 .time = emu_loop_get_time(), \
                 .cycle = emu_loop_get_iteration() \
             }; \
-            _EMU_PUSH_TO_QUEUE(logs_queue_t, &_rep); \
+            _TRY_ADD_STATUS(&_rep); \
             return (emu_result_t){ .code = EMU_OK }; \
-        } while(0)
+        })
 
      /**
      * @brief Push logs if enabled (no return)
@@ -268,7 +268,7 @@ extern RingbufHandle_t logs_queue_t;
      * @param fmt standard log fmt
      */
     #define EMU_REPORT(log_msg_enum, owner_name_enum, owner_custom_idx, tag, fmt, ...) \
-        do { \
+        ({ \
             _EMU_LOG_SAFE(LOG_I, tag, "OK: " fmt, ##__VA_ARGS__); \
             emu_report_t _rep = { \
                 .log = log_msg_enum, \
@@ -277,53 +277,42 @@ extern RingbufHandle_t logs_queue_t;
                 .time = emu_loop_get_time(), \
                 .cycle = emu_loop_get_iteration() \
             }; \
-            _EMU_PUSH_TO_QUEUE(logs_queue_t, &_rep); \
-        } while(0)
+            _TRY_ADD_STATUS(&_rep); \
+        })
 #else
-    #define EMU_RETURN_OK(owner_name_enum, log_msg_enum, tag, fmt, ...) \
-        do { return (emu_result_t){ .code = EMU_OK }; } while(0)
+    #define EMU_RETURN_OK(log_msg_enum, owner_name_enum, owner_custom_idx, tag, fmt, ...) return (emu_result_t){ .code = EMU_OK }
 
-    #define EMU_REPORT(...) do {} while(0)
+    #define EMU_REPORT(...) ((void)0)
 #endif
 
 #define EMU_RESULT_OK() ((emu_result_t){ .code = EMU_OK })
 
-// --- ULTRA-SIMPLIFIED MACROS ---
-// TAG is already defined per-file as: static const char* TAG = __FILE_NAME__;
-// Before each function: #undef OWNER
-//                       #define OWNER EMU_OWNER_function_name
-// (undef is safe even if OWNER not defined)
+/************************************************************************************************************ *
+*                      SHORTCUT MACROS FOR ERROR HANDLING "D": means with depth and block idx                 *
+/************************************************************************************************************ */
 
 #define RET_E(code, msg, ...) EMU_RETURN_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
 #define RET_W(code, msg, ...) EMU_RETURN_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
 #define RET_N(code, msg, ...) EMU_RETURN_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+#define RET_OK(msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
 
 #define RET_ED(code, block_idx, depth, msg, ...) EMU_RETURN_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_WD(code, block_idx, depth, msg, ...) EMU_RETURN_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_ND(code, block_idx, depth, msg, ...) EMU_RETURN_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+#define RET_OKD(block_idx, msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
 
-#ifdef ENABLE_REPORT
-    #define RET_OK(msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
-    #define RET_OKD(block_idx, msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
 
-    #define REP_E(code, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
-    #define REP_W(code, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
-    #define REP_N(code, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
-    #define REP_ED(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
-    #define REP_WD(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
-    #define REP_ND(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
-    #define REP_OK(msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
-    #define REP_OKD(block_idx, msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
-#else
-    #define RET_OK(...) do { return (emu_result_t){ .code = EMU_OK }; } while(0)
-    #define RET_OKD(...) do { return (emu_result_t){ .code = EMU_OK }; } while(0)
-    #define REP_E(...) do {} while(0)
-    #define REP_W(...) do {} while(0)
-    #define REP_N(...) do {} while(0)
-    #define REP_ED(...) do {} while(0)
-    #define REP_WD(...) do {} while(0)
-    #define REP_ND(...) do {} while(0)
-    #define REP_OK(...) do {} while(0)
-    #define REP_OKD(...) do {} while(0)
-#endif
+
+#define REP_E(code, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+#define REP_W(code, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+#define REP_N(code, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+#define REP_OK(msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
+#define REP_MSG(log_enum, msg, ...) EMU_REPORT(log_enum, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
+
+#define REP_ED(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+#define REP_WD(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+#define REP_ND(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+#define REP_OKD(block_idx, msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
+
+
 

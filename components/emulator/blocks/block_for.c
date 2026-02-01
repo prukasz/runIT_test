@@ -70,7 +70,7 @@ static inline bool flt_eq(float a, float b) {
 emu_result_t block_for(block_handle_t src) {
     emu_result_t res = {.code = EMU_OK};
     
-    bool EN = block_check_EN(src, 0);
+    bool EN = block_check_in_true(src, 0);
     
     if (!EN) { RET_OKD(src->cfg.block_idx, "Block Disabled"); }
     block_for_handle_t* config = (block_for_handle_t*)src->custom_data;

@@ -57,7 +57,7 @@ emu_result_t block_timer(block_handle_t block) {
     block_timer_t* data = (block_timer_t*)block->custom_data;
     emu_result_t res = EMU_RESULT_OK();
 
-    bool IN = block_check_EN(block, BLOCK_TIMER_IN_EN);
+    bool IN = block_check_in_true(block, BLOCK_TIMER_IN_EN);
 
     // RST (Reset)
     bool RST = false;

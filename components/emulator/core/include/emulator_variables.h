@@ -18,7 +18,7 @@ extern mem_context_t mem_contexts[MAX_CONTEXTS];
  * @param data_len packet buff len (-header len)
  * @param nothing pass NULL
  * @return emu_result_t.code = EMU_OK when success, else look emu_result_t struct def
- * @note Packet [uint8_t context id] TYPES_CNT(9)*([uint32_t heap_elements]+[uint16_t max_instances]+[uint16_t max_dims])
+ * @note Packet [uint8_t context id] TYPES_CNT(7)*([uint32_t heap_elements]+[uint16_t max_instances]+[uint16_t max_dims])
  */
 emu_result_t emu_mem_parse_create_context(const uint8_t *data,const uint16_t data_len, void *nothing);
 

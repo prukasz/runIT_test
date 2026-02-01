@@ -17,6 +17,7 @@ typedef enum {
 
     ORD_PARSE_LOOP_CFG           = 0xAAA0,     //Create loop with provided config
     ORD_PARSE_CODE_CFG           = 0xAAAA,  //Create code context with provided config (block list)
+    ORD_PARSE_ACCESS_CFG         = 0xAAAB,  //Create access instances storage
 
     ORD_PARSE_BLOCK_HEADER       = 0xAAB0,
     ORD_PARSE_BLOCK_INPUTS       = 0xAAB1,

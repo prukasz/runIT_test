@@ -10,20 +10,20 @@
 
 /*********************************************************************************************** *
 IDEA: we have 2 structs for logging: emu_result_t for errors and emu_report_t for reports / success logs
-We have 2 queues: error_logs_queue_t and logs_queue_t (if ENABLE_REPORT is defined)
+We have 2 ring buffers: error_logs_buff_t and status_logs_buff_t (if ENABLE_STATUS_BUFF is defined)
 
-Now we can read errors directly via serial console (ESP_LOGx) or sed them via BLE to app 
+Now we can read errors directly via serial console (ESP_LOGx) or send them via BLE to app 
 
-W can also read reports if ENABLE_REPORT is defined then we can send reports to app as well 
+We can also read reports if ENABLE_STATUS_BUFF is defined then we can send reports to app as well 
 
-LIVEDEBBUGING: WE can enable ENABLE_DEBUG_LOGS to have extra logs in serial console for debugging purposes
+LIVEDEBUGGING: We can enable ENABLE_LOG_X_FROM_ERROR_MACROS and ENABLE_LOG_X_FROM_STATUS_MACROS to have extra logs in serial console for debugging purposes
 
 *****************************************************************************************************/
 
 
 
-extern RingbufHandle_t error_logs_queue_t; 
-extern RingbufHandle_t logs_queue_t;
+extern RingbufHandle_t error_logs_buff_t; 
+extern RingbufHandle_t status_logs_buff_t;
 extern SemaphoreHandle_t logger_request_sem;
 extern SemaphoreHandle_t logger_done_sem;
 extern TaskHandle_t logger_task_handle;

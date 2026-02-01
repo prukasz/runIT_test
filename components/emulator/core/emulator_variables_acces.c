@@ -155,16 +155,17 @@ emu_result_t mem_get(mem_var_t *result, const mem_access_t *search, bool by_refe
     if (likely(search->is_index_resolved)) {
         el_offset = search->resolved_index;
     }
+
     // Slow path: dynamic index resolution
     else if (unlikely(search->indices_cnt > 0)) {
-        // Cache frequently accessed pointers to reduce indirection
+
         uint16_t *dims_pool = mem_contexts[instance->context].types[type].dims_pool;
         uint16_t dims_base = instance->dims_idx;
-        uint16_t stride = 1;  // FIX: was 0, breaking array indexing!
+        uint16_t stride = 1; 
         
         for (int8_t i = search->indices_cnt - 1; i >= 0; i--) {
             uint16_t index_val;
-            uint16_t dim_size = dims_pool[dims_base + i];  // Cache-friendly access
+            uint16_t dim_size = dims_pool[dims_base + i];  
             
             if((search->is_idx_static_mask >> i) & 0x01){
                 index_val = search->indices_values[i].static_index;

@@ -3,9 +3,10 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/ringbuf.h"
+#include "string.h"
 
-RingbufHandle_t error_logs_queue_t=NULL; 
-RingbufHandle_t logs_queue_t=NULL;
+RingbufHandle_t error_logs_buff_t=NULL; 
+RingbufHandle_t status_logs_buff_t=NULL;
 SemaphoreHandle_t logger_request_sem = NULL;
 SemaphoreHandle_t logger_done_sem = NULL;
 TaskHandle_t logger_task_handle = NULL;
@@ -16,19 +17,18 @@ static const char *TAG = "emulator_logger";
 
 static void vLoggerTask(void *pvParameters){
     emu_result_t error_item;
-    #ifdef ENABLE_REPORT
+    #ifdef ENABLE_STATUS_BUFF
         emu_report_t report_item;
     #endif
 
     while (1) {
         // Wait until emulator body notifies logger task
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        // Proceed to dump logs
+        
             // Dump all error logs
-            while (error_logs_queue_t) {
+            while (error_logs_buff_t) {
                 size_t item_size = 0;
-                void *item = xRingbufferReceive(error_logs_queue_t, &item_size, 0);
+                void *item = xRingbufferReceive(error_logs_buff_t, &item_size, 0);
                 if (!item) break;
                 if (item_size == sizeof(emu_result_t)) {
                     memcpy(&error_item, item, sizeof(error_item));
@@ -52,14 +52,14 @@ static void vLoggerTask(void *pvParameters){
                                  error_item.depth, error_item.abort, error_item.warning, error_item.notice);
                     }
                 }
-                vRingbufferReturnItem(error_logs_queue_t, item);
+                vRingbufferReturnItem(error_logs_buff_t, item);
             }
 
-            #ifdef ENABLE_REPORT
+            #ifdef ENABLE_STATUS_BUFF
             // Dump all reports
-            while (logs_queue_t) {
+            while (status_logs_buff_t) {
                 size_t item_size = 0;
-                void *item = xRingbufferReceive(logs_queue_t, &item_size, 0);
+                void *item = xRingbufferReceive(status_logs_buff_t, &item_size, 0);
                 if (!item) break;
                 if (item_size == sizeof(emu_report_t)) {
                     memcpy(&report_item, item, sizeof(report_item));
@@ -67,10 +67,9 @@ static void vLoggerTask(void *pvParameters){
                              EMU_LOG_TO_STR(report_item.log), EMU_OWNER_TO_STR(report_item.owner), report_item.owner_idx,
                              report_item.time, report_item.cycle);
                 }
-                vRingbufferReturnItem(logs_queue_t, item);
+                vRingbufferReturnItem(status_logs_buff_t, item);
             }
             #endif
-
             // Signal done via semaphore (kept for completion signaling)
             if (logger_done_sem) {
                 xSemaphoreGive(logger_done_sem);
@@ -81,16 +80,16 @@ static void vLoggerTask(void *pvParameters){
 
 //todo finish init function
 BaseType_t logger_task_init(void) {
-    error_logs_queue_t = xRingbufferCreate(LOG_QUEUE_SIZE * sizeof(emu_result_t), RINGBUF_TYPE_NOSPLIT);
+    error_logs_buff_t = xRingbufferCreate(LOG_QUEUE_SIZE * sizeof(emu_result_t), RINGBUF_TYPE_NOSPLIT);
 
-    #ifdef ENABLE_REPORT
-    logs_queue_t        = xRingbufferCreate(REPORT_QUEUE_SIZE * sizeof(emu_report_t), RINGBUF_TYPE_NOSPLIT);
+    #ifdef ENABLE_STATUS_BUFF
+    status_logs_buff_t        = xRingbufferCreate(REPORT_QUEUE_SIZE * sizeof(emu_report_t), RINGBUF_TYPE_NOSPLIT);
     #endif
 
     logger_request_sem = xSemaphoreCreateBinary();
     logger_done_sem = xSemaphoreCreateBinary();
 
-    if (error_logs_queue_t == NULL || logger_request_sem == NULL || logger_done_sem == NULL) {
+    if (error_logs_buff_t == NULL || logger_request_sem == NULL || logger_done_sem == NULL) {
         return pdFAIL;
     }
     ESP_LOGI(TAG, "Logger queues and semaphores created");

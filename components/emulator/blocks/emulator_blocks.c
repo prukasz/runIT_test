@@ -67,13 +67,7 @@ emu_result_t emu_block_parse_input(const uint8_t *data, const uint16_t data_len,
     return EMU_RESULT_OK();
 }
 
-/**
- * @brief Parse and assign block output 
- * @param data packet buff (skip header)
- * @param data_len packet buff len (-header len)
- * @param emu_code_handle code handle where block output will be assinged
- * @note Packet [uint16_t block_idx] + [uint8_t q_idx] + mem_access_t parse packet 
- */
+
 #undef OWNER
 #define OWNER EMU_OWNER_emu_block_parse_output
 emu_result_t emu_block_parse_output(const uint8_t *data, const uint16_t data_len, void * emu_code_handle){

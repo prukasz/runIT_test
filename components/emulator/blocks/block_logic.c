@@ -47,7 +47,7 @@ static __always_inline float bool_to_float(bool val) {return val ? 1.0f : 0.0f;}
 emu_result_t block_logic(block_handle_t block) {
     //necessary checks for block execution
     if (!emu_block_check_inputs_updated(block)) {REP_OKD(block->cfg.block_idx, "Block logic %d inactive (EN not updated)", block->cfg.block_idx);}
-    if(!block_check_EN(block, 0)){REP_OKD(block->cfg.block_idx, "Block logic %d inactive (EN not enabled)", block->cfg.block_idx);}
+    if(!block_check_in_true(block, 0)){REP_OKD(block->cfg.block_idx, "Block logic %d inactive (EN not enabled)", block->cfg.block_idx);}
 
     //stack opertatin variables
     logic_expression_t* eval = (logic_expression_t*)block->custom_data;
