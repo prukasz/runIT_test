@@ -52,7 +52,7 @@ Counter will increment each loop cycle while GPIO_2 is active.
 ***************************************************************************/
 
 
-emu_result_t block_counter(block_handle_t *block);
-emu_result_t block_counter_parse(chr_msg_buffer_t *source, block_handle_t *block);
-emu_result_t block_counter_verify(block_handle_t *block);
-void block_counter_free(block_handle_t* block);
+emu_result_t block_counter(block_handle_t block);
+emu_result_t block_counter_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
+emu_result_t block_counter_verify(block_handle_t block);
+void block_counter_free(block_handle_t block);

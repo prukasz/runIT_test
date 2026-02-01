@@ -1,28 +1,24 @@
 #include "types_info.h"
 #include <stdbool.h>
 
-const uint8_t DATA_TYPE_SIZES[DATA_TYPES_CNT] = {
+const uint8_t MEM_TYPE_SIZES[DATA_TYPES_CNT] = {
     sizeof(uint8_t),  // UI8
     sizeof(uint16_t), // UI16
     sizeof(uint32_t), // UI32
-    sizeof(int8_t),   // I8
     sizeof(int16_t),  // I16
     sizeof(int32_t),  // I32
     sizeof(float),    // F
-    sizeof(double),   // D
     sizeof(bool)      // B
 };
 
-const char *EMU_DATATYPE_TO_STR[9] = {
-    "DATA_UI8",
-    "DATA_UI16",
-    "DATA_UI32",
-    "DATA_I8",
-    "DATA_I16",
-    "DATA_I32",
-    "DATA_F",
-    "DATA_D",
-    "DATA_B"
+const char *EMU_DATATYPE_TO_STR[7] = {
+    "MEM_U8",
+    "MEM_U16",
+    "MEM_U32",
+    "MEM_I16",
+    "MEM_I32",
+    "MEM_F",
+    "MEM_B"
 };
 
 /**
@@ -97,6 +93,7 @@ const char* EMU_OWNER_TO_STR(emu_owner_t owner) {
         case EMU_OWNER_emu_loop_stop: return "emu_loop_stop";
         case EMU_OWNER_emu_loop_set_period: return "emu_loop_set_period";
         case EMU_OWNER_emu_loop_run_once: return "emu_loop_run_once";
+        case EMU_OWNER_emu_loop_deinit: return "emu_loop_deinit";
         case EMU_OWNER_emu_execute_code: return "emu_execute_code";
         case EMU_OWNER_interface_execute_loop_start_execution: return "interface_execute_loop_start_execution";
         case EMU_OWNER_interface_execute_loop_stop_execution: return "interface_execute_loop_stop_execution";
@@ -129,7 +126,7 @@ const char* EMU_OWNER_TO_STR(emu_owner_t owner) {
         case EMU_OWNER_mem_access_parse_node_recursive: return "mem_access_parse_node_recursive";
         case EMU_OWNER__resolve_mem_offset: return "_resolve_mem_offset";
         case EMU_OWNER_mem_get: return "mem_get";
-        case EMU_OWNER_block_check_EN: return "block_check_EN";
+        case EMU_OWNER_block_check_EN: return "block_check_in_true";
         default: return "UNKNOWN_OWNER";
     }
 }
@@ -196,6 +193,8 @@ const char* EMU_LOG_TO_STR(emu_log_t log) {
         case EMU_LOG_parsed_block_outputs: return "parsed_block_outputs";
         case EMU_LOG_block_inactive: return "block_inactive";
         case EMU_LOG_finished: return "finished";
+        case EMU_LOG_clock_out_active: return "clock_out_active";
+        case EMU_LOG_clock_out_inactive: return "clock_out_inactive";
         default: return "UNKNOWN_LOG";
     }
 }
@@ -206,12 +205,12 @@ const char* EMU_LOG_TO_STR(emu_log_t log) {
 const char* EMU_ORDER_TO_STR(emu_order_t order) {
     switch (order) {
         // --- PARSER ORDERS ---
-        case ORD_CREATE_CONTEXT:        return "ORD_CREATE_CONTEXT";
-        case ORD_PARSE_VARIABLES:       return "ORD_PARSE_VARIABLES";
-        case ORD_PARSE_VARIABLES_DATA:  return "ORD_PARSE_VARIABLES_DATA";
-        case ORD_EMU_CREATE_BLOCK_LIST: return "ORD_EMU_CREATE_BLOCK_LIST";
-        case ORD_EMU_CREATE_BLOCKS:     return "ORD_EMU_CREATE_BLOCKS";
-        case ORD_CHECK_CODE:            return "ORD_CHECK_CODE";
+        // case ORD_CREATE_CONTEXT:        return "ORD_CREATE_CONTEXT";
+        // case ORD_PARSE_VARIABLES:       return "ORD_PARSE_VARIABLES";
+        // case ORD_PARSE_VARIABLES_DATA:  return "ORD_PARSE_VARIABLES_DATA";
+        // case ORD_EMU_CREATE_BLOCK_LIST: return "ORD_EMU_CREATE_BLOCK_LIST";
+        // case ORD_EMU_CREATE_BLOCKS:     return "ORD_EMU_CREATE_BLOCKS";
+        // case ORD_CHECK_CODE:            return "ORD_CHECK_CODE";
 
         // --- RESET ORDERS ---
         case ORD_RESET_ALL:             return "ORD_RESET_ALL";

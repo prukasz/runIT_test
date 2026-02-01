@@ -13,11 +13,11 @@ typedef enum{
 }counter_cfg_t;
 
 typedef struct{
-    double current_val;
-    double step;
-    double max;
-    double min;
-    double start;
+    float current_val;
+    float step;
+    float max;
+    float min;
+    float start;
     counter_cfg_t cfg;
     bool prev_ctu; 
     bool prev_ctd;
@@ -36,12 +36,12 @@ typedef struct{
 #define OUT_1_VAL       1
 
 
-
-emu_result_t block_counter(block_handle_t *block) {
+#undef OWNER
+#define OWNER EMU_OWNER_block_counter
+emu_result_t block_counter(block_handle_t block) {
 
     counter_handle_t* data = (counter_handle_t*)block->custom_data;
     emu_result_t res;
-    (void)res; // May be used by macros
 
     if (block_in_updated(block, IN_3_STEP)) {MEM_GET(&data->step, block->inputs[IN_3_STEP]);}
 
@@ -52,7 +52,7 @@ emu_result_t block_counter(block_handle_t *block) {
 
 
     // RESET (Priority 1)
-    if (block_check_EN(block, IN_2_RESET)) {
+    if (block_check_in_true(block, IN_2_RESET)) {
             data->current_val = data->start;
             data->prev_ctu = false; // Clear edge detection state
             data->prev_ctd = false;
@@ -61,7 +61,7 @@ emu_result_t block_counter(block_handle_t *block) {
 
     // CTU
     
-    if (block_check_EN(block, IN_0_CTU)) {
+    if (block_check_in_true(block, IN_0_CTU)) {
         
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctu){
@@ -80,7 +80,7 @@ emu_result_t block_counter(block_handle_t *block) {
             data->prev_ctu = false;
         }
 
-        if (block_check_EN(block, IN_1_CTD)) {
+        if (block_check_in_true(block, IN_1_CTD)) {
         if (data->cfg == CFG_ON_RISING) {
             if (!data->prev_ctd){
                 data->current_val -= data->step;
@@ -103,58 +103,70 @@ finish:
     //LOG_I(TAG, "CURRENT, START, STEP, MAX, MIN: %lf, %lf, %lf, %lf, %lf", data->current_val, start, data->step, data->max, data->min);
     // OUT_0: ENO (True/Active)
     LOG_I(TAG, "Setting outputs in counter block");
-    emu_variable_t v_eno = { .type = DATA_B, .data.b = true };
-    res = block_set_output(block, &v_eno, OUT_0_ENO);
-    if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_counter, block->cfg.block_idx, 0, TAG, "Set ENO Error");
+    mem_var_t v_eno = { .type = MEM_B, .data.val.b = true };
+    res = block_set_output(block, v_eno, OUT_0_ENO);
+    if (unlikely(res.code != EMU_OK)) RET_ED(res.code, block->cfg.block_idx, 0, "Set ENO Error");
 
     // OUT_1: VAL (Current Value)
-    emu_variable_t v_val = { .type = DATA_D, .data.d = data->current_val };
-    res = block_set_output(block, &v_val, OUT_1_VAL);
-    if (unlikely(res.code != EMU_OK)) EMU_RETURN_CRITICAL(res.code, EMU_OWNER_block_counter, block->cfg.block_idx, 0, TAG, "Set VAL Error");
+    mem_var_t v_val = { .type = MEM_F, .data.val.f = data->current_val };
+    res = block_set_output(block, v_val, OUT_1_VAL);
+    if (unlikely(res.code != EMU_OK)) RET_ED(res.code, block->cfg.block_idx, 0, "Set VAL Error");
 
     return EMU_RESULT_OK();
 }
 
-emu_result_t block_counter_parse(chr_msg_buffer_t *source, block_handle_t *block) {
-    uint8_t *data;
-    size_t len;
-    size_t buff_size = chr_msg_buffer_size(source);
+#undef OWNER
+#define OWNER EMU_OWNER_block_counter_parse
+emu_result_t block_counter_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block_ptr) {
+    block_handle_t block = (block_handle_t)block_ptr;
+    if (!block) RET_E(EMU_ERR_NULL_PTR, "NULL block");
     
-    for (size_t i = 0; i < buff_size; i++) {
-        chr_msg_buffer_get(source, i, &data, &len);
-        if (len > 5 && data[0] == 0xBB && data[1] == BLOCK_COUNTER && data[2] == EMU_H_BLOCK_PACKET_CUSTOM) {
-            uint16_t block_idx = 0;
-            memcpy(&block_idx, &data[3], 2);
-            if (block_idx == block->cfg.block_idx) {
-
-            block->custom_data = calloc(1, sizeof(counter_handle_t));
-            counter_handle_t* handle = (counter_handle_t*)block->custom_data;
-            if(!handle) {EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_block_counter_parse, block->cfg.block_idx, 0, TAG, "[%d]Null handle ptr", block->cfg.block_idx);}
-            size_t offset = 5; // Skip header bytes
-            handle->cfg = (counter_cfg_t)data[offset++];
-            
-            memcpy(&handle->start, &data[offset], 8); offset += 8;
-            memcpy(&handle->step,  &data[offset], 8); offset += 8;
-            memcpy(&handle->max,   &data[offset], 8); offset += 8;
-            memcpy(&handle->min,   &data[offset], 8); offset += 8;
-            
-            handle->current_val = handle->start;
-            handle->prev_ctu = false;
-            handle->prev_ctd = false;
-
-            return EMU_RESULT_OK();
-            }
-        }
+    // Packet: [packet_id:u8][data...]
+    if (packet_len < 1) RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet too short");
+    
+    uint8_t packet_id = packet_data[0];
+    const uint8_t *payload = &packet_data[1];
+    uint16_t payload_len = packet_len - 1;
+    
+    // Allocate custom data if not exists
+    if (!block->custom_data) {
+        block->custom_data = calloc(1, sizeof(counter_handle_t));
+        if (!block->custom_data) RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "[%d]Null handle ptr", block->cfg.block_idx);
     }
-    EMU_RETURN_WARN(EMU_ERR_PACKET_NOT_FOUND, EMU_OWNER_block_counter_parse, block->cfg.block_idx, 0, TAG, "[%d]Packet not found", block->cfg.block_idx);
-}
-
-emu_result_t block_counter_verify(block_handle_t *block) {
-    if (!block->custom_data) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_block_counter_verify, block->cfg.block_idx, 0, TAG, "Custom Data is NULL %d", block->cfg.block_idx);}
+    
+    counter_handle_t *handle = (counter_handle_t*)block->custom_data;
+    
+    // PKT_CFG (0x01): [mode:u8][start:f32][step:f32][max:f32][min:f32]
+    if (packet_id == BLOCK_PKT_CFG) {
+        if (payload_len < 17) RET_ED(EMU_ERR_PACKET_INCOMPLETE, block->cfg.block_idx, 0, "Config payload too short");
+        
+        size_t offset = 0;
+        handle->cfg = (counter_cfg_t)payload[offset++];
+        
+        memcpy(&handle->start, &payload[offset], 4); offset += 4;
+        memcpy(&handle->step,  &payload[offset], 4); offset += 4;
+        memcpy(&handle->max,   &payload[offset], 4); offset += 4;
+        memcpy(&handle->min,   &payload[offset], 4); offset += 4;
+        
+        handle->current_val = handle->start;
+        handle->prev_ctu = false;
+        handle->prev_ctd = false;
+        
+        LOG_I(TAG, "Counter Config: mode=%d, start=%.2f, step=%.2f, max=%.2f, min=%.2f",
+              handle->cfg, handle->start, handle->step, handle->max, handle->min);
+    }
+    
     return EMU_RESULT_OK();
 }
 
-void block_counter_free(block_handle_t* block){
+#undef OWNER
+#define OWNER EMU_OWNER_block_counter_verify
+emu_result_t block_counter_verify(block_handle_t block) {
+    if (!block->custom_data) {RET_ED(EMU_ERR_NULL_PTR, block->cfg.block_idx, 0, "Custom Data is NULL %d", block->cfg.block_idx);}
+    return EMU_RESULT_OK();
+}
+
+void block_counter_free(block_handle_t block){
     if(block && block->custom_data){
         free(block->custom_data);
         block->custom_data = NULL;

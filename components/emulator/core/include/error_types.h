@@ -58,6 +58,12 @@ typedef enum {
     EMU_ERR_WTD_TRIGGERED           = 0xA000,
     EMU_ERR_MEM_INVALID_ACCESS, 
     EMU_ERR_LOOP_NOT_INITIALIZED,
+    EMU_ERR_BLOCK_SELECTOR_OOB,
+    EMU_ERR_CTX_INVALID_ID,
+    EMU_ERR_CTX_ALREADY_CREATED,
+    EMU_ERR_INVALID_PACKET_SIZE,
+    EMU_ERR_SEQUENCE_VIOLATION,
+
 
 } emu_err_t;
 
@@ -90,6 +96,7 @@ typedef enum {
     EMU_OWNER_emu_loop_stop,
     EMU_OWNER_emu_loop_set_period,
     EMU_OWNER_emu_loop_run_once,
+    EMU_OWNER_emu_loop_deinit,
     EMU_OWNER_emu_execute_code,
     EMU_OWNER_interface_execute_loop_start_execution,
     EMU_OWNER_interface_execute_loop_stop_execution,
@@ -123,6 +130,23 @@ typedef enum {
     EMU_OWNER__resolve_mem_offset,
     EMU_OWNER_mem_get,
     EMU_OWNER_block_check_EN,
+    EMU_OWNER_block_selector,
+    EMU_OWNER_block_selector_parse,
+    EMU_OWNER_block_selector_verify,
+    EMU_OWNER_block_selector_free,
+    EMU_OWNER_mem_context_delete,
+    EMU_OWNER_mem_allocate_context,
+    EMU_OWNER_mem_access_allocate_space,
+
+    EMU_OWNER_mem_parse_instance_packet,
+    EMU_OWNER_emu_mem_fill_instance_scalar,
+    EMU_OWNER_emu_mem_fill_instance_array,
+    EMU_OWNER_emu_mem_parse_access_create,
+    EMU_OWNER_parse_cfg,
+    EMU_OWNER_emu_block_parse_input,
+    EMU_OWNER_emu_block_parse_output,
+    EMU_OWNER_parse_block_data,
+
 }emu_owner_t;
 
 /** 
@@ -192,6 +216,15 @@ typedef enum {
     EMU_LOG_parsed_block_outputs,
     EMU_LOG_block_inactive,
     EMU_LOG_finished,
+    EMU_LOG_block_selector_executed,
+    EMU_LOG_block_selector_verified,
+    EMU_LOG_block_selector_freed,
+    EMU_LOG_block_selector_parsed,
+    EMU_LOG_CTX_DESTROYED,
+    EMU_LOG_ctx_created,
+    EMU_LOG_created_ctx,
+    EMU_LOG_clock_out_active,
+    EMU_LOG_clock_out_inactive,
 } emu_log_t;
 
 

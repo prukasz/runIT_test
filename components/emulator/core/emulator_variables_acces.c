@@ -1,525 +1,271 @@
-#include "emulator_variables_acces.h"
-#include "emulator_blocks.h"
 #include "emulator_logging.h"
 #include "mem_types.h"
-#include <math.h>
-#include <string.h>
-#include <stdlib.h>
+#include "emu_helpers.h"
+#include "emulator_variables.h"
+#include "emulator_variables_acces.h"
+#include "string.h"
+static const char* TAG = __FILE_NAME__;
 
-static const char *TAG_VARS = "EMU_VARS";
-static const char *TAG_REF  = "EMU_REF";
-static const char *TAG      = "EMU_MEM";
+/******************************************************************************************************************************
+ * Slab alocator is common for all mem_access_t struct among code,
+ * total_indices describe extra indices used to fetch value from table
+ * 
+ * 
+ *****************************************************************************************************************************/
 
-extern emu_mem_t* s_mem_contexts[DATA_TYPES_CNT];
+static struct{
+    uint8_t* data_slab;
+    uint32_t capacity;
+    uint32_t next_addr;
+    bool created;
+}mem_access_data;
+#define PKT_ACCES_DATA_SIZE 2*sizeof(uint16_t)
 
-
-/**************************************************************************************************
-*
-* MEMORY POOL (CONTEXTS)
-*
-****************************************************************************************************/
-
-
-/** 
-* @brief stores structs for scalar access
-*/
-typedef struct {
-    uint8_t *buffer;
-    size_t   item_size;
-    size_t   capacity;
-    size_t   used_count;
-    const char *tag;
-} mem_pool_acces_s_t;
-
-
-/** 
-* @brief stores struct for array access
-*/
-typedef struct {
-    uint8_t *buffer;
-    size_t   total_size;
-    size_t   used_bytes;
-    const char *tag;
-} mem_pool_acces_arr_t;
-
-
-//Internal - create pool for scalars access
-static emu_result_t mem_pool_access_scalar_create(mem_pool_acces_s_t *pool, size_t item_size, size_t capacity, const char *tag) {
-    pool->item_size = item_size;
-    pool->capacity = capacity;
-    pool->used_count = 0;
-    pool->tag = tag;
-    pool->buffer = (uint8_t*)malloc(item_size * capacity);
-    //just simple verification
-    if (!pool->buffer) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_ALLOC, EMU_OWNER_mem_pool_access_scalar_create, 0, 0, TAG, "Scalar pool alloc failed for %s", tag);}
-    memset(pool->buffer, 0, item_size * capacity);
-    EMU_RETURN_OK(EMU_LOG_access_pool_allocated, EMU_OWNER_mem_pool_access_scalar_create, 0, TAG, "Scalar pool created for %s (Item Size:%d, Capacity:%d)", tag, (int)item_size, (int)capacity);
-}   
-//just helper we return ptr (next one)
-static void* mem_pool_acces_scalar_alloc(mem_pool_acces_s_t *pool) {
-    if (pool->used_count >= pool->capacity) return NULL;
-    void *ptr = pool->buffer + (pool->used_count * pool->item_size);
-    pool->used_count++;
-    return ptr;
+void mem_access_free_space(void){
+    if (mem_access_data.data_slab) {free(mem_access_data.data_slab);}
+    mem_access_data.data_slab = NULL;
+    mem_access_data.created = 0;
+    mem_access_data.capacity =0;
+    mem_access_data.next_addr=0;
 }
 
-//delete whole pool
-static void mem_pool_acces_scalar_destroy(mem_pool_acces_s_t *pool) {
-    if (pool->buffer) free(pool->buffer);
-    pool->buffer = NULL;
-    pool->used_count = 0;
+#undef OWNER
+#define OWNER EMU_OWNER_mem_access_allocate_space
+emu_result_t mem_access_allocate_space(uint16_t references_count, uint16_t total_indices){
+    uint32_t total_bytes = (references_count* __builtin_align_up(sizeof(mem_access_t),4)) + (total_indices*sizeof(uint32_t));
+    if (mem_access_data.created) {mem_access_free_space();}
+    mem_access_data.data_slab = (uint8_t*)calloc(total_bytes, sizeof(uint8_t));
+    if (!mem_access_data.data_slab){RET_E(EMU_ERR_NO_MEM, "Not enough space for all references");}
+    mem_access_data.created = 1;
+    mem_access_data.capacity = references_count;
+    return EMU_RESULT_OK();
 }
 
-//Create pool of given size for arrays
-static emu_result_t mem_pool_acces_arr_create(mem_pool_acces_arr_t *pool, size_t size, const char *tag) {
-    pool->total_size = size;
-    pool->used_bytes = 0;
-    pool->tag = tag;
-    pool->buffer = (uint8_t*)malloc(size);
-    if (!pool->buffer) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_ALLOC, EMU_OWNER_mem_pool_access_scalar_create,0, 0, TAG, "Array pool alloc failed for %s", tag);}
-    memset(pool->buffer, 0, size);
-    EMU_RETURN_OK(EMU_LOG_access_pool_allocated, EMU_OWNER_mem_pool_access_scalar_create, 0, TAG, "Array pool created for %s (Size:%d B)", tag, (int)size);
-}
-
-//Internal for scalars (gives pointer to start of space of chosen size)
-static void* mem_pool_access_arr_alloc(mem_pool_acces_arr_t *pool, size_t size) {
-    size_t aligned_size = (size + 3) & ~3;
-    if (pool->used_bytes + aligned_size > pool->total_size) return NULL;
-    void *ptr = pool->buffer + pool->used_bytes;
-    pool->used_bytes += aligned_size;
-    return ptr;
-}
-
-//delete pool for arrays
-static void mem_pool_acces_arr_destroy(mem_pool_acces_arr_t *pool) {
-    if (pool->buffer) free(pool->buffer);
-    pool->buffer = NULL;
-    pool->used_bytes = 0;
+mem_access_t* mem_access_new(uint8_t extra_indices){
+    if (!mem_access_data.created) return NULL;
+    //we calculate for ptr but can use space for normal "values"
+    uint8_t size_to_take = sizeof(mem_access_t)+extra_indices*sizeof(mem_access_t*);
+    uint8_t size_aligned = __builtin_align_up(size_to_take, 4);
+    if(size_aligned + mem_access_data.next_addr > mem_access_data.capacity){return NULL;}
+    mem_access_t* tmp = (mem_access_t*)&mem_access_data.data_slab[mem_access_data.next_addr];
+    mem_access_data.next_addr += size_aligned;
+    return tmp;
 }
 
 
-//This function is used within mem_get to resolve array element index by recursive access
-__always_inline static inline emu_err_t _resolve_mem_offset(void *access_node, uint32_t *out_offset, uint8_t *out_type) {
+#undef OWNER
+#define OWNER EMU_OWNER_emu_mem_parse_access_create
+emu_result_t emu_mem_parse_access_create(const uint8_t*data, const uint16_t data_len, void* nothing){
+    if(data_len!=PKT_ACCES_DATA_SIZE){RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet for mem access storage space incomplete");}
+    uint16_t ref_cnt = parse_get_u16(data, 0);
+    uint16_t total_indices = parse_get_u16(data, 2);
+    return mem_access_allocate_space(ref_cnt, total_indices);
+}
 
-    mem_acces_instance_iter_t target;
-    target.raw = (uint8_t*)access_node;
+typedef struct __packed{
+    uint8_t  type       :4;
+    uint8_t  ctx_id     :3;
+    uint8_t  is_index_resolved:1;
+    uint8_t  dims_cnt   :3;
+    uint8_t  idx_type   :3;
+    uint8_t  reserved   :2; 
+    uint16_t instance_idx;
+}access_packet;
 
-    uint8_t  dims_cnt    = target.single->dims_cnt;
-    uint8_t  target_type = target.single->target_type;
-    uint16_t instance_idx  = target.single->instance_idx;
+/**
+ * @brief Parse access struct;
+ * @note packet looks like access_packet + if dims cnt > 0, idx1[access_packet or uin16_t (check idx_type), recursive....][idx2...]
+ */
+emu_err_t emu_mem_parse_access(const uint8_t *data, const uint16_t data_len, uint16_t* idx, mem_access_t **out_ptr) {
+    if (*idx + sizeof(access_packet) > data_len) return EMU_ERR_INVALID_PACKET_SIZE;
+    access_packet head;
+    memcpy(&head, data + *idx, sizeof(access_packet));
+    *idx += sizeof(access_packet);
 
-    *out_type = target_type;
-    emu_mem_t *target_mem = s_mem_contexts[target.single->context_id]; 
-    
-    EMU_REPORT(EMU_LOG_resolving_access, EMU_OWNER__resolve_mem_offset, 0 , TAG, "Resolving access to ctx %d, type %s, idx %d", target.single->context_id, EMU_DATATYPE_TO_STR[target_type], instance_idx);
+    // 3. Allocate this Node
+    mem_access_t* me = mem_access_new(head.dims_cnt);
+    if (!me) return EMU_ERR_NO_MEM;
 
-    emu_mem_instance_iter_t meta;
-    meta.raw = (uint8_t*)target_mem->instances[target_type][instance_idx];
-    
+    // Link Target (Look up the actual instance pointer from global context)
+    // Note: Add safety checks here (ctx_id < MAX, type < TYPES)
+    me->instance = &mem_contexts[head.ctx_id].types[head.type].instances[head.instance_idx];
+    me->indices_cnt = head.dims_cnt;
+    me->is_idx_static_mask = head.idx_type; // Store mask: bit=1 means static, bit=0 means dynamic
 
-    if (unlikely(!meta.raw)) {
-        //just log error
-        EMU_REPORT(EMU_LOG_access_out_of_bounds, EMU_OWNER__resolve_mem_offset, 0, TAG, "Null instance for Type:%s Idx:%d", EMU_DATATYPE_TO_STR[target_type], instance_idx);
-        return EMU_ERR_MEM_OUT_OF_BOUNDS;
-    }
-
-    //this is in case that variable wasn't resolved
-    if (unlikely(dims_cnt == 0)) {
-        *out_offset = meta.single->start_idx;
+    // 4. Base Case: No Dimensions (Scalar Access)
+    if (head.dims_cnt == 0) {
+        me->is_index_resolved = 1;
+        *out_ptr = me; // Return the object
         return EMU_OK;
     }
 
-    mem_access_arr_t        *acc_arr      = target.arr; 
-    emu_mem_instance_arr_t *instance_arr = meta.arr;
+    // 5. Recursive Case: Array Access
+    bool all_static = true;
 
-    uint32_t final_offset = instance_arr->start_idx;
-    uint32_t stride = 1;
+    for (uint8_t i = 0; i < head.dims_cnt; i++) {
+        // Check Bitmask: Is this index Static (1) or Dynamic (0)?
+        // Note: idx_type is only 3 bits, so this only works for 3 dims!
+        bool is_static = (head.idx_type >> i) & 0x01;
 
-    for (int8_t i = (int8_t)dims_cnt - 1; i >= 0; i--) {
-        uint32_t index_val = 0;
-
-        if (IDX_IS_DYNAMIC(acc_arr, i)) { 
-            //if index is dynamic then get value for index
-            emu_variable_t idx_var = mem_get(acc_arr->indices[i].next_instance, false);
-            if (unlikely(idx_var.error)) {return idx_var.error;}
-
-            index_val = MEM_CAST(idx_var, (uint32_t)0);
-            //else just use provided static 
-        }else{index_val = acc_arr->indices[i].static_idx;}
-
-        if (unlikely(index_val >= instance_arr->dim_sizes[i])) {
-            EMU_REPORT(EMU_LOG_access_out_of_bounds, EMU_OWNER__resolve_mem_offset, 0, TAG, "Array Index OOB Dim %d: %ld >= %d", i, index_val, instance_arr->dim_sizes[i]);
-            return EMU_ERR_MEM_OUT_OF_BOUNDS; 
+        if (is_static) {
+            if (*idx + 2 > data_len) return EMU_ERR_INVALID_PACKET_SIZE;
+            me->indices_values[i].static_index = parse_get_u16(data, *idx); // Use your helper
+            *idx += 2;
+        } 
+        else {
+            all_static = false;
+            emu_err_t err = emu_mem_parse_access(data, data_len, idx, &me->indices_values[i].dynamic_index);
+            if (err != EMU_OK) return err;
         }
-
-        final_offset += index_val * stride;
-        stride *= instance_arr->dim_sizes[i];
     }
 
-    *out_offset = final_offset;
+    if (all_static) {
+        uint32_t final_offset = 0;
+        uint32_t stride = 1;
+         
+        for (int8_t i = head.dims_cnt - 1; i >= 0; i--) {
+            uint16_t index_val = me->indices_values[i].static_index;
+            
+            uint16_t dim_size = mem_contexts[head.ctx_id].types[head.type].dims_pool[me->instance->dims_idx + i];
+
+            if (index_val >= dim_size) {return EMU_ERR_MEM_OUT_OF_BOUNDS;}
+
+            final_offset += index_val * stride;
+            stride *= dim_size; // Accumulate stride for next dimension
+        }
+
+        me->resolved_index = final_offset;
+        me->is_index_resolved = 1;
+    } else {
+        me->is_index_resolved = 0;
+        me->resolved_index = 0;
+    }
+    *out_ptr = me;
     return EMU_OK;
 }
 
-
-//This function must be as fast as possible as we use it very ofter, for nearly every operation
-emu_variable_t mem_get(void *mem_access_x, bool by_reference) {
-    emu_variable_t var = {0};
-    uint8_t type = 0xFF;
-    uint8_t ctx_id = 0xFF;
-
-    mem_access_s_t *_target = (mem_access_s_t*)mem_access_x;
-    if (unlikely(!_target)) {var.error = EMU_ERR_NULL_PTR;goto error;}
-
+#undef OWNER
+#define OWNER EMU_OWNER_mem_get
+emu_result_t mem_get(mem_var_t *result, const mem_access_t *search, bool by_reference){
+    mem_instance_t *instance = search->instance;
+    uint8_t type = instance->type;
+    uint16_t el_offset = 0;
     
-    type = _target->target_type; 
-    var.type = type;
-    ctx_id = _target->context_id;
+    // Fast path: resolved index (scalars or pre-computed arrays)
+    if (likely(search->is_index_resolved)) {
+        el_offset = search->resolved_index;
+    }
 
-    emu_mem_t *mem = s_mem_contexts[ctx_id];
+    // Slow path: dynamic index resolution
+    else if (unlikely(search->indices_cnt > 0)) {
 
-    //if variable has static adress 
-    if (likely(_target->is_resolved)) {
+        uint16_t *dims_pool = mem_contexts[instance->context].types[type].dims_pool;
+        uint16_t dims_base = instance->dims_idx;
+        uint16_t stride = 1; 
         
-        if (by_reference) {
-            var.by_reference = 1;
-            switch (type) {
-                case DATA_UI8:  var.reference.u8  = _target->direct_ptr.static_ui8; break;
-                case DATA_UI16: var.reference.u16 = _target->direct_ptr.static_ui16; break;
-                case DATA_UI32: var.reference.u32 = _target->direct_ptr.static_ui32; break;
-                case DATA_I8:   var.reference.i8  = _target->direct_ptr.static_i8; break;
-                case DATA_I16:  var.reference.i16 = _target->direct_ptr.static_i16; break;
-                case DATA_I32:  var.reference.i32 = _target->direct_ptr.static_i32; break;
-                case DATA_F:    var.reference.f   = _target->direct_ptr.static_f; break;
-                case DATA_D:    var.reference.d   = _target->direct_ptr.static_d; break;
-                case DATA_B:    var.reference.b   = _target->direct_ptr.static_b; break;
-                default: 
-                    var.error = EMU_ERR_MEM_INVALID_DATATYPE;
-                    EMU_REPORT(EMU_LOG_mem_invalid_data_type, EMU_OWNER_mem_get, 0, TAG_VARS, "Invalid Type %d (res ref)", type);
-                    return var;
+        for (int8_t i = search->indices_cnt - 1; i >= 0; i--) {
+            uint16_t index_val;
+            uint16_t dim_size = dims_pool[dims_base + i];  
+            
+            if((search->is_idx_static_mask >> i) & 0x01){
+                index_val = search->indices_values[i].static_index;
+            }else{
+                mem_var_t v;
+                emu_result_t res = mem_get(&v, search->indices_values[i].dynamic_index, false);
+                if(unlikely(res.code != EMU_OK)){RET_ED(res.code, 0, ++res.depth, "Recursive mem_get failed %s", EMU_ERR_TO_STR(res.code));}
+                index_val = MEM_CAST(v, (uint16_t)0);
             }
-        } else {
-            var.by_reference = 0;
-            switch (type) {
-                case DATA_UI8:  var.data.u8  = *_target->direct_ptr.static_ui8; break;
-                case DATA_UI16: var.data.u16 = *_target->direct_ptr.static_ui16; break;
-                case DATA_UI32: var.data.u32 = *_target->direct_ptr.static_ui32; break;  
-                case DATA_I8:   var.data.i8  = *_target->direct_ptr.static_i8; break;
-                case DATA_I16:  var.data.i16 = *_target->direct_ptr.static_i16; break;
-                case DATA_I32:  var.data.i32 = *_target->direct_ptr.static_i32; break;
-                case DATA_F:    var.data.f   = *_target->direct_ptr.static_f; break;
-                case DATA_D:    var.data.d   = *_target->direct_ptr.static_d; break;
-                case DATA_B:    var.data.b   = *_target->direct_ptr.static_b; break;
-                default: 
-                    var.error = EMU_ERR_MEM_INVALID_DATATYPE;
-                    EMU_REPORT(EMU_LOG_mem_invalid_data_type, EMU_OWNER_mem_get, 0, TAG_VARS, "Invalid Type %d (res val)", type);
-                    return var;
-            }
-        }
-    } 
-    //nested indices we need to calculate offset 
-    else {
-        uint32_t offset = 0;
-        
-        var.error = _resolve_mem_offset(mem_access_x, &offset, &type);
-        if (unlikely(var.error != EMU_OK)) {goto error;}
-
-        void *pool = mem->data_pools[type];
-        if (unlikely(!pool)) {var.error = EMU_ERR_NULL_PTR;goto error;}
-
-        if (by_reference) {
-            var.by_reference = 1;
-
-            switch (type) {
-                case DATA_UI8:  var.reference.u8  = &((uint8_t*)pool)[offset]; break;
-                case DATA_UI16: var.reference.u16 = &((uint16_t*)pool)[offset]; break;
-                case DATA_UI32: var.reference.u32 = &((uint32_t*)pool)[offset]; break;
-                case DATA_I8:   var.reference.i8  = &((int8_t*)pool)[offset]; break;
-                case DATA_I16:  var.reference.i16 = &((int16_t*)pool)[offset]; break;
-                case DATA_I32:  var.reference.i32 = &((int32_t*)pool)[offset]; break;
-                case DATA_F:    var.reference.f   = &((float*)pool)[offset]; break;
-                case DATA_D:    var.reference.d   = &((double*)pool)[offset]; break;
-                case DATA_B:    var.reference.b   = &((bool*)pool)[offset]; break;
-                default: 
-                    var.error = EMU_ERR_MEM_INVALID_DATATYPE;
-                    EMU_REPORT(EMU_LOG_mem_invalid_data_type, EMU_OWNER__resolve_mem_offset, 0, TAG_VARS, "Invalid Type %d (dyn ref)", type);
-                    return var;
-            }
-        } else {
-            var.by_reference = 0; //direct value
-            switch (type) {
-                case DATA_UI8:  var.data.u8  = ((uint8_t*)pool)[offset]; break;
-                case DATA_UI16: var.data.u16 = ((uint16_t*)pool)[offset]; break;
-                case DATA_UI32: var.data.u32 = ((uint32_t*)pool)[offset]; break;
-                case DATA_I8:   var.data.i8  = ((int8_t*)pool)[offset]; break;
-                case DATA_I16:  var.data.i16 = ((int16_t*)pool)[offset]; break;
-                case DATA_I32:  var.data.i32 = ((int32_t*)pool)[offset]; break;
-                case DATA_F:    var.data.f   = ((float*)pool)[offset]; break;
-                case DATA_D:    var.data.d   = ((double*)pool)[offset]; break;
-                case DATA_B:    var.data.b   = ((bool*)pool)[offset]; break;
-                default: 
-                    var.error = EMU_ERR_MEM_INVALID_DATATYPE;
-                    LOG_E(TAG_VARS, "Invalid Type %d (dyn val)", type);
-                    return var;
-            }
+            
+            if (unlikely(index_val >= dim_size)) {RET_E(EMU_ERR_MEM_OUT_OF_BOUNDS, "Index OOB %d>=%d", index_val, dim_size);}
+            el_offset += index_val * stride;
+            stride *= dim_size;
         }
     }
-    return var; 
-    error:
-    EMU_REPORT(EMU_LOG_mem_get_failed, EMU_OWNER_mem_get, 0, TAG_VARS, "Failed:%s, dump: Type %s, Idx %d, ctx %d, resolved %d", EMU_ERR_TO_STR(var.error), EMU_DATATYPE_TO_STR[type], _target->instance_idx, ctx_id, _target->is_resolved);
-    return var;
-}
-
-
-emu_result_t mem_set(void *mem_access_x, emu_variable_t val) {
-    mem_access_s_t *dst = (mem_access_s_t*)mem_access_x;
-    //Here we use by reference flag, as we then can eaisly set provided value
-    emu_variable_t dst_ptr = mem_get(mem_access_x, true);
     
-    if (unlikely(dst_ptr.error != EMU_OK)){EMU_RETURN_CRITICAL(dst_ptr.error, EMU_OWNER_mem_set, 0, 1, TAG, "Dst error: %s", EMU_ERR_TO_STR(dst_ptr.error));}
-
-    emu_mem_instance_iter_t dst_inst;
-    dst_inst.raw = (uint8_t*)s_mem_contexts[dst->context_id]->instances[dst->target_type][dst->instance_idx];
-    //we set flag updated as we need it for blocks
-    dst_inst.single->updated = 1;
-
-    //we use macro to do casting as we may not know type 
-    double src_val = MEM_CAST(val, (double)0);
-
-    //round for ints
-
-    double rnd = (dst_ptr.type < DATA_F) ? round(src_val) : src_val;
-
-    //we set value based on destination type (ceil and floor necessary as we don't need)
-    switch (dst_ptr.type) {
-        case DATA_UI8:  *dst_ptr.reference.u8  = CLAMP_CAST(rnd, 0, UINT8_MAX, uint8_t); break;
-        case DATA_UI16: *dst_ptr.reference.u16 = CLAMP_CAST(rnd, 0, UINT16_MAX, uint16_t); break;
-        case DATA_UI32: *dst_ptr.reference.u32 = CLAMP_CAST(rnd, 0, UINT32_MAX, uint32_t); break;
-        case DATA_I8:   *dst_ptr.reference.i8  = CLAMP_CAST(rnd, INT8_MIN, INT8_MAX, int8_t); break;
-        case DATA_I16:  *dst_ptr.reference.i16 = CLAMP_CAST(rnd, INT16_MIN, INT16_MAX, int16_t); break;
-        case DATA_I32:  *dst_ptr.reference.i32 = CLAMP_CAST(rnd, INT32_MIN, INT32_MAX, int32_t); break;
-        case DATA_F:    *dst_ptr.reference.f   = (float)src_val; break;
-        case DATA_D:    *dst_ptr.reference.d   = src_val; break;
-        case DATA_B:    *dst_ptr.reference.b   = (src_val != 0.0); break;
-        
-        default: EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, EMU_OWNER_mem_set, 0, 0, TAG, "Invalid Type %d", dst_ptr.type);
-    }
-
-    EMU_RETURN_OK(EMU_LOG_mem_set, EMU_OWNER_mem_set, 0, TAG, "Set value for ctx %d, type %s, idx %d", dst->context_id, EMU_DATATYPE_TO_STR[dst->target_type], dst->instance_idx);
-}
-
-
-/*****************************************************************************
- * 
- * References allocation (similar to instances one)
- * 
- ***************************************************************************/
-
- //from header
-static mem_pool_acces_s_t s_scalar_pool;
-static mem_pool_acces_arr_t  s_arena_pool;
-
-static bool s_is_initialized = false;
-
-
-emu_result_t emu_access_system_init(size_t max_scalars, size_t arrays_arena_bytes) {
-    if (s_is_initialized) emu_access_system_free();
-    emu_result_t res;
-    //we create scalar pool of given count 
-    res = mem_pool_access_scalar_create(&s_scalar_pool, sizeof(mem_access_s_t), max_scalars, "REF_SCAL");
-    if(res.abort){
-        mem_pool_acces_arr_destroy(&s_arena_pool);
-        EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_access_system_init, 0, ++res.depth, TAG_REF, "Scalar Pool Fail");}
-    if(res.warning){
-        s_is_initialized = true;
-        EMU_RETURN_WARN(res.code, EMU_OWNER_emu_access_system_init, 0, ++res.depth, TAG_REF, "Scalar Pool Warn");}
+    // Build result
+    result->type = type;
     
-    res= mem_pool_acces_arr_create(&s_arena_pool, arrays_arena_bytes, "REF_ARR");
-    if(res.abort){ 
-        mem_pool_acces_scalar_destroy(&s_scalar_pool);
-        EMU_RETURN_CRITICAL(res.code, EMU_OWNER_emu_access_system_init, 0, ++res.depth, TAG_REF, "Arena Pool Fail");
-    }
-    if(res.warning){
-        s_is_initialized = true;
-        EMU_RETURN_WARN(res.code, EMU_OWNER_emu_access_system_init, 0, ++res.depth, TAG_REF, "Arena Pool Warn");}
-    s_is_initialized = true;
-    EMU_RETURN_OK(EMU_LOG_access_pool_allocated, EMU_OWNER_emu_access_system_init, 0, TAG_REF, "Init: Scalars=%d, Arena=%d bytes", (int)max_scalars, (int)arrays_arena_bytes);
-}
-
-void emu_access_system_free(void) {
-    if (s_is_initialized) {
-        mem_pool_acces_scalar_destroy(&s_scalar_pool);
-        mem_pool_acces_arr_destroy(&s_arena_pool);
-        s_is_initialized = false;
-        EMU_REPORT(EMU_LOG_access_pool_allocated, EMU_OWNER_emu_access_system_free, 0, TAG_REF, "Access System Freed");
-    }
-}
-
-
-
-emu_result_t mem_access_parse_node_recursive(uint8_t **cursor, size_t *len, void **out_node) {
-    //verify header size
-    if (*len < 3) {EMU_RETURN_CRITICAL(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Incomplete main node header");}
-
-    //then we parse "main node header"
-    uint8_t h = (*cursor)[0];
-    uint8_t dims = h & 0x0F;          // 4 bity: liczba wymiarów
-    uint8_t type = (h >> 4) & 0x0F;   // 4 bity: typ danych
-    
-    uint16_t idx; 
-    memcpy(&idx, &(*cursor)[1], 2);   // 2 bajty: indeks instancji
-    *cursor += 3; *len -= 3;
-
-    //then scalar case is easy cuz we don't need anything other
-    if (dims == 0) {
-        if (*len < 1) {
-            EMU_RETURN_CRITICAL(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Scalar: Incomplete ref byte");
-        }
-        uint8_t ref_byte = (*cursor)[0];
-        *cursor += 1; *len -= 1;
-
-        //we "get new node from pool"
-        mem_access_s_t *n = (mem_access_s_t*)mem_pool_acces_scalar_alloc(&s_scalar_pool);
-        if (!n) {EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Ref Arena Exhausted!");}
-
-        // we verify if id exists in memory, as it's required
-        //we don't need to check it later 
-        uint8_t ref_id = ref_byte & 0x0F;
-        emu_mem_t *s_mem = s_mem_contexts[ref_id];
-        if (!s_mem) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Invalid Ref ID %d", ref_id);}
-
-        //We get instance 
-        emu_mem_instance_iter_t meta;
-        meta.raw = (uint8_t*)s_mem->instances[type][idx];
-        //check if refered instance exists in context
-        if (!meta.raw) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Out of Bounds Instance for Type %d Idx %d", type, idx);}
-        
-        //We get pool to verify and assign pool address to access struct
-        void *pool_base = s_mem->data_pools[type];
-        if (!pool_base) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Null Data Pool for Type %d", type);}
-
-        //fill created node 
-        n->dims_cnt = 0; 
-        n->target_type = type; 
-        n->context_id = ref_id;
-        n->instance_idx = idx; 
-        n->is_resolved = 1; //scalar is always resolved 
-
-        uint32_t final_idx = meta.single->start_idx;
-        //we assign pointer to pool based on index and type (final idx is always start idx here)
+    if(by_reference){
+        result->by_reference = true;
+        result->data.ptr.u8 = instance->data.u8 + el_offset * MEM_TYPE_SIZES[type];
+    }else{
+        result->by_reference = false;
+        // Direct pointer arithmetic instead of switch for better performance
         switch (type) {
-            case DATA_UI8:  n->direct_ptr.static_ui8  = (uint8_t*)pool_base  + final_idx; break;
-            case DATA_UI16: n->direct_ptr.static_ui16 = (uint16_t*)pool_base + final_idx; break;
-            case DATA_UI32: n->direct_ptr.static_ui32 = (uint32_t*)pool_base + final_idx; break;
-            case DATA_I8:   n->direct_ptr.static_i8   = (int8_t*)pool_base   + final_idx; break;
-            case DATA_I16:  n->direct_ptr.static_i16  = (int16_t*)pool_base  + final_idx; break;
-            case DATA_I32:  n->direct_ptr.static_i32  = (int32_t*)pool_base  + final_idx; break;
-            case DATA_F:    n->direct_ptr.static_f    = (float*)pool_base    + final_idx; break;
-            case DATA_D:    n->direct_ptr.static_d    = (double*)pool_base   + final_idx; break;
-            case DATA_B:    n->direct_ptr.static_b    = (bool*)pool_base     + final_idx; break;
-            default: 
-                EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Invalid Data Type %d", type);
+            case MEM_B:   result->data.val.b   = instance->data.b[el_offset];   break;
+            case MEM_F:   result->data.val.f   = instance->data.f[el_offset];   break;
+            case MEM_U8:  result->data.val.u8  = instance->data.u8[el_offset];  break;
+            case MEM_U16: result->data.val.u16 = instance->data.u16[el_offset]; break;
+            case MEM_U32: result->data.val.u32 = instance->data.u32[el_offset]; break;
+            case MEM_I16: result->data.val.i16 = instance->data.i16[el_offset]; break;
+            case MEM_I32: result->data.val.i32 = instance->data.i32[el_offset]; break;
         }
-
-        *out_node = n;
-        EMU_RETURN_OK(EMU_LOG_mem_access_parse_success, EMU_OWNER_mem_access_parse_node_recursive, 0, TAG_REF, "Parsed Scalar Ref: ctx %d, type %d, idx %d", ref_id, type, idx);
-    } 
-    
-
-    /******************************************************************************
-    *Now if not scalar we need to check is array element static or dymanic (based on other variables)
-    ********************************/
-    else {
-        if (*len < 1) {EMU_RETURN_CRITICAL(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Array: Incomplete ref byte");}
-        uint8_t config_byte = (*cursor)[0];
-        *cursor += 1; *len -= 1;
-
-        //we need to create new access ptr, we need to enlarge it by count of dims (for idx cnt)
-        size_t size = sizeof(mem_access_arr_t) + (dims * sizeof(idx_u));
-        mem_access_arr_t *n = (mem_access_arr_t*)mem_pool_access_arr_alloc(&s_arena_pool, size);
-        if (!n) {EMU_RETURN_CRITICAL(EMU_ERR_NO_MEM, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Ref Arena Exhausted!");}
-        
-        //as before we get context and check if it exists
-        uint8_t ref_id = config_byte & 0x0F;
-        emu_mem_t *s_mem = s_mem_contexts[ref_id];
-        if (!s_mem) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_REF_ID, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Invalid Ref ID %d", ref_id);}
-        
-        //we get instance
-        emu_mem_instance_iter_t meta;
-        meta.raw = (uint8_t*)s_mem->instances[type][idx];
-        if (!meta.raw) {EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Out of Bounds Instance for Type %d Idx %d", type, idx);}
-
-        //fill created node
-        n->dims_cnt = dims; 
-        n->target_type = type; 
-        n->context_id = ref_id;
-        n->idx_types = (config_byte >> 4) & 0x0F;
-        n->instance_idx = idx;
-
-        //we parse indices now
-        bool is_dynamic = false; // this is so we know that element is static or not 
-        for (int i = 0; i < dims; i++) {
-            if (IDX_IS_DYNAMIC(n, i)) {
-                is_dynamic = true;
-                emu_result_t res = mem_access_parse_node_recursive(cursor, len, &n->indices[i].next_instance);
-                if (res.abort) {
-                    EMU_RETURN_CRITICAL(res.code, EMU_OWNER_mem_access_parse_node_recursive, 0, ++res.depth, TAG_REF, "Array: Failed to parse dynamic index (Dim %d)", i);
-                }
-            } else { 
-                //this case is for static indexd (value not instance)
-                if (*len < 2) {
-                    EMU_RETURN_CRITICAL(EMU_ERR_PACKET_INCOMPLETE, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Array: Incomplete static index data (Dim %d)", i);
-                }
-                memcpy(&n->indices[i].static_idx, *cursor, 2); 
-                *cursor += 2; *len -= 2; 
-            }
-        }
-
-        //we get data pool for type
-        void *pool_base = s_mem->data_pools[type];
-        if (!pool_base) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Null Data Pool for Type %d", type);}
-
-        //flatten array to get "real offset"
-        if (!is_dynamic) {       
-            uint32_t element_offset = 0;
-
-            //Row-Major
-            for (uint8_t i = 0; i < dims; i++) {
-                // Bounds Check 
-                if (n->indices[i].static_idx >= meta.arr->dim_sizes[i]) {
-                    EMU_RETURN_CRITICAL(EMU_ERR_MEM_OUT_OF_BOUNDS, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Static Index OOB: Dim %d, Idx %d >= Size %d", 
-                           i, n->indices[i].static_idx, meta.arr->dim_sizes[i]);
-                }
-                if (i == 0) {
-                    element_offset = n->indices[i].static_idx;
-                } else {
-                    element_offset = (element_offset * meta.arr->dim_sizes[i]) + n->indices[i].static_idx;
-                }
-            }
-
-            //we habe final idx as start idx and offset in elements
-            uint32_t final_idx = meta.arr->start_idx + element_offset;
-            n->is_resolved = 1;
-
-            switch (type) {
-                case DATA_UI8:  n->direct_ptr.static_ui8  = (uint8_t*)pool_base  + final_idx; break;
-                case DATA_UI16: n->direct_ptr.static_ui16 = (uint16_t*)pool_base + final_idx; break;
-                case DATA_UI32: n->direct_ptr.static_ui32 = (uint32_t*)pool_base + final_idx; break;
-                case DATA_I8:   n->direct_ptr.static_i8   = (int8_t*)pool_base   + final_idx; break;
-                case DATA_I16:  n->direct_ptr.static_i16  = (int16_t*)pool_base  + final_idx; break;
-                case DATA_I32:  n->direct_ptr.static_i32  = (int32_t*)pool_base  + final_idx; break;
-                case DATA_F:    n->direct_ptr.static_f    = (float*)pool_base    + final_idx; break;
-                case DATA_D:    n->direct_ptr.static_d    = (double*)pool_base   + final_idx; break;
-                case DATA_B:    n->direct_ptr.static_b    = (bool*)pool_base     + final_idx; break;
-                default: EMU_RETURN_CRITICAL(EMU_ERR_MEM_INVALID_DATATYPE, EMU_OWNER_mem_access_parse_node_recursive, 0, 0, TAG_REF, "Invalid Data Type %d", type);
-            }
-
-        } else {            
-            uint32_t base_idx = meta.arr->start_idx;
-            n->is_resolved = 0;
-        }
-        //we set ptr 
-        *out_node = n; 
-        EMU_RETURN_OK(EMU_LOG_mem_access_parse_success, EMU_OWNER_mem_access_parse_node_recursive, 0, TAG_REF, "Parsed Array Ref: ctx %d, type %d, idx %d, dims %d", ref_id, type, idx, dims);
     }
+    
+    return EMU_RESULT_OK();
 }
+
+
+/**
+ * @brief Sets a value in memory based on a mem_access_t descriptor
+ * @param to_set The value to write (variable type)
+ * @param target The access descriptor (resolved or unresolved)
+ */
+#undef OWNER
+#define OWNER EMU_OWNER_mem_set
+emu_result_t mem_set(const mem_var_t to_set, const mem_access_t *target) {
+    mem_var_t dst;
+    
+    // Get target pointer (by_reference=true for direct write)
+    emu_result_t res = mem_get(&dst, target, true);
+    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, 0, 0, "Failed to resolve target: %s", EMU_ERR_TO_STR(res.code));}
+    
+    // Always mark as updated
+    target->instance->updated = 1;
+    
+    // Fast path: matching types - direct copy without conversion
+    if (likely(to_set.type == dst.type)) {
+        switch (dst.type) {
+            case MEM_B:   *dst.data.ptr.b   = to_set.data.val.b;   return EMU_RESULT_OK();
+            case MEM_F:   *dst.data.ptr.f   = to_set.data.val.f;   return EMU_RESULT_OK();
+            case MEM_U8:  *dst.data.ptr.u8  = to_set.data.val.u8;  return EMU_RESULT_OK();
+            case MEM_U16: *dst.data.ptr.u16 = to_set.data.val.u16; return EMU_RESULT_OK();
+            case MEM_U32: *dst.data.ptr.u32 = to_set.data.val.u32; return EMU_RESULT_OK();
+            case MEM_I16: *dst.data.ptr.i16 = to_set.data.val.i16; return EMU_RESULT_OK();
+            case MEM_I32: *dst.data.ptr.i32 = to_set.data.val.i32; return EMU_RESULT_OK();
+        }
+    }
+    
+    // Slow path: type conversion required
+    float src_val = MEM_CAST(to_set, (float)0);
+    
+    switch (dst.type) {
+        case MEM_U8:  
+            *dst.data.ptr.u8  = CLAMP_CAST(roundf(src_val), 0, UINT8_MAX, uint8_t); 
+            break;
+        case MEM_U16: 
+            *dst.data.ptr.u16 = CLAMP_CAST(roundf(src_val), 0, UINT16_MAX, uint16_t); 
+            break;
+        case MEM_U32: 
+            *dst.data.ptr.u32 = CLAMP_CAST(roundf(src_val), 0, UINT32_MAX, uint32_t); 
+            break;
+        case MEM_I16: 
+            *dst.data.ptr.i16 = CLAMP_CAST(roundf(src_val), INT16_MIN, INT16_MAX, int16_t); 
+            break;
+        case MEM_I32: 
+            *dst.data.ptr.i32 = CLAMP_CAST(roundf(src_val), INT32_MIN, INT32_MAX, int32_t); 
+            break;
+        case MEM_F:   
+            *dst.data.ptr.f   = src_val; 
+            break;
+        case MEM_B:   
+            *dst.data.ptr.b   = (src_val != 0.0f); 
+            break;
+        default: 
+            RET_E(EMU_ERR_MEM_INVALID_DATATYPE, "Invalid Destination Type %d", dst.type);
+    }
+    
+    return EMU_RESULT_OK();
+}
+
 

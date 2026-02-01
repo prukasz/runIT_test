@@ -62,8 +62,8 @@ for(int i = 0; i< 10; i++){
 *****************************************************************************/
 
 
-emu_result_t block_for(block_handle_t *block);
+emu_result_t block_for(block_handle_t block);
 
-emu_result_t block_for_parse(chr_msg_buffer_t *source, block_handle_t *block);
-void block_for_free(block_handle_t *block);
-emu_result_t block_for_verify(block_handle_t *block);
+emu_result_t block_for_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
+void block_for_free(block_handle_t block);
+emu_result_t block_for_verify(block_handle_t block);

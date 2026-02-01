@@ -55,8 +55,8 @@ When GPIO_1 is set to false, the Q output will immediately go false (for TON typ
 
 
 *******************************************************************************/
-emu_result_t block_timer(block_handle_t *block);
+emu_result_t block_timer(block_handle_t block);
 
-emu_result_t block_timer_parse(chr_msg_buffer_t *source, block_handle_t *block);
-void block_timer_free(block_handle_t *block);
-emu_result_t block_timer_verify(block_handle_t *block);
+emu_result_t block_timer_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
+void block_timer_free(block_handle_t block);
+emu_result_t block_timer_verify(block_handle_t block);

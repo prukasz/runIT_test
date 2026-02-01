@@ -6,6 +6,7 @@
 #include "block_timer.h"
 #include "block_counter.h"
 #include "block_clock.h"
+#include "block_selector.h"
 
 /***********************************************************************************
  * Those tables contains main functions, parsers, free functions and verify functions

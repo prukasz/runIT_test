@@ -26,7 +26,7 @@ QueueHandle_t emu_interface_orders_queue;
 
 void emu_interface_task(void* params){
     emu_result_t res = {.code = EMU_OK};
-
+    
     ESP_LOGI(TAG, "Emulator interface task started");
     
     // Initialize logging queues FIRST - required for error macros
@@ -43,43 +43,22 @@ void emu_interface_task(void* params){
     }
 
     static emu_order_t current_order;
-    
-    // Initial Reset
-    emu_parse_manager(PARSE_RESTART);
-    emu_access_system_init(1000, 5000);
+    mem_access_allocate_space(1000, 500);
 
-    while(1){
+    while(true){
         if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &current_order, portMAX_DELAY)){
             
-            ESP_LOGD(TAG, "Processing order: 0x%04X", current_order);
+            ESP_LOGI(TAG, "Processing order: 0x%04X", current_order);
             
+            if ((current_order & 0xFF00) == 0xAA00){
+                LOG_I(TAG, "Parser order detected: 0x%04X", current_order);
+                res = emu_parse_manager(source, current_order, emu_get_current_code_ctx(), NULL);
+                continue;
+            }    
+
             switch (current_order){     
                 
-                // --- 1. VARIABLES (GLOBAL & BLOCK OUTPUTS) ---
-                case ORD_PARSE_VARIABLES:
-                    res = emu_parse_manager(PARSE_CREATE_VARIABLES);
-                    break;
-
-                case ORD_PARSE_VARIABLES_DATA:
-                    // Fill values into allocated memory
-                    // Can be called multiple times
-                    res = emu_parse_manager(PARSE_FILL_VARIABLES);
-                    break;              
-
-                // --- 2. BLOCKS ---
-                case ORD_EMU_CREATE_BLOCK_LIST:
-                    // Parse total count [B000] and allocate pointer array
-                    res = emu_parse_manager(PARSE_CREATE_BLOCKS_LIST);
-                    break;
-
-                case ORD_EMU_CREATE_BLOCKS:
-                    // Parse config [BB 00] and allocate structs + configure inputs/outputs
-                    res = emu_parse_manager(PARSE_CREATE_BLOCKS);
-                    break;
-                // --- 3. LOOP CONTROL ---
                 case ORD_EMU_LOOP_INIT:
-                    // Check if ready and init timer
-                        // Fixed call to match updated signature (returns result, handle via ptr)
                     res = emu_loop_init(1000000);
                     break;
 
@@ -98,17 +77,12 @@ void emu_interface_task(void* params){
                     emu_loop_deinit();
                     chr_msg_buffer_clear(source);
                     emu_reset_code_ctx();
-                    emu_mem_free_contexts();
-                    res = emu_parse_manager(PARSE_RESTART);
                     break;
 
                 case ORD_RESET_BLOCKS:
                     res = emu_loop_stop();
                     emu_reset_code_ctx();
                     // Also restart parser block stage?
-                    break;
-                case ORD_CHECK_CODE:
-                    res = emu_parse_manager(PARSE_CHECK_CAN_RUN);
                     break;
 
                 case ORD_RESET_MGS_BUF:
@@ -130,8 +104,10 @@ void emu_interface_task(void* params){
 
 
 
+#undef OWNER
+#define OWNER EMU_OWNER_emu_parse_source_add
 emu_result_t emu_parse_source_add(chr_msg_buffer_t * msg){
-    if (!msg) {EMU_RETURN_CRITICAL(EMU_ERR_NULL_PTR, EMU_OWNER_emu_parse_source_add,0, 0, TAG, "Source is NULL");}
+    if (!msg) {RET_E(EMU_ERR_NULL_PTR, "Source is NULL");}
     source = msg;
-    EMU_RETURN_OK(EMU_LOG_source_added, EMU_OWNER_emu_parse_source_add, 0,TAG, "Source for parser added");
+    RET_OK("Source for parser added");
 }
