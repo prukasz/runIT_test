@@ -148,8 +148,6 @@ emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_
 #define OWNER EMU_OWNER_block_math
 emu_result_t block_math(block_handle_t block){
     emu_result_t res = {.code = EMU_OK};
-    (void)res; // May be used by macros
-    LOG_I(TAG,"trying to execute math block %d", block->cfg.block_idx);
     if (!emu_block_check_inputs_updated(block)) { RET_OKD(block->cfg.block_idx, "Block Disabled"); }
     if(!block_check_EN(block, 0)){ RET_OKD(block->cfg.block_idx, "Block Disabled"); }
     
@@ -209,7 +207,7 @@ emu_result_t block_math(block_handle_t block){
     mem_var_t v_res = { .type = MEM_F, .data.val.f = result };
     res = block_set_output(block, v_res, 1);
     if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, 0, "Output acces error %s", EMU_ERR_TO_STR(res.code));}
-    return res;      
+    RET_OKD(block->cfg.block_idx, "[%d]result: %f", block->cfg.block_idx, result);     
 } 
 
 /* ============================================================================

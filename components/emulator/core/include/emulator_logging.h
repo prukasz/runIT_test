@@ -6,6 +6,7 @@
 #include "emulator_logs_config.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/ringbuf.h"
 
 /*********************************************************************************************** *
 IDEA: we have 2 structs for logging: emu_result_t for errors and emu_report_t for reports / success logs
@@ -21,8 +22,8 @@ LIVEDEBBUGING: WE can enable ENABLE_DEBUG_LOGS to have extra logs in serial cons
 
 
 
-extern QueueHandle_t error_logs_queue_t; 
-extern QueueHandle_t logs_queue_t;
+extern RingbufHandle_t error_logs_queue_t; 
+extern RingbufHandle_t logs_queue_t;
 extern SemaphoreHandle_t logger_request_sem;
 extern SemaphoreHandle_t logger_done_sem;
 extern TaskHandle_t logger_task_handle;

@@ -2,14 +2,15 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <freertos/ringbuf.h>
 #include <esp_log.h>
 #include "error_types.h"
 #include "emulator_loop.h"
 #include "emulator_logs_config.h"
 
 // --- Global Queue Handles ---
-extern QueueHandle_t error_logs_queue_t;
-extern QueueHandle_t logs_queue_t;
+extern RingbufHandle_t error_logs_queue_t;
+extern RingbufHandle_t logs_queue_t;
 /**
  * @brief This header contains macros for error handling and logging within the emulator.
  * It provides standardized ways to report errors, warnings, and notices,
@@ -71,16 +72,32 @@ extern QueueHandle_t logs_queue_t;
     #define _EMU_LOG_SAFE(...)
 #endif
 
-// --- Queue Push Helper (ISR Safe) ---
-// Automatically selects xQueueSend or xQueueSendFromISR based on context.
-#define _EMU_PUSH_TO_QUEUE(_queue, _struct_ptr) \
+// --- Ring Buffer Push Helper (ISR Safe, overwrite oldest) ---
+// Sends to ring buffer; if full, drops oldest item to keep freshest messages.
+#define _EMU_PUSH_TO_QUEUE(_rb, _struct_ptr) \
     do { \
-        if (xPortInIsrContext()) { \
-            BaseType_t xHigherPriorityTaskWoken = pdFALSE; \
-            xQueueSendFromISR(_queue, _struct_ptr, &xHigherPriorityTaskWoken); \
-            /* We do not yield here to keep the ISR fast */ \
-        } else { \
-            xQueueSend(_queue, _struct_ptr, 0); \
+        if ((_rb) != NULL) { \
+            size_t _sz = sizeof(*(_struct_ptr)); \
+            if (xPortInIsrContext()) { \
+                BaseType_t _hpw = pdFALSE; \
+                if (xRingbufferSendFromISR((_rb), (_struct_ptr), _sz, &_hpw) != pdTRUE) { \
+                    size_t _isize = 0; \
+                    void *_old = xRingbufferReceiveFromISR((_rb), &_isize); \
+                    if (_old) { \
+                        vRingbufferReturnItemFromISR((_rb), _old, &_hpw); \
+                        (void)xRingbufferSendFromISR((_rb), (_struct_ptr), _sz, &_hpw); \
+                    } \
+                } \
+            } else { \
+                if (xRingbufferSend((_rb), (_struct_ptr), _sz, 0) != pdTRUE) { \
+                    size_t _isize = 0; \
+                    void *_old = xRingbufferReceive((_rb), &_isize, 0); \
+                    if (_old) { \
+                        vRingbufferReturnItem((_rb), _old); \
+                        (void)xRingbufferSend((_rb), (_struct_ptr), _sz, 0); \
+                    } \
+                } \
+            } \
         } \
     } while(0)
 

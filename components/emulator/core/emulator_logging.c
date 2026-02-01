@@ -1,11 +1,11 @@
 #include "emulator_logging.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/ringbuf.h"
 
-QueueHandle_t error_logs_queue_t=NULL; 
-QueueHandle_t logs_queue_t=NULL;
+RingbufHandle_t error_logs_queue_t=NULL; 
+RingbufHandle_t logs_queue_t=NULL;
 SemaphoreHandle_t logger_request_sem = NULL;
 SemaphoreHandle_t logger_done_sem = NULL;
 TaskHandle_t logger_task_handle = NULL;
@@ -26,7 +26,12 @@ static void vLoggerTask(void *pvParameters){
 
         // Proceed to dump logs
             // Dump all error logs
-            while (error_logs_queue_t && xQueueReceive(error_logs_queue_t, &error_item, 0) == pdTRUE) {
+            while (error_logs_queue_t) {
+                size_t item_size = 0;
+                void *item = xRingbufferReceive(error_logs_queue_t, &item_size, 0);
+                if (!item) break;
+                if (item_size == sizeof(emu_result_t)) {
+                    memcpy(&error_item, item, sizeof(error_item));
                     const char *owner_s = EMU_OWNER_TO_STR(error_item.owner);
                     const char *code_s = EMU_ERR_TO_STR(error_item.code);
                     if (error_item.abort) {
@@ -46,14 +51,23 @@ static void vLoggerTask(void *pvParameters){
                                  owner_s, error_item.owner_idx, code_s, error_item.time, error_item.cycle,
                                  error_item.depth, error_item.abort, error_item.warning, error_item.notice);
                     }
+                }
+                vRingbufferReturnItem(error_logs_queue_t, item);
             }
 
             #ifdef ENABLE_REPORT
             // Dump all reports
-            while (logs_queue_t && xQueueReceive(logs_queue_t, &report_item, 0) == pdTRUE) {
-                ESP_LOGI(TAG, "RPT %s owner:%s idx:%u time:%llu cycle:%llu",
-                         EMU_LOG_TO_STR(report_item.log), EMU_OWNER_TO_STR(report_item.owner), report_item.owner_idx,
-                         report_item.time, report_item.cycle);
+            while (logs_queue_t) {
+                size_t item_size = 0;
+                void *item = xRingbufferReceive(logs_queue_t, &item_size, 0);
+                if (!item) break;
+                if (item_size == sizeof(emu_report_t)) {
+                    memcpy(&report_item, item, sizeof(report_item));
+                    ESP_LOGI(TAG, "RPT %s owner:%s idx:%u time:%llu cycle:%llu",
+                             EMU_LOG_TO_STR(report_item.log), EMU_OWNER_TO_STR(report_item.owner), report_item.owner_idx,
+                             report_item.time, report_item.cycle);
+                }
+                vRingbufferReturnItem(logs_queue_t, item);
             }
             #endif
 
@@ -67,10 +81,10 @@ static void vLoggerTask(void *pvParameters){
 
 //todo finish init function
 BaseType_t logger_task_init(void) {
-    error_logs_queue_t = xQueueCreate(LOG_QUEUE_SIZE, sizeof(emu_result_t));
+    error_logs_queue_t = xRingbufferCreate(LOG_QUEUE_SIZE * sizeof(emu_result_t), RINGBUF_TYPE_NOSPLIT);
 
     #ifdef ENABLE_REPORT
-    logs_queue_t        = xQueueCreate(REPORT_QUEUE_SIZE, sizeof(emu_report_t));
+    logs_queue_t        = xRingbufferCreate(REPORT_QUEUE_SIZE * sizeof(emu_report_t), RINGBUF_TYPE_NOSPLIT);
     #endif
 
     logger_request_sem = xSemaphoreCreateBinary();
@@ -79,7 +93,7 @@ BaseType_t logger_task_init(void) {
     if (error_logs_queue_t == NULL || logger_request_sem == NULL || logger_done_sem == NULL) {
         return pdFAIL;
     }
-
+    ESP_LOGI(TAG, "Logger queues and semaphores created");
     // Create logger task
     if (xTaskCreate(vLoggerTask, "emu_logger", 2048, NULL, tskIDLE_PRIORITY + 1, &logger_task_handle) != pdPASS) {
         return pdFAIL;

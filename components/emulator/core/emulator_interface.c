@@ -26,7 +26,7 @@ QueueHandle_t emu_interface_orders_queue;
 
 void emu_interface_task(void* params){
     emu_result_t res = {.code = EMU_OK};
-
+    
     ESP_LOGI(TAG, "Emulator interface task started");
     
     // Initialize logging queues FIRST - required for error macros
@@ -44,6 +44,7 @@ void emu_interface_task(void* params){
 
     static emu_order_t current_order;
     mem_access_allocate_space(1000, 500);
+
     while(true){
         if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &current_order, portMAX_DELAY)){
             

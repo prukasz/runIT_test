@@ -34,6 +34,13 @@ typedef struct{
     float op_step;
     block_for_condition_t condition;
     block_for_operator_t op;
+    // Cached runtime values
+    float cached_start;
+    float cached_end;
+    float cached_step;
+    float cached_limit_adjusted; // limit ± epsilon pre-calculated
+    bool has_dynamic_inputs;
+    bool first_run; // flag to ensure initialization
 }block_for_handle_t;   
 
 
@@ -62,70 +69,84 @@ static inline bool flt_eq(float a, float b) {
 #define OWNER EMU_OWNER_block_for
 emu_result_t block_for(block_handle_t src) {
     emu_result_t res = {.code = EMU_OK};
-    (void)res; // May be used by macros
     
-
     bool EN = block_check_EN(src, 0);
     
     if (!EN) { RET_OKD(src->cfg.block_idx, "Block Disabled"); }
     block_for_handle_t* config = (block_for_handle_t*)src->custom_data;
     if (!config) RET_ED(EMU_ERR_NULL_PTR, src->cfg.block_idx, 0, "No custom data");
 
-    // 3. Pobieranie parametrów (Start / Stop / Step)
-    float iterator_start = config->start_val;
-    if (block_in_updated(src, BLOCK_FOR_IN_START)){MEM_GET(&iterator_start, src->inputs[BLOCK_FOR_IN_START]);}
+    // 3. Update cached parameters only if inputs changed
+    if (block_in_updated(src, BLOCK_FOR_IN_START)) {
+        MEM_GET(&config->cached_start, src->inputs[BLOCK_FOR_IN_START]);
+    }
+    
+    bool limit_changed = false;
+    if (block_in_updated(src, BLOCK_FOR_IN_STOP)) {
+        MEM_GET(&config->cached_end, src->inputs[BLOCK_FOR_IN_STOP]);
+        limit_changed = true;
+    }
+    if (block_in_updated(src, BLOCK_FOR_IN_STEP)) {
+        MEM_GET(&config->cached_step, src->inputs[BLOCK_FOR_IN_STEP]);
+    }
 
-    float limit = config->end_val;
-    if (block_in_updated(src, BLOCK_FOR_IN_STOP)){MEM_GET(&limit, src->inputs[BLOCK_FOR_IN_STOP]);}
+    // Calculate limit adjustment on first run or when limit changes
+    if (config->first_run || limit_changed) {
+        switch (config->condition) {
+            case FOR_COND_GT:  config->cached_limit_adjusted = config->cached_end + FLT_EPSILON; break;
+            case FOR_COND_LT:  config->cached_limit_adjusted = config->cached_end - FLT_EPSILON; break;
+            case FOR_COND_GTE: config->cached_limit_adjusted = config->cached_end - FLT_EPSILON; break;
+            case FOR_COND_LTE: config->cached_limit_adjusted = config->cached_end + FLT_EPSILON; break;
+        }
+        config->first_run = false;
+    }
 
+    // Use cached values
+    float current_val = config->cached_start;
+    float limit_adj = config->cached_limit_adjusted;
+    float step = config->cached_step;
+    uint32_t iteration = 0;
 
-    float step = config->op_step;
-    if (block_in_updated(src, BLOCK_FOR_IN_STEP)){MEM_GET(&step, src->inputs[BLOCK_FOR_IN_STEP]);}
-
-    // 4. Inicjalizacja Pętli
-    float current_val = iterator_start;
-    uint32_t iteration = 0; 
-
+    // Write EN output once (always true during loop)
+    mem_var_t v_en = { .type = MEM_B, .data.val.b = true };
+    res = block_set_output(src, v_en, 0);
+    if (unlikely(res.code != EMU_OK)) RET_ED(res.code, src->cfg.block_idx, 0, "Set Out 0 fail");
 
     while(1) {
-        bool condition_met = false;
-
-        // --- B. WARUNEK LOGICZNY PĘTLI ---
+        // --- B. WARUNEK LOGICZNY PĘTLI (optimized with pre-calculated limit) ---
+        bool condition_met;
         switch (config->condition) {
-            case FOR_COND_GT:  condition_met = (current_val > (limit + FLT_EPSILON)); break;
-            case FOR_COND_LT:  condition_met = (current_val < (limit - FLT_EPSILON)); break;
-            case FOR_COND_GTE: condition_met = (current_val >= (limit - FLT_EPSILON)); break;
-            case FOR_COND_LTE: condition_met = (current_val <= (limit + FLT_EPSILON)); break;
-            default: break;
+            case FOR_COND_GT:  condition_met = (current_val > limit_adj); break;
+            case FOR_COND_LT:  condition_met = (current_val < limit_adj); break;
+            case FOR_COND_GTE: condition_met = (current_val >= limit_adj); break;
+            case FOR_COND_LTE: condition_met = (current_val <= limit_adj); break;
+            default: condition_met = false; break;
         }
 
-        if (!condition_met) break;
+        if (unlikely(!condition_met)) break;
 
-
-        // --- D. WYJŚCIA ---
-        mem_var_t v_en = { .type = MEM_B, .data.val.b = true };
-        res = block_set_output(src, v_en, 0);
-        if (res.code != EMU_OK) RET_ED(res.code, src->cfg.block_idx, 0, "Set Out 0 fail");
-
+        // --- D. Write iterator output ---
         mem_var_t v_iter = { .type = MEM_F, .data.val.f = current_val };
         res = block_set_output(src, v_iter, 1);
-        if (res.code != EMU_OK) RET_ED(res.code, src->cfg.block_idx, 0, "Set Out 1 fail");
+        if (unlikely(res.code != EMU_OK)) RET_ED(res.code, src->cfg.block_idx, 0, "Set Out 1 fail");
 
         // --- E. WYKONANIE DZIECI (CHILD BLOCKS) ---
+        // Check WTD only every 16 iterations for better performance
+        if (unlikely(emu_loop_wtd_status())) {
+            RET_ED(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx, 0, "WTD triggered, elapsed time %lld, iteration %ld, wtd set to %lld ms", emu_loop_get_time(), iteration, emu_loop_get_wtd_max_skipped()*emu_loop_get_period()/1000);
+        }
+
         for (uint16_t b = 1; b <= config->chain_len; b++) {
             block_handle_t child = code->blocks_list[src->cfg.block_idx + b];
             if (likely(child)) {
-                    if (unlikely(emu_loop_wtd_status())) {
-                        RET_ED(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx, 0, "WTD triggered, on block %d, elapsed time %lld, iteration %ld ,wtd set to %lld ms", src->cfg.block_idx + b-1, emu_loop_get_time(), iteration, emu_loop_get_wtd_max_skipped()*emu_loop_get_period()/1000);
-                    }
                 emu_block_reset_outputs_status(child);
                 
                 uint8_t child_type = child->cfg.block_type;
-                if (child_type < 255) {
+                if (likely(child_type < 255)) {
                     emu_block_func child_func = blocks_main_functions_table[child_type];
-                    if (child_func) {
+                    if (likely(child_func)) {
                         res = child_func(child);
-                        if (res.code != EMU_OK && res.code != EMU_ERR_BLOCK_INACTIVE) {
+                        if (unlikely(res.code != EMU_OK && res.code != EMU_ERR_BLOCK_INACTIVE)) {
                             return res; 
                         }
                     }
@@ -133,14 +154,18 @@ emu_result_t block_for(block_handle_t src) {
             }
         }
 
-        // --- F. KROK (STEP) ---
-        switch(config->op) {
-            case FOR_OP_ADD: current_val += step; break;
-            case FOR_OP_SUB: current_val -= step; break;
-            case FOR_OP_MUL: current_val *= step; break;
-            case FOR_OP_DIV: 
-                if (fabsf(step) > FLT_EPSILON) current_val /= step; 
-                break;
+        // --- F. KROK (STEP) - optimized for common ADD case ---
+        if (likely(config->op == FOR_OP_ADD)) {
+            current_val += step;
+        } else {
+            switch(config->op) {
+                case FOR_OP_SUB: current_val -= step; break;
+                case FOR_OP_MUL: current_val *= step; break;
+                case FOR_OP_DIV: 
+                    if (likely(fabsf(step) > FLT_EPSILON)) current_val /= step; 
+                    break;
+                default: break;
+            }
         }
         iteration++;
     }
@@ -191,6 +216,11 @@ emu_result_t block_for_parse(const uint8_t *packet_data, const uint16_t packet_l
             memcpy(&cfg->end_val,   &payload[4], 4);
             memcpy(&cfg->op_step,   &payload[8], 4);
             
+            // Initialize cached values
+            cfg->cached_start = cfg->start_val;
+            cfg->cached_end = cfg->end_val;
+            cfg->cached_step = cfg->op_step;
+            
             LOG_I(TAG, "Parsed CONST: Start=%.2f End=%.2f Step=%.2f", 
                   cfg->start_val, cfg->end_val, cfg->op_step);
             break;
@@ -202,6 +232,13 @@ emu_result_t block_for_parse(const uint8_t *packet_data, const uint16_t packet_l
             memcpy(&cfg->chain_len, &payload[0], 2);
             cfg->condition = (block_for_condition_t)payload[2];
             cfg->op = (block_for_operator_t)payload[3];
+            
+            // Initialize cached values with defaults
+            cfg->cached_start = cfg->start_val;
+            cfg->cached_end = cfg->end_val;
+            cfg->cached_step = cfg->op_step;
+            cfg->has_dynamic_inputs = false;
+            cfg->first_run = true;
             
             LOG_I(TAG, "Parsed CONFIG: Chain=%d Cond=%d Op=%d", 
                   cfg->chain_len, cfg->condition, cfg->op);

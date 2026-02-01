@@ -42,7 +42,6 @@ emu_result_t block_counter(block_handle_t block) {
 
     counter_handle_t* data = (counter_handle_t*)block->custom_data;
     emu_result_t res;
-    (void)res; // May be used by macros
 
     if (block_in_updated(block, IN_3_STEP)) {MEM_GET(&data->step, block->inputs[IN_3_STEP]);}
 

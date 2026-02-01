@@ -143,9 +143,6 @@ static __always_inline float emu_var_to_f(mem_var_t v) {
  * @param dst_ptr pointer at wanted type
  * @param mem_access_t_ptr what we want to get
  * @return emu_result_t from mem_get
- * 
- * Optimization: Ultra-fast path when resolved index + matching types (3-5x faster)
- * Falls back to standard mem_get for dynamic indices or type conversions
  */
 #define MEM_GET(dst_ptr, mem_access_t_ptr) ({ \
     const mem_access_t *_ma = (mem_access_t_ptr); \
