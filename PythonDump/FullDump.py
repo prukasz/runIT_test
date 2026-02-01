@@ -416,7 +416,8 @@ class FullDump:
 if __name__ == "__main__":
     from Enums import mem_types_t
     from BlockMath import BlockMath
-    from BlockTimer import TimerType
+    from BlockTimer import TimerType, BlockTimer
+    from BlockClock import BlockClock
     from BlockCounter import CounterMode
     from MemAcces import Ref
     import io
@@ -435,35 +436,22 @@ if __name__ == "__main__":
     code.add_variable(mem_types_t.MEM_B, "enable", data=True)
     
     # Add for loop (idx 0, 100 iterations, chain_len=2, always active)
-    for_loop = code.add_for(
-        idx=0,
-        chain_len=3,  # Chain contains 2 blocks (math and set)
-        start=0.0,
-        limit=999.0,  # 100 iterations
-        step=1.0,
-        en=code.ref("enable")  # Always active (no EN input)
-    )
+    
     
     # Add math block (idx 1) - part of for loop chain
-    math = code.add_math(
-        idx=1,
-        expression="in_1 + in_2",
-        connections=[code.ref("input_a"), code.ref("input_b")],
-        en=for_loop.out[0]  # Controlled by for loop
+    block_clok = code.add_clock(
+        idx = 0,
+        period_ms = 5000,
+        width_ms= 1000,
+        en = Ref("enable")
     )
-    math2 = code.add_math(
-        idx=2,
-        expression="in_1 + 100",
-        connections=[math.out[1]],
-        en=math.out[0]  # Controlled by for loop
+    BlockMath = code.add_math(
+        idx = 1,
+        expression = "in_1 *sqrt(cos(in_2))",
+        connections = [Ref("input_a"), Ref("input_b")],
+        en=block_clok.out[0]
     )
-    
-    #Add set block (idx 2) - part of for loop chain
-    set_blk = code.add_set(
-        idx=3,
-        target=code.ref("output"),
-        value=math2.out[1]  # RESULT
-    )
+
     
     print(f"\n{code}")
     print(f"Blocks: {[str(b) for b in code.get_blocks_sorted()]}")

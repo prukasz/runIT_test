@@ -222,7 +222,9 @@ typedef enum {
     EMU_LOG_block_selector_parsed,
     EMU_LOG_CTX_DESTROYED,
     EMU_LOG_ctx_created,
-    EMU_LOG_created_ctx
+    EMU_LOG_created_ctx,
+    EMU_LOG_clock_out_active,
+    EMU_LOG_clock_out_inactive,
 } emu_log_t;
 
 

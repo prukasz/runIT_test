@@ -269,7 +269,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
      */
     #define EMU_REPORT(log_msg_enum, owner_name_enum, owner_custom_idx, tag, fmt, ...) \
         ({ \
-            _EMU_LOG_SAFE(LOG_I, tag, "OK: " fmt, ##__VA_ARGS__); \
+            _LOG_X_FROM_STAT(LOG_I, tag, "OK: " fmt, ##__VA_ARGS__); \
             emu_report_t _rep = { \
                 .log = log_msg_enum, \
                 .owner = owner_name_enum, \
@@ -289,7 +289,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 
 /************************************************************************************************************ *
 *                      SHORTCUT MACROS FOR ERROR HANDLING "D": means with depth and block idx                 *
-/************************************************************************************************************ */
+************************************************************************************************************ */
 
 #define RET_E(code, msg, ...) EMU_RETURN_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
 #define RET_W(code, msg, ...) EMU_RETURN_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
@@ -300,6 +300,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 #define RET_WD(code, block_idx, depth, msg, ...) EMU_RETURN_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_ND(code, block_idx, depth, msg, ...) EMU_RETURN_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_OKD(block_idx, msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
+#define RET_OK_INACTIVE(block_idx) EMU_RETURN_OK(EMU_LOG_block_inactive, OWNER, block_idx, TAG, "")
 
 
 
@@ -307,7 +308,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 #define REP_W(code, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
 #define REP_N(code, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
 #define REP_OK(msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
-#define REP_MSG(log_enum, msg, ...) EMU_REPORT(log_enum, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
+#define REP_MSG(log_enum, idx,  msg, ...) EMU_REPORT(log_enum, OWNER, idx, TAG, msg, ##__VA_ARGS__)
 
 #define REP_ED(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define REP_WD(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)

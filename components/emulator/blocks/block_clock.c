@@ -5,13 +5,12 @@
 #include "emulator_loop.h" 
 #include "esp_log.h"
 #include <string.h>
-#include <math.h>
 
 static const char* TAG = __FILE_NAME__;
 
 typedef struct {
-    float    default_period;
-    float    default_width;
+    uint32_t default_period;
+    uint32_t default_width;
     uint64_t start_time_ms; // 
     bool     prev_en;       //
 } block_clock_handle_t;
@@ -37,14 +36,13 @@ emu_result_t block_clock(block_handle_t block) {
         return EMU_RESULT_OK();
     }
 
-    float period = data->default_period;
+    uint32_t period = data->default_period;
     if(block_in_updated(block, CLK_IN_PERIOD)){MEM_GET(&period, block->inputs[CLK_IN_PERIOD]);}
 
-    float width = data->default_width;
+    uint32_t width = data->default_width;
     if(block_in_updated(block, CLK_IN_WIDTH)){MEM_GET(&width, block->inputs[CLK_IN_WIDTH]);}
 
-    if (period < 1.0) period = 1.0; 
-    if (width < 0.0) width = 0.0;
+    if (period < 1) period = 1;
 
     uint64_t now = emu_loop_get_time();
 
@@ -55,14 +53,15 @@ emu_result_t block_clock(block_handle_t block) {
 
     uint64_t local_time = now - data->start_time_ms;
     
-    float phase = fmodf((float)local_time, period);
+    uint32_t phase = (uint32_t)(local_time % period);
 
     bool q_state = (phase < width);
-    LOG_I(TAG, "phase%lf,width %lf", phase, width);
-
-    mem_var_t v_out = { .type = MEM_B, .data.val.b = q_state };
-    LOG_I(TAG, "time %lld", local_time);
-    LOG_I(TAG, "out %d ", q_state);
+    if(q_state == true){
+        REP_MSG(EMU_LOG_clock_out_active, block->cfg.block_idx, "Clock output ACTIVE (phase: %lu ms < width: %lu ms)", phase, width);
+    }else{
+        REP_MSG(EMU_LOG_clock_out_inactive, block->cfg.block_idx, "Clock output INACTIVE (phase: %lu ms >= width: %lu ms)", phase, width);
+    }
+    mem_var_t v_out = { .type = MEM_B, .data.val.b = q_state, .by_reference = 0 };
     emu_result_t res = block_set_output(block, v_out, CLK_OUT_Q);
     
     if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, 0, "Output Set Fail");}
@@ -94,15 +93,15 @@ emu_result_t block_clock_parse(const uint8_t *packet_data, const uint16_t packet
     
     block_clock_handle_t *config = (block_clock_handle_t*)block->custom_data;
     
-    // PKT_CFG (0x01): [period:f32][width:f32]
+    // PKT_CFG (0x01): [period:u32][width:u32]
     if (packet_id == BLOCK_PKT_CFG) {
         if (payload_len < 8) RET_ED(EMU_ERR_PACKET_INCOMPLETE, block->cfg.block_idx, 0, "Config payload too short");
         
         memcpy(&config->default_period, &payload[0], 4);
         memcpy(&config->default_width,  &payload[4], 4);
         
-        LOG_I(TAG, "Parsed Config: Period=%.2f ms, Width=%.2f ms", 
-              config->default_period, config->default_width);
+        LOG_I(TAG, "Parsed Config: Period=%lu ms, Width=%lu ms", 
+              (uint32_t)config->default_period, (uint32_t)config->default_width);
     }
     
     return EMU_RESULT_OK();
@@ -116,8 +115,8 @@ emu_result_t block_clock_verify(block_handle_t block) {
 
     block_clock_handle_t *config = (block_clock_handle_t*)block->custom_data;
 
-    if (config->default_period < 0.001) {
-        RET_WD(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, 0, "Default Period near zero");
+    if (config->default_period == 0) {
+        RET_WD(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, 0, "Default Period is zero");
     }
     return EMU_RESULT_OK();
 }

@@ -193,6 +193,8 @@ const char* EMU_LOG_TO_STR(emu_log_t log) {
         case EMU_LOG_parsed_block_outputs: return "parsed_block_outputs";
         case EMU_LOG_block_inactive: return "block_inactive";
         case EMU_LOG_finished: return "finished";
+        case EMU_LOG_clock_out_active: return "clock_out_active";
+        case EMU_LOG_clock_out_inactive: return "clock_out_inactive";
         default: return "UNKNOWN_LOG";
     }
 }

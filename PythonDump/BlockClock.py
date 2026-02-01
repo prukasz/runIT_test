@@ -58,19 +58,19 @@ class BlockClock(Block):
         # Initialize base Block
         super().__init__(idx=idx, block_type=block_types_t.BLOCK_CLOCK, ctx=ctx)
         
-        self.config_period = 1000.0
-        self.config_width = 500.0
+        self.config_period = 1000
+        self.config_width = 500
         
         # Process parameters
         def process_param(arg, default_val):
             if isinstance(arg, (int, float)):
-                return float(arg), None
+                return int(arg), None
             elif isinstance(arg, Ref):
                 return default_val, arg
             return default_val, None
         
-        self.config_period, period_ref = process_param(period_ms, 1000.0)
-        self.config_width, width_ref = process_param(width_ms, 500.0)
+        self.config_period, period_ref = process_param(period_ms, 1000)
+        self.config_width, width_ref = process_param(width_ms, 500)
         
         # Inputs: [EN, PERIOD, WIDTH]
         self.add_inputs([en, period_ref, width_ref])
@@ -82,7 +82,7 @@ class BlockClock(Block):
         """
         Pack clock configuration data.
         
-        Format: [BA][block_idx:u16][block_type:u8][packet_id:u8][period:f][width:f]
+        Format: [BA][block_idx:u16][block_type:u8][packet_id:u8][period:u32][width:u32]
         """
         packets = []
         
@@ -93,8 +93,8 @@ class BlockClock(Block):
             self.block_type,
             block_packet_id_t.PKT_CFG
         )
-        # Pack as floats (4 bytes each)
-        payload = struct.pack('<ff', self.config_period, self.config_width)
+        # Pack as uint32_t (4 bytes each)
+        payload = struct.pack('<II', self.config_period, self.config_width)
         packets.append(header + payload)
         
         return packets

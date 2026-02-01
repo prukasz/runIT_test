@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 static const char* TAG = __FILE_NAME__;
+#define STACK_MAX_DEPTH 16
 
 // Internal Helpers
 static __always_inline bool is_greater(float a, float b);
@@ -147,21 +148,30 @@ emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_
 #undef OWNER
 #define OWNER EMU_OWNER_block_math
 emu_result_t block_math(block_handle_t block){
-    emu_result_t res = {.code = EMU_OK};
-    if (!emu_block_check_inputs_updated(block)) { RET_OKD(block->cfg.block_idx, "Block Disabled"); }
-    if(!block_check_in_true(block, 0)){ RET_OKD(block->cfg.block_idx, "Block Disabled"); }
+    //first check if inputs updated and first input true "enable"
+    if (!emu_block_check_inputs_updated(block)||!block_check_in_true(block, 0)) {RET_OK_INACTIVE(block->cfg.block_idx);}
+
     
+    emu_result_t res = EMU_RESULT_OK();
     expression_t* eval = (expression_t*)block->custom_data;
-    float stack[16];
-    int over_top = 0;
+
+    //stack and temporary variables
+    float stack[STACK_MAX_DEPTH];
+    int8_t over_top = 0;
+
+    //cache inputs except first (enable)
+    float inputs[block->cfg.in_cnt];
+    for(uint8_t i = 1; i < block->cfg.in_cnt; i++){
+        MEM_GET(&inputs[i], block->inputs[i]);
+    }   
+
     float result = 0.0f;
-    float tmp = 0.0f;
+
     for(uint16_t i = 0; i < eval->count; i++){
         instruction_t *ins = &(eval->code[i]);
         switch(ins->op){
             case OP_VAR: {
-                MEM_GET(&tmp, block->inputs[ins->input_index]);
-                if(over_top < 16) stack[over_top++] = tmp;
+                if(over_top < 16) stack[over_top++] = inputs[ins->input_index];
                 break;
             }
             case OP_CONST:
@@ -175,7 +185,7 @@ emu_result_t block_math(block_handle_t block){
                 break;
             case OP_DIV:
                 if(over_top >= 2) {
-                    if(is_zero(stack[over_top-1])){RET_ND(EMU_ERR_BLOCK_DIV_BY_ZERO, block->cfg.block_idx, 0, "Div by zero");}
+                    if(is_zero(stack[over_top-1])){RET_WD(EMU_ERR_BLOCK_DIV_BY_ZERO, block->cfg.block_idx, 0, "Div by zero");}
                     stack[over_top-2] /= stack[over_top-1];
                     over_top--;
                 }
