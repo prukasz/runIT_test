@@ -12,16 +12,19 @@ from Mem import mem_context_t
 
 class block_cfg_t(ct.LittleEndianStructure):
     """
-    Maps to C struct:
-    __packed struct {
-        uint16_t block_idx;          /*index of block in code*/
-        uint16_t in_connected_mask;  /*connected inputs (those that have instance)*/
-        uint8_t block_type;          /*typeof block (function)*/
-        uint8_t in_cnt;              /*count of inputs*/
-        uint8_t q_cnt;               /*count of outputs*/
-    } cfg;
+    Represents block_cfg_t in C 
     
-    Total: 7 bytes
+    **C Definition:**
+    ```c
+    __packed struct {
+        uint16_t block_idx;          /* 0-1: Block Index */
+        uint16_t in_connected_mask;  /* 2-3: Connected Inputs Mask */
+        uint8_t  block_type;         /* 4:   Block Type ID */
+        uint8_t  in_cnt;             /* 5:   Input Count */
+        uint8_t  q_cnt;              /* 6:   Output Count */
+    } cfg;
+    // Total Size: 7 bytes
+    ```
     """
     _pack_ = 1
     _fields_ = [

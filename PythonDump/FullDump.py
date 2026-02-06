@@ -92,16 +92,23 @@ class FullDump:
                                   f"{ctx_name} INST [{i}]")
             self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES)
         
-        # 3. Data Packets (scalars and arrays combined in generate_packets_data)
-        data_pkts = ctx.generate_packets_data()
-        if data_pkts:
-            for i, pkt in enumerate(data_pkts):
-                # Determine if scalar or array from dims_cnt in packet
-                # Format: [ctx:u8][type:u8][count:u8][entries...]
+        # 3a. Scalar Data Packets
+        scalar_pkts = ctx.generate_packets_scalar_data()
+        if scalar_pkts:
+            for i, pkt in enumerate(scalar_pkts):
                 self._write_packet(writer,
                                   struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt,
-                                  f"{ctx_name} DATA [{i}]")
+                                  f"{ctx_name} SDATA [{i}]")
             self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_S_DATA)
+        
+        # 3b. Array Data Packets
+        array_pkts = ctx.generate_packets_array_data()
+        if array_pkts:
+            for i, pkt in enumerate(array_pkts):
+                self._write_packet(writer,
+                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt,
+                                  f"{ctx_name} ADATA [{i}]")
+            self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_ARR_DATA)
     
     def write(self, writer: TextIO, 
               include_loop_init: bool = True,
@@ -174,23 +181,41 @@ class FullDump:
         self._write_line(writer, "# SECTION 3: Instance Data   #")
         self._write_line(writer, "#" + "-"*32 + "#")
         
-        # Context 0 data
-        data_pkts = self.code.user_ctx.generate_packets_data()
-        if data_pkts:
-            for i, pkt in enumerate(data_pkts):
+        # Context 0 scalar data
+        scalar_pkts = self.code.user_ctx.generate_packets_scalar_data()
+        if scalar_pkts:
+            for i, pkt in enumerate(scalar_pkts):
                 self._write_packet(writer,
                                   struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt,
-                                  f"CTX0 DATA [{i}]")
+                                  f"CTX0 SDATA [{i}]")
         
-        # Context 1 data
-        data_pkts = self.code.blocks_ctx.generate_packets_data()
-        if data_pkts:
-            for i, pkt in enumerate(data_pkts):
+        # Context 1 scalar data
+        scalar_pkts = self.code.blocks_ctx.generate_packets_scalar_data()
+        if scalar_pkts:
+            for i, pkt in enumerate(scalar_pkts):
                 self._write_packet(writer,
                                   struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt,
-                                  f"CTX1 DATA [{i}]")
+                                  f"CTX1 SDATA [{i}]")
         
         self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_S_DATA)
+        
+        # Context 0 array data
+        array_pkts = self.code.user_ctx.generate_packets_array_data()
+        if array_pkts:
+            for i, pkt in enumerate(array_pkts):
+                self._write_packet(writer,
+                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt,
+                                  f"CTX0 ADATA [{i}]")
+        
+        # Context 1 array data
+        array_pkts = self.code.blocks_ctx.generate_packets_array_data()
+        if array_pkts:
+            for i, pkt in enumerate(array_pkts):
+                self._write_packet(writer,
+                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt,
+                                  f"CTX1 ADATA [{i}]")
+        
+        self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_ARR_DATA)
         self._write_line(writer, "")
         
         # ==========================================
@@ -312,12 +337,19 @@ class FullDump:
             writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt).hex().upper() + "\n")
         writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_VARIABLES).hex().upper() + "\n")
         
-        # Data (both contexts, then order)
-        for pkt in self.code.user_ctx.generate_packets_data():
+        # Scalar data (both contexts, then order)
+        for pkt in self.code.user_ctx.generate_packets_scalar_data():
             writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt).hex().upper() + "\n")
-        for pkt in self.code.blocks_ctx.generate_packets_data():
+        for pkt in self.code.blocks_ctx.generate_packets_scalar_data():
             writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt).hex().upper() + "\n")
         writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_VARIABLES_S_DATA).hex().upper() + "\n")
+        
+        # Array data (both contexts, then order)
+        for pkt in self.code.user_ctx.generate_packets_array_data():
+            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt).hex().upper() + "\n")
+        for pkt in self.code.blocks_ctx.generate_packets_array_data():
+            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt).hex().upper() + "\n")
+        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_VARIABLES_ARR_DATA).hex().upper() + "\n")
         
         # Code config
         writer.write(self.code.generate_code_cfg_packet().hex().upper() + "\n")
@@ -381,11 +413,17 @@ class FullDump:
         for pkt in self.code.blocks_ctx.generate_packets_instances():
             packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt)
         
-        # Data
-        for pkt in self.code.user_ctx.generate_packets_data():
+        # Scalar Data
+        for pkt in self.code.user_ctx.generate_packets_scalar_data():
             packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt)
-        for pkt in self.code.blocks_ctx.generate_packets_data():
+        for pkt in self.code.blocks_ctx.generate_packets_scalar_data():
             packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt)
+        
+        # Array Data
+        for pkt in self.code.user_ctx.generate_packets_array_data():
+            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt)
+        for pkt in self.code.blocks_ctx.generate_packets_array_data():
+            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt)
         
         # Code config
         packets.append(self.code.generate_code_cfg_packet())
@@ -430,7 +468,7 @@ if __name__ == "__main__":
     code = Code()
     
     # Add user variables
-    code.add_variable(mem_types_t.MEM_F, "input_a", data=10.0)
+    code.add_variable(mem_types_t.MEM_F, "input_a", data=1.1)
     code.add_variable(mem_types_t.MEM_F, "input_b", data=[1,2,3,4,5], dims=[5])
     code.add_variable(mem_types_t.MEM_F, "output", data=0.0)
     code.add_variable(mem_types_t.MEM_B, "enable", data=True)
@@ -445,12 +483,28 @@ if __name__ == "__main__":
         width_ms= 1000,
         en = Ref("enable")
     )
-    BlockMath = code.add_math(
+    block_for = code.add_for(
         idx = 1,
-        expression = "in_1 * in_2",
-        connections = [Ref("input_a"), Ref("input_b")[2]],
-        en=block_clok.out[0]
+        chain_len = 2,
+        start= 0,
+        limit = 10,
+        step = 1,
+        operator= "+",
+        condition= "<",
+        en = block_clok.out[0]
     )
+    block_math = code.add_math(
+        idx = 2,
+        expression = "(in_1 * in_2) + in_3",
+        connections = [Ref("input_a"), Ref("input_b")[2], Ref("output")],
+        en=block_for.out[0]
+    )
+    block_set = code.add_set(
+        idx = 3,
+        target=Ref("output"),
+        value=block_math.out[1]
+    )
+
 
     
     print(f"\n{code}")

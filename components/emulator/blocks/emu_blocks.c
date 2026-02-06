@@ -44,7 +44,7 @@ emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t data_len, v
     *block = block_tmp;
     block -> inputs = (mem_access_t**)calloc(block_tmp.cfg.in_cnt, sizeof(mem_access_t*));
     block -> outputs = (mem_access_t**)calloc(block_tmp.cfg.q_cnt, sizeof(mem_access_t*));
-    if(!block->inputs || !block->outputs){RET_ED(EMU_ERR_NO_MEM, idx, 0, "Not enough memory for block %d inputs/outputs", idx);}
+    if((!block->inputs && block_tmp.cfg.in_cnt > 0) || (!block->outputs && block_tmp.cfg.q_cnt > 0)){RET_ED(EMU_ERR_NO_MEM, idx, 0, "Not enough memory for block %d inputs/outputs", idx);}
     LOG_I(TAG, "Parsed block cfg idx %d type %d (in:%d out:%d)", idx, block->cfg.block_type, block->cfg.in_cnt, block->cfg.q_cnt);
     return EMU_RESULT_OK();
 }

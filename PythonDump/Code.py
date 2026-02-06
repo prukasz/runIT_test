@@ -253,18 +253,16 @@ class Code:
         :param en: Enable input Ref
         :return: The created BlockFor instance
         """
-        from BlockFor import BlockFor, ForCondition, ForOperator
-        if condition is None:
-            condition = ForCondition.LT
-        if operator is None:
-            operator = ForOperator.ADD
+        from BlockFor import BlockFor, _resolve_condition, _resolve_operator
+        condition = _resolve_condition(condition)
+        operator = _resolve_operator(operator)
         block = BlockFor(
             idx=idx, ctx=self.blocks_ctx, chain_len=chain_len,
             start=start, limit=limit, step=step,
             condition=condition, operator=operator, en=en
         )
         return self.add_block(block)
-    
+
     def add_selector(self,
                      idx: int,
                      selector: 'Ref',
@@ -437,7 +435,7 @@ if __name__ == "__main__":
     from BlockMath import BlockMath
     from BlockTimer import TimerType
     from BlockCounter import CounterMode
-    from BlockFor import ForCondition, ForOperator
+    from BlockFor import ForCondition, ForOperator  # enums still work, strings also accepted
     from MemAcces import Ref
     
     print("=" * 70)
@@ -558,8 +556,8 @@ if __name__ == "__main__":
         start=0.0,
         limit=5.0,
         step=1.0,
-        condition=ForCondition.LT,
-        operator=ForOperator.ADD,
+        condition="<",
+        operator="+",
         en=code.ref("start_btn")
     )
     print(f"[7] {for_block}")

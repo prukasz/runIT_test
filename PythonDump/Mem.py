@@ -178,14 +178,12 @@ class mem_context_t:
         return packets
 
 
-    # ... [generate_packets_data SAME AS BEFORE] ...
-    def generate_packets_data(self) -> List[bytes]:
+    def generate_packets_scalar_data(self) -> List[bytes]:
+        """Generate packets for scalar variable data only."""
         packets = []
         for m_type in sorted(self.storage.keys()):
             if not self.storage[m_type]: continue
-            item_size = mem_types_size.get(m_type, 1)
 
-            # Scalars
             pkt_header = struct.pack('<BBB', self.ctx_id, m_type.value, 0)
             current_buffer = bytearray(pkt_header)
             count_in_pkt = 0
@@ -204,8 +202,15 @@ class mem_context_t:
             if count_in_pkt > 0:
                 current_buffer[2] = count_in_pkt
                 packets.append(bytes(current_buffer))
+        return packets
 
-            # Arrays
+    def generate_packets_array_data(self) -> List[bytes]:
+        """Generate packets for array variable data only."""
+        packets = []
+        for m_type in sorted(self.storage.keys()):
+            if not self.storage[m_type]: continue
+            item_size = mem_types_size.get(m_type, 1)
+
             pkt_header = struct.pack('<BBB', self.ctx_id, m_type.value, 0)
             current_buffer = bytearray(pkt_header)
             count_in_pkt = 0
@@ -237,6 +242,10 @@ class mem_context_t:
                 current_buffer[2] = count_in_pkt
                 packets.append(bytes(current_buffer))
         return packets
+
+    def generate_packets_data(self) -> List[bytes]:
+        """Generate all data packets (scalars first, then arrays). Legacy wrapper."""
+        return self.generate_packets_scalar_data() + self.generate_packets_array_data()
 
     # ... [packet_generate_cfg SAME AS BEFORE] ...
     def packet_generate_cfg(self) -> bytes:

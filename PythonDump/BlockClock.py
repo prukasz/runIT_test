@@ -43,8 +43,8 @@ class BlockClock(Block):
     def __init__(self,
                  idx: int,
                  ctx: mem_context_t,
-                 period_ms: Union[float, int, Ref, None] = 1000.0,
-                 width_ms: Union[float, int, Ref, None] = 500.0,
+                 period_ms: Union[int, Ref, None] = 1000.0,
+                 width_ms: Union[int, Ref, None] = 500.0,
                  en: Optional[Ref] = None):
         """
         Create a Clock/PWM block.
@@ -63,7 +63,7 @@ class BlockClock(Block):
         
         # Process parameters
         def process_param(arg, default_val):
-            if isinstance(arg, (int, float)):
+            if isinstance(arg, (int)):
                 return int(arg), None
             elif isinstance(arg, Ref):
                 return default_val, arg
@@ -105,30 +105,16 @@ class BlockClock(Block):
                 f"width={self.config_width}ms, duty={duty:.1f}%)")
 
 
-# ============================================================================
-# DEMO / TEST
-# ============================================================================
-
 if __name__ == "__main__":
     from MemAcces import AccessManager
-    
-    print("=" * 60)
-    print("BlockClock Test")
-    print("=" * 60)
-    
-    # 1. Create context
-    ctx = mem_context_t(ctx_id=0)
-    
-    # Add variables
+
+    ctx = mem_context_t(ctx_id=2)
     ctx.add(mem_types_t.MEM_B, alias="enable", data=True)
     ctx.add(mem_types_t.MEM_F, alias="dyn_period", data=2000.0)
-    
-    # 2. Register context
     AccessManager.reset()
     manager = AccessManager.get_instance()
     manager.register_context(ctx)
     
-    # 3. Create block context
     block_ctx = mem_context_t(ctx_id=1)
     manager.register_context(block_ctx)
     
@@ -170,8 +156,6 @@ if __name__ == "__main__":
         width_ms=500,
         en=Ref("enable")
     )
-    
     print(f"Block: {clock2}")
     
-    print("\n" + "=" * 60)
 

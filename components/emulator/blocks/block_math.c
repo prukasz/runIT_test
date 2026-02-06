@@ -5,9 +5,9 @@
 #include "esp_log.h"
 #include <math.h>
 #include <float.h>
-#include <stdbool.h>
 #include <string.h>
-#include <stdlib.h>
+
+#define LOG_RESULT
 
 static const char* TAG = __FILE_NAME__;
 #define STACK_MAX_DEPTH 16
@@ -29,8 +29,9 @@ typedef enum{
     OP_ROOT  = 0x08,      
     OP_SUB   = 0x09, 
 }op_code_t;
-     
 
+
+    
 typedef struct {
     uint8_t op;
     uint8_t input_index; //for operator it's 00, for constant index in constant table
@@ -64,6 +65,7 @@ emu_result_t block_math(block_handle_t block){
     float inputs[block->cfg.in_cnt];
     for(uint8_t i = 1; i < block->cfg.in_cnt; i++){
         MEM_GET(&inputs[i], block->inputs[i]);
+        LOG_I(TAG, "[%"PRIu16"] Input %d value: %f", block->cfg.block_idx, i, inputs[i]);
     }   
 
     float result = 0.0f;
@@ -109,7 +111,7 @@ emu_result_t block_math(block_handle_t block){
         }
     }
 
-    result = (over_top > 0) ? stack[0] : 0.0f;
+    result = (over_top > 0) ? stack[over_top-1] : 0.0f;
     
     // Set Outputs
     mem_var_t v_eno = { .type = MEM_B, .data.val.b = true };
@@ -117,6 +119,9 @@ emu_result_t block_math(block_handle_t block){
     mem_var_t v_res = { .type = MEM_F, .data.val.f = result };
     res = block_set_output(block, v_res, 1);
     if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, 0, "[%"PRIu16"] Output set %s",block->cfg.block_idx, EMU_ERR_TO_STR(res.code));}
+    #ifdef LOG_RESULT
+    LOG_I(TAG, "[%"PRIu16"] Computed result: %f", block->cfg.block_idx, result);
+    #endif
     return EMU_RESULT_OK();     
 } 
 

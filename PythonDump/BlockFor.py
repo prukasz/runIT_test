@@ -21,12 +21,54 @@ class ForCondition(IntEnum):
     LTE = 0x05  # <= (while iterator <= limit)
 
 
+_CONDITION_STR_MAP = {
+    ">": ForCondition.GT,
+    "<": ForCondition.LT,
+    ">=": ForCondition.GTE,
+    "<=": ForCondition.LTE,
+}
+
+
+def _resolve_condition(val) -> ForCondition:
+    """Accept ForCondition enum, string like '<', or None (defaults to LT)."""
+    if val is None:
+        return ForCondition.LT
+    if isinstance(val, ForCondition):
+        return val
+    if isinstance(val, str):
+        if val in _CONDITION_STR_MAP:
+            return _CONDITION_STR_MAP[val]
+        raise ValueError(f"Unknown condition string '{val}'. Use one of: {list(_CONDITION_STR_MAP.keys())}")
+    raise TypeError(f"condition must be ForCondition, str, or None, got {type(val)}")
+
+
 class ForOperator(IntEnum):
     """Iterator modification operator."""
     ADD = 0x01  # iterator += step
     SUB = 0x02  # iterator -= step
     MUL = 0x03  # iterator *= step
     DIV = 0x04  # iterator /= step
+
+
+_OPERATOR_STR_MAP = {
+    "+": ForOperator.ADD,
+    "-": ForOperator.SUB,
+    "*": ForOperator.MUL,
+    "/": ForOperator.DIV,
+}
+
+
+def _resolve_operator(val) -> ForOperator:
+    """Accept ForOperator enum, string like '+', or None (defaults to ADD)."""
+    if val is None:
+        return ForOperator.ADD
+    if isinstance(val, ForOperator):
+        return val
+    if isinstance(val, str):
+        if val in _OPERATOR_STR_MAP:
+            return _OPERATOR_STR_MAP[val]
+        raise ValueError(f"Unknown operator string '{val}'. Use one of: {list(_OPERATOR_STR_MAP.keys())}")
+    raise TypeError(f"operator must be ForOperator, str, or None, got {type(val)}")
 
 
 class BlockFor(Block):
@@ -72,8 +114,8 @@ class BlockFor(Block):
                  start: Union[float, int, Ref, None] = 0.0,
                  limit: Union[float, int, Ref, None] = 10.0,
                  step: Union[float, int, Ref, None] = 1.0,
-                 condition: ForCondition = ForCondition.LT,
-                 operator: ForOperator = ForOperator.ADD,
+                 condition = ForCondition.LT,
+                 operator = ForOperator.ADD,
                  en: Optional[Ref] = None):
         """
         Create a FOR loop block.
@@ -84,16 +126,16 @@ class BlockFor(Block):
         :param start: Initial iterator value (constant or Ref)
         :param limit: Loop end limit (constant or Ref)
         :param step: Iterator step (constant or Ref)
-        :param condition: Loop continuation condition
-        :param operator: Iterator modification operator
+        :param condition: Loop continuation condition (ForCondition or str: '<', '>', '<=', '>=')
+        :param operator: Iterator modification operator (ForOperator or str: '+', '-', '*', '/')
         :param en: Enable input Ref
         """
         # Initialize base Block
         super().__init__(idx=idx, block_type=block_types_t.BLOCK_FOR, ctx=ctx)
         
         self.chain_len = chain_len
-        self.condition = condition
-        self.operator = operator
+        self.condition = _resolve_condition(condition)
+        self.operator = _resolve_operator(operator)
         
         self.config_start = 0.0
         self.config_limit = 10.0

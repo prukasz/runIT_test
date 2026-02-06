@@ -50,11 +50,9 @@ class BlockSet(Block):
         super().__init__(idx=idx, block_type=block_types_t.BLOCK_SET, ctx=ctx)
         
         # Add inputs: [target, value]
-        self.add_inputs([target, value])
+        self.add_inputs([value, target])
         
-        # Output 0: ENO (Boolean)
-        self._add_output(mem_types_t.MEM_B, data=True)
-    
+
     def pack_data(self):
         """SET block has no custom data packets."""
         return []
