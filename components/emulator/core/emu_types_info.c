@@ -126,7 +126,7 @@ const char* EMU_OWNER_TO_STR(emu_owner_t owner) {
         case EMU_OWNER_mem_access_parse_node_recursive: return "mem_access_parse_node_recursive";
         case EMU_OWNER__resolve_mem_offset: return "_resolve_mem_offset";
         case EMU_OWNER_mem_get: return "mem_get";
-        case EMU_OWNER_block_check_EN: return "block_check_in_true";
+        case EMU_OWNER_block_check_in_true: return "block_check_in_true";
         default: return "UNKNOWN_OWNER";
     }
 }

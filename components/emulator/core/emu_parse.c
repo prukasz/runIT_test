@@ -149,13 +149,13 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
             parse_status |= STATUS_FILLED_VARS;
             break;
         case ORD_PARSE_VARIABLES_ARR_DATA:
-            EMU_GUARD_ORDER(STATUS_FILLED_VARS);
             res = parse_dispatch(source, PACKET_H_INSTANCE_ARR_DATA, NULL);
             parse_status |= STATUS_FILLED_VARS;
             break;
 
         
         case ORD_PARSE_CODE_CFG:
+            EMU_GUARD_ORDER(STATUS_CREATED_BLOCKS);
             LOG_I(TAG, "Parsing code configuration (blocks list)");
             res = parse_dispatch(source, PACKET_H_CODE_CFG, code_handle);
             parse_status |= STATUS_CREATED_BLOCKS;

@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
+#include "inttypes.h"
 
 /*********************************************************************************************** *
 IDEA: we have 2 structs for logging: emu_result_t for errors and emu_report_t for reports / success logs

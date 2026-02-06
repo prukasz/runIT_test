@@ -431,7 +431,7 @@ if __name__ == "__main__":
     
     # Add user variables
     code.add_variable(mem_types_t.MEM_F, "input_a", data=10.0)
-    code.add_variable(mem_types_t.MEM_F, "input_b", data=20.0)
+    code.add_variable(mem_types_t.MEM_F, "input_b", data=[1,2,3,4,5], dims=[5])
     code.add_variable(mem_types_t.MEM_F, "output", data=0.0)
     code.add_variable(mem_types_t.MEM_B, "enable", data=True)
     
@@ -447,8 +447,8 @@ if __name__ == "__main__":
     )
     BlockMath = code.add_math(
         idx = 1,
-        expression = "in_1 *sqrt(cos(in_2))",
-        connections = [Ref("input_a"), Ref("input_b")],
+        expression = "in_1 * in_2",
+        connections = [Ref("input_a"), Ref("input_b")[2]],
         en=block_clok.out[0]
     )
 

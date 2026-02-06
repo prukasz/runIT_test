@@ -46,10 +46,42 @@ When GPIO_2 rising edge occurs, the SR block will reset, affecting the output st
 ***************************************************************************/
 
 
+/**
+ * @brief Main function for clock block 
+ * @param block Handle to the block instance
+ * @return emu_result_t.cxode EMU_OK on success, error code otherwise
+ * @note Inputs: EN[0], PERIOD[1], WIDTH[2]
+ * @note Outputs: Q[0]
+ * @note Packet [packet_id:u8] + cfg: ([period:u32][width:u32])
 
+ */
 emu_result_t block_clock(block_handle_t block);
+
+
+/**
+ * @brief Parser function for clock block configuration
+ * @param packet_data Pointer to the packet data with configuration
+ * @param packet_len Length of the packet data
+ * @param block_ptr Pointer to the block instance to configure
+ * @return emu_result_t.code EMU_OK on success, error code otherwise
+ * @note Packet [packet_id:u8] + cfg: ([period:u32][width:u32])
+ * @note Packet ID: BLOCK_PKT_CFG (0x01)
+ * @example Packet data for config: [0x01][0xE8 0x03 0x00 0x00][0xF4 0x01 0x00 0x00] (Period=1000ms, Width=500ms)
+ */
 emu_result_t block_clock_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
+
+/**
+ * @brief Verification function for clock block configuration
+ * @param block Handle to the block instance to verify
+ * @return emu_result_t.code EMU_OK on success, error code otherwise
+ * @note Checks if the configuration parameters are valid and exists 
+ */
 emu_result_t block_clock_verify(block_handle_t block);
+
+/**
+ * @brief Free function for clock block
+ * @param block Handle to the block instance to free
+ */
 void block_clock_free(block_handle_t block);
 
 

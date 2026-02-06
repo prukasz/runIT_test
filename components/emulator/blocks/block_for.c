@@ -61,33 +61,32 @@ static inline bool flt_eq(float a, float b) {
     return fabsf(a - b) < FLT_EPSILON;
 }
 
-/* ============================================================================
-    EXECUTION LOGIC
-   ============================================================================ */
+/*-------------------------------BLOCK IMPLEMENTATION---------------------------------------------- */
 
 #undef OWNER
 #define OWNER EMU_OWNER_block_for
-emu_result_t block_for(block_handle_t src) {
-    emu_result_t res = {.code = EMU_OK};
+emu_result_t block_for(block_handle_t block) {
+    emu_result_t res = EMU_RESULT_OK();
     
-    bool EN = block_check_in_true(src, 0);
+    bool EN = block_check_in_true(block, 0);
     
-    if (!EN) { RET_OKD(src->cfg.block_idx, "Block Disabled"); }
-    block_for_handle_t* config = (block_for_handle_t*)src->custom_data;
-    if (!config) RET_ED(EMU_ERR_NULL_PTR, src->cfg.block_idx, 0, "No custom data");
+    if (!EN) {RET_OK_INACTIVE(block->cfg.block_idx);}
+
+    block_for_handle_t* config = (block_for_handle_t*)block->custom_data;
+    
 
     // 3. Update cached parameters only if inputs changed
-    if (block_in_updated(src, BLOCK_FOR_IN_START)) {
-        MEM_GET(&config->cached_start, src->inputs[BLOCK_FOR_IN_START]);
-    }
+    if (block_in_updated(block, BLOCK_FOR_IN_START)) {MEM_GET(&config->cached_start, block->inputs[BLOCK_FOR_IN_START]);}
     
     bool limit_changed = false;
-    if (block_in_updated(src, BLOCK_FOR_IN_STOP)) {
-        MEM_GET(&config->cached_end, src->inputs[BLOCK_FOR_IN_STOP]);
+
+    if (block_in_updated(block, BLOCK_FOR_IN_STOP)) {
+        MEM_GET(&config->cached_end, block->inputs[BLOCK_FOR_IN_STOP]);
         limit_changed = true;
     }
-    if (block_in_updated(src, BLOCK_FOR_IN_STEP)) {
-        MEM_GET(&config->cached_step, src->inputs[BLOCK_FOR_IN_STEP]);
+
+    if (block_in_updated(block, BLOCK_FOR_IN_STEP)) {
+        MEM_GET(&config->cached_step, block->inputs[BLOCK_FOR_IN_STEP]);
     }
 
     // Calculate limit adjustment on first run or when limit changes
@@ -109,11 +108,11 @@ emu_result_t block_for(block_handle_t src) {
 
     // Write EN output once (always true during loop)
     mem_var_t v_en = { .type = MEM_B, .data.val.b = true };
-    res = block_set_output(src, v_en, 0);
-    if (unlikely(res.code != EMU_OK)) RET_ED(res.code, src->cfg.block_idx, 0, "Set Out 0 fail");
+    res = block_set_output(block, v_en, 0);
+    if (unlikely(res.code != EMU_OK)) RET_ED(res.code, block->cfg.block_idx, 0, "Set Out 0 fail");
 
     while(1) {
-        // --- B. WARUNEK LOGICZNY PĘTLI (optimized with pre-calculated limit) ---
+        
         bool condition_met;
         switch (config->condition) {
             case FOR_COND_GT:  condition_met = (current_val > limit_adj); break;
@@ -125,19 +124,17 @@ emu_result_t block_for(block_handle_t src) {
 
         if (unlikely(!condition_met)) break;
 
-        // --- D. Write iterator output ---
+        // update iteration output
         mem_var_t v_iter = { .type = MEM_F, .data.val.f = current_val };
-        res = block_set_output(src, v_iter, 1);
-        if (unlikely(res.code != EMU_OK)) RET_ED(res.code, src->cfg.block_idx, 0, "Set Out 1 fail");
+        res = block_set_output(block, v_iter, 1);
+        if (unlikely(res.code != EMU_OK)) RET_ED(res.code, block->cfg.block_idx, 0, "[%"PRIu16"] Set Out 1 fail", block->cfg.block_idx);
 
-        // --- E. WYKONANIE DZIECI (CHILD BLOCKS) ---
-        // Check WTD only every 16 iterations for better performance
         if (unlikely(emu_loop_wtd_status())) {
-            RET_ED(EMU_ERR_BLOCK_FOR_TIMEOUT, src->cfg.block_idx, 0, "WTD triggered, elapsed time %lld, iteration %ld, wtd set to %lld ms", emu_loop_get_time(), iteration, emu_loop_get_wtd_max_skipped()*emu_loop_get_period()/1000);
+            RET_ED(EMU_ERR_BLOCK_FOR_TIMEOUT, block->cfg.block_idx, 0, "WTD triggered, elapsed time %"PRIu64", iteration %"PRIu32", wtd set to %"PRIu64" ms", emu_loop_get_time(), iteration, emu_loop_get_wtd_max_skipped()*emu_loop_get_period()/1000);
         }
 
         for (uint16_t b = 1; b <= config->chain_len; b++) {
-            block_handle_t child = code->blocks_list[src->cfg.block_idx + b];
+            block_handle_t child = code->blocks_list[block->cfg.block_idx + b];
             if (likely(child)) {
                 emu_block_reset_outputs_status(child);
                 
@@ -154,7 +151,6 @@ emu_result_t block_for(block_handle_t src) {
             }
         }
 
-        // --- F. KROK (STEP) - optimized for common ADD case ---
         if (likely(config->op == FOR_OP_ADD)) {
             current_val += step;
         } else {
@@ -170,7 +166,6 @@ emu_result_t block_for(block_handle_t src) {
         iteration++;
     }
 
-    // Przesunięcie globalnego iteratora o długość łańcucha, aby pominąć dzieci w głównej pętli execution_list
     emu_loop_iterator += config->chain_len;
     
     return EMU_RESULT_OK();

@@ -129,7 +129,7 @@ static __always_inline bool block_check_in_true(block_handle_t block, uint8_t nu
 
     //we report error but still return the value (false if error occurs)
     if (unlikely(err.code != EMU_OK)) {
-        EMU_REPORT_ERROR_WARN(err.code, EMU_OWNER_block_check_EN, block->cfg.block_idx, 1,  "block_check_in_true", "Failed to get EN value block %d", block->cfg.block_idx);
+        EMU_REPORT_ERROR_WARN(err.code, EMU_OWNER_block_check_in_true, block->cfg.block_idx, ++err.depth,  "block_check_in_true", "Failed to get EN value block %d, error %s", block->cfg.block_idx, EMU_ERR_TO_STR(err.code));
     }
     return en;
 }
@@ -140,7 +140,7 @@ static __always_inline bool block_check_in_true(block_handle_t block, uint8_t nu
  */
 static __always_inline emu_result_t block_set_output(block_handle_t block, mem_var_t var, uint8_t num) {
     //check if output can even exist
-    if (unlikely(num >= block->cfg.q_cnt)) {EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_set_output, block->cfg.block_idx, 0, "set output", "num exceeds total outs");}
+    if (unlikely(num >= block->cfg.q_cnt)) {EMU_RETURN_CRITICAL(EMU_ERR_BLOCK_INVALID_PARAM, EMU_OWNER_block_set_output, block->cfg.block_idx, 0, "block_set_output", "num exceeds total outs");}
     //as said just wrapper around mem_set
     return mem_set(var, block->outputs[num]);
 }

@@ -129,7 +129,7 @@ typedef enum {
     EMU_OWNER_mem_access_parse_node_recursive,
     EMU_OWNER__resolve_mem_offset,
     EMU_OWNER_mem_get,
-    EMU_OWNER_block_check_EN,
+    EMU_OWNER_block_check_in_true,
     EMU_OWNER_block_selector,
     EMU_OWNER_block_selector_parse,
     EMU_OWNER_block_selector_verify,

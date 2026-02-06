@@ -70,6 +70,20 @@ typedef struct __packed {
     uint16_t dims_idx;       /*Index in table of dimensions this table is stored in context for selected type*/ 
 }mem_instance_t; 
 
+/**Updated version idea? */
+// typedef struct __packed {
+//     mem_types_ptr_u data;    /*Data storage pointer*/          
+//     uint16_t context   : 3;  /*Context that isnstance shall belong to*/
+//     uint16_t type      : 4;  /*mem_types_t type*/
+//     uint16_t dims_cnt  : 4;  /*dimensions count in case of arrays > 0*/
+//     uint16_t updated   : 1;  /*Updated flag can be reseted each cycle */
+//     uint16_t is clearable :1;  /*Can updated flag be cleared*/
+//     uint16_t is_standalone :1;  /*variable is not stored in context heap but points to outer memory*/
+//     uint16_t is_mutable :1; /*can be edited in code
+//     uint16_t reserved   :1;
+//     uint16_t dims_idx;       /*Index in table of dimensions this table is stored in context for selected type*/ 
+// }mem_instance_t; 
+
 typedef struct mem_access_t mem_access_t; //forward declaration
 /**
 *@brief Provided index value, static or dynamic
