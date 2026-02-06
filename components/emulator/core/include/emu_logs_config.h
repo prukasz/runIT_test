@@ -12,7 +12,7 @@
 #define ENABLE_LOG_I
 #define ENABLE_LOG_D
 
-#define ENABLE_ERORR_BUFF//adds errors to error queue
+#define ENABLE_ERROR_BUFF//adds errors to error queue
 #define ENABLE_STATUS_BUFF //adds reports to report queue
 
 #define ENABLE_LOG_X_FROM_ERROR_MACROS //enable LOG_X from error macros

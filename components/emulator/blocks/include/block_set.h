@@ -5,21 +5,23 @@
 /****************************************************************************
                     SET BLOCK
                  ________________
-     -->VAL  [0]|            BOOL|[0]ENO     -->
-    -->TARGET[1 |                |
+     -->VAL  [0]|                |
+    -->TARGET[1]|                |
                 |        SET     |
                 |                |
                 |________________|
- 
+DESCRIPTION:
+SET VAL TO TAERGET
+INPUTS:
+- VAL (ANY): Value to be set. Can be of any type.
+- TARGET (ANY): Target variable to set. Can be of any type but should be compatible with VAL for speed
+OUTPUTS:
 ****************************************************************************/
 
 
 
 /**
- * @brief This block enable to set selected global variable provided in global reference,
- *  if this block has inputs [1,2,3] then will try to use their values as indices instead of
- *  static provided in global reference, if there is only input 0 -> Double, then block will set value 
- *  fetching all from global references provded
+ * @brief implementation of SET block
  */
 emu_result_t block_set(block_handle_t block_data);
 

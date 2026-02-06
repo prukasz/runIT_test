@@ -247,7 +247,7 @@ emu_result_t emu_loop_set_period(uint64_t period_us) {
         was_clamped = true;
     }
 
-    uint64_t old_period = loop_handle->timer.loop_period;
+    //uint64_t old_period = loop_handle->timer.loop_period;
     loop_handle->timer.loop_period = period_us;
 
     if (loop_handle->timer.loop_status == LOOP_RUNNING) {

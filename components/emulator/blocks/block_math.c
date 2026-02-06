@@ -200,7 +200,6 @@ emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_
             err = _parse_instructions(payload, payload_len, expr);
             break;
         default:
-            LOG_W(TAG, "Unknown packet_id: 0x%02X", packet_id);
             break;
     }
     

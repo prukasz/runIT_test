@@ -6,7 +6,6 @@
 #include <math.h>
 #include <float.h>
 #include <string.h>
-#include <stdlib.h>
 
 static const char* TAG = __FILE_NAME__;
 
@@ -42,18 +41,19 @@ typedef struct {
 static __always_inline bool is_true(float a) {return a > 0.5f;}
 static __always_inline float bool_to_float(bool val) {return val ? 1.0f : 0.0f;}
 
+/*-------------------------------BLOCK IMPLEMENTATION---------------------------------------------- */
+
 #undef OWNER
 #define OWNER EMU_OWNER_block_logic
 emu_result_t block_logic(block_handle_t block) {
     //necessary checks for block execution
-    if (!emu_block_check_inputs_updated(block)) {REP_OKD(block->cfg.block_idx, "Block logic %d inactive (EN not updated)", block->cfg.block_idx);}
-    if(!block_check_in_true(block, 0)){REP_OKD(block->cfg.block_idx, "Block logic %d inactive (EN not enabled)", block->cfg.block_idx);}
+    if (!emu_block_check_inputs_updated(block)||!block_check_in_true(block, 0)) {RET_OK_INACTIVE(block->cfg.block_idx);}
 
     //stack opertatin variables
     logic_expression_t* eval = (logic_expression_t*)block->custom_data;
     float stack[16]; 
     int8_t over_top = 0;
-    float val_a, val_b; 
+    
     emu_result_t res;
 
     //this part gets all inputs first so we don't have to access memory multiple times during eval
@@ -65,7 +65,9 @@ emu_result_t block_logic(block_handle_t block) {
         }
     }
 
-    //execute all instructions for comparisons
+    float val_a, val_b; //temp variables for operations
+
+
     for (int8_t i = 0; i < eval->count; i++) {
         logic_instruction_t *ins = &(eval->code[i]);
           
@@ -142,7 +144,7 @@ emu_result_t block_logic(block_handle_t block) {
                 break;
 
             default:
-                RET_ED(EMU_ERR_INVALID_DATA, block->cfg.block_idx, 0, "Invalid instruction: %d", ins->op);
+                RET_ED(EMU_ERR_INVALID_DATA, block->cfg.block_idx, 0, "[%"PRIu16"] Invalid instruction: %d", block->cfg.block_idx, ins->op);
         }
     }
 
@@ -155,17 +157,11 @@ emu_result_t block_logic(block_handle_t block) {
     v_out.data.val.b = final_bool;
     res = block_set_output(block, v_out, 1);
 
-    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, ++res.depth, "Output acces error: %s", EMU_ERR_TO_STR(res.code));}
-    REP_OKD(block->cfg.block_idx, "[%d]result: %s", block->cfg.block_idx, final_bool ? "TRUE" : "FALSE");
-    return res;
+    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, ++res.depth, "[%"PRIu16"] Output acces error: %s",block->cfg.block_idx,  EMU_ERR_TO_STR(res.code));}
+    return EMU_RESULT_OK();
 }
 
-
-/* ============================================================================
-    PARSING LOGIC - New packet-based approach
-    Packet format: [block_idx:u16][block_type:u8][packet_id:u8][data...]
-   ============================================================================ */
-
+/*-------------------------------BLOCK PARSER------------------------------------------------------- */
 /**
  * @brief Parse constants packet
  * Format: [count:u8][float0][float1]...
@@ -183,8 +179,6 @@ static emu_err_t _parse_logic_constants(const uint8_t *data, uint16_t len, logic
     for (uint8_t i = 0; i < count; i++) {
         memcpy(&expr->constant_table[i], &data[1 + i * sizeof(float)], sizeof(float));
     }
-    
-    LOG_I(TAG, "Parsed %d logic constants", count);
     return EMU_OK;
 }
 
@@ -208,7 +202,6 @@ static emu_err_t _parse_logic_instructions(const uint8_t *data, uint16_t len, lo
         expr->code[i].input_index = data[1 + i * 2 + 1];
     }
     
-    LOG_I(TAG, "Parsed %d logic instructions", count);
     return EMU_OK;
 }
 
@@ -217,22 +210,18 @@ static emu_err_t _parse_logic_instructions(const uint8_t *data, uint16_t len, lo
 emu_result_t block_logic_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block_ptr)
 {
     block_handle_t block = (block_handle_t)block_ptr;
-    if (!block) RET_E(EMU_ERR_NULL_PTR, "NULL block pointer");
+    if (!block) RET_E(EMU_ERR_NULL_PTR, "[%"PRIu16"] NULL block pointer", block->cfg.block_idx);
     
     // Packet: [packet_id:u8][data...]
-    if (packet_len < 1) RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet too short");
+    if (packet_len < 1) RET_E(EMU_ERR_PACKET_INCOMPLETE, "[%"PRIu16"] Packet too short", block->cfg.block_idx);
     
     uint8_t packet_id = packet_data[0];
     const uint8_t *payload = &packet_data[1];
     uint16_t payload_len = packet_len - 1;
     
     // Allocate custom data if not exists
-    if (!block->custom_data) {
-        block->custom_data = calloc(1, sizeof(logic_expression_t));
-        if (!block->custom_data) {
-            RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "No memory for logic custom_data");
-        }
-    }
+    block->custom_data = calloc(1, sizeof(logic_expression_t));
+    if (!block->custom_data) {RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "[%"PRIu16"] No memory for logic custom_data", block->cfg.block_idx);}
     
     logic_expression_t *expr = (logic_expression_t*)block->custom_data;
     emu_err_t err = EMU_OK;
@@ -245,33 +234,17 @@ emu_result_t block_logic_parse(const uint8_t *packet_data, const uint16_t packet
             err = _parse_logic_instructions(payload, payload_len, expr);
             break;
         default:
-            LOG_W(TAG, "Unknown logic packet_id: 0x%02X", packet_id);
             break;
     }
     
     if (err != EMU_OK) {
-        RET_ED(err, block->cfg.block_idx, 0, "Logic parse error for packet_id 0x%02X", packet_id);
+        RET_ED(err, block->cfg.block_idx, 0, "[%"PRIu16"] Logic parse error for packet_id 0x%02X", block->cfg.block_idx, packet_id);
     }
     
     return EMU_RESULT_OK();
 }
 
-static emu_err_t _clear_logic_expression_internals(logic_expression_t* expr){
-    if(expr->code) free(expr->code);
-    if(expr->constant_table) free(expr->constant_table);
-    return EMU_OK;
-}
-
-void block_logic_free(block_handle_t block){
-    if(block && block->custom_data){
-        logic_expression_t* expr = (logic_expression_t*)block->custom_data;
-        _clear_logic_expression_internals(expr);
-        free(expr);
-        block->custom_data = NULL;
-        LOG_D(TAG, "Cleared logic block data");
-    }
-    return;
-}
+/*-------------------------------BLOCK VERIFIER---------------------------------------------- */
 
 #undef OWNER
 #define OWNER EMU_OWNER_block_logic_verify
@@ -284,3 +257,22 @@ emu_result_t block_logic_verify(block_handle_t block) {
 
     return EMU_RESULT_OK();
 }
+
+/*-------------------------------BLOCK FREE FUNCTION---------------------------------------------- */
+
+
+static void _clear_logic_expression_internals(logic_expression_t* expr){
+    if(expr->code) free(expr->code);
+    if(expr->constant_table) free(expr->constant_table);
+}
+
+void block_logic_free(block_handle_t block){
+    if(block && block->custom_data){
+        logic_expression_t* expr = (logic_expression_t*)block->custom_data;
+        _clear_logic_expression_internals(expr);
+        free(expr);
+        block->custom_data = NULL;
+    }
+}
+
+
