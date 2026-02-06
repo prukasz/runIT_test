@@ -86,12 +86,12 @@ Poniżej znajduje się aktualny stan prac nad projektem runIT:
 - 🏗️ Dobór konkretnych rozwiązań 
 - 🏗️ Live debugging i error-handling
 - 🏗️ Python: środowisko testowe
-- [x] Implemetacja bloków GPIO
-- [x] Implementacja danych systemowych ( napięcie, prąd poszeczególnych ścierzek)
-- [x] Implementacja bloku SPI 
-- [x] Dodanie wsparcia do JSON oraz stringów (i bloków do nich) 
-- [x] Projekt PCB
-- [x] Implementacja komunikacji WiFi
-- [x] Aplikackja mobilna
-- [x] Integracja z Home Assistant (MQTT) 
-- [x] **Range Extender** (Moduł dalekiego zasięgu)
+- [/] Implemetacja bloków GPIO
+- [/] Implementacja danych systemowych ( napięcie, prąd poszeczególnych ścierzek)
+- [/] Implementacja bloku SPI 
+- [/] Dodanie wsparcia do JSON oraz stringów (i bloków do nich) 
+- [/] Projekt PCB
+- [/] Implementacja komunikacji WiFi
+- [/] Aplikackja mobilna
+- [/] Integracja z Home Assistant (MQTT) 
+- [/] **Range Extender** (Moduł dalekiego zasięgu)
