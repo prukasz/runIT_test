@@ -90,6 +90,83 @@ class Code:
         return Ref(alias)
     
     # ========================================================================
+    # Internal Helpers — resolve aliases to Refs
+    # ========================================================================
+
+    @staticmethod
+    def _resolve_ref(value):
+        """
+        If *value* is already a Ref  → return as-is.
+        If it is a str              → wrap in Ref(value).
+        If it is int / float / None → return as-is (constant or absent).
+        """
+        from MemAcces import Ref
+        if value is None or isinstance(value, (int, float, Ref)):
+            return value
+        if isinstance(value, str):
+            return Ref(value)
+        raise TypeError(f"Cannot resolve {type(value)} to Ref")
+
+    @staticmethod
+    def _extract_refs_from_expr(expression: str):
+        """
+        Scan *expression* for quoted aliases  "alias"  or  block output
+        tokens  blk_N.out[M]  and replace each unique one with in_N
+        (starting at in_1).  Returns (rewritten_expr, connections_list).
+
+        Supported token forms inside the expression string:
+            "my_var"          → Ref("my_var")
+            "my_arr"[2]       → Ref("my_arr")[2]
+            blk_3.out[1]      → block-output Ref  (alias = "3_q_1")
+
+        Anything already written as in_N is left untouched.
+        Bare numbers are left untouched (they become constants in the parser).
+        """
+        import re
+        from MemAcces import Ref
+
+        refs: list = []          # ordered unique refs
+        alias_to_idx: dict = {}  # alias_key → in_N index (1-based)
+
+        def _next_idx():
+            return len(refs) + 1
+
+        def _register(alias_key: str, ref_obj):
+            """Register a ref and return its in_N token."""
+            if alias_key not in alias_to_idx:
+                idx = _next_idx()
+                alias_to_idx[alias_key] = idx
+                refs.append(ref_obj)
+            return f'in_{alias_to_idx[alias_key]}'
+
+        result = expression
+
+        # 1) block output tokens:  blk_<N>.out[<M>]  (no quotes)
+        blk_pat = re.compile(r'blk_(\d+)\.out\[(\d+)\]')
+        def _replace_blk(m):
+            bidx, oidx = int(m.group(1)), int(m.group(2))
+            key = f'{bidx}_q_{oidx}'
+            return _register(key, Ref(key))
+        result = blk_pat.sub(_replace_blk, result)
+
+        # 2) quoted aliases with optional array index:  "alias"[idx]
+        #    idx can be a number or a "ref" (will recurse)
+        quoted_pat = re.compile(r'"([^"]+)"(?:\[(\d+)\])?')
+        def _replace_quoted(m):
+            alias = m.group(1)
+            arr_idx = m.group(2)
+            if arr_idx is not None:
+                key = f'{alias}[{arr_idx}]'
+                ref = Ref(alias)[int(arr_idx)]
+            else:
+                key = alias
+                ref = Ref(alias)
+            return _register(key, ref)
+        result = quoted_pat.sub(_replace_quoted, result)
+
+        return result, refs
+
+    # ========================================================================
     # Block Creation (Factory Methods)
     # ========================================================================
     
@@ -100,19 +177,33 @@ class Code:
                  en=None) -> 'BlockMath':
         """
         Create and add a Math block.
-        
-        :param idx: Block index
-        :param expression: Math expression (e.g., "in_1 * 3.14 + in_2")
-        :param connections: List of Refs for in_1, in_2, etc.
-        :param en: Enable input Ref (optional)
-        :return: The created BlockMath instance
+
+        Two calling styles:
+
+        **Classic (in_N)**::
+
+            code.add_math(idx=1,
+                          expression="in_1 * 3.14 + in_2",
+                          connections=[Ref("speed"), Ref("offset")])
+
+        **Alias (new)**::
+
+            code.add_math(idx=1,
+                          expression='"speed" * 3.14 + "offset"')
+
+        Quoted aliases are auto-resolved to Ref objects and mapped to in_N.
+        Block outputs can be written as  blk_3.out[1].
+        If *connections* is provided the expression is used as-is (classic mode).
         """
         from BlockMath import BlockMath
+        en = self._resolve_ref(en)
+        if connections is None:
+            expression, connections = self._extract_refs_from_expr(expression)
         block = BlockMath(
             idx=idx,
             ctx=self.blocks_ctx,
             expression=expression,
-            connections=connections,
+            connections=connections if connections else None,
             en=en
         )
         return self.add_block(block)
@@ -133,16 +224,19 @@ class Code:
         """
         return Block(idx=idx, block_type=block_type, ctx=self.blocks_ctx)
     
-    def add_set(self, idx: int, target: 'Ref', value: 'Ref') -> 'BlockSet':
+    def add_set(self, idx: int, target=None, value=None) -> 'BlockSet':
         """
         Create and add a SET block.
-        
-        :param idx: Block index
-        :param target: Ref to target variable
-        :param value: Ref to source value
-        :return: The created BlockSet instance
+
+        *target* and *value* accept a Ref **or** a plain string alias
+        (auto-wrapped in Ref)::
+
+            code.add_set(idx=5, target="motor_speed", value="calculated")
+            code.add_set(idx=5, target=Ref("motor_speed"), value=math.out[1])
         """
         from BlockSet import BlockSet
+        target = self._resolve_ref(target)
+        value  = self._resolve_ref(value)
         block = BlockSet(idx=idx, ctx=self.blocks_ctx, target=target, value=value)
         return self.add_block(block)
     
@@ -165,6 +259,9 @@ class Code:
         from BlockTimer import BlockTimer, TimerType
         if timer_type is None:
             timer_type = TimerType.TON
+        en  = self._resolve_ref(en)
+        rst = self._resolve_ref(rst)
+        pt  = self._resolve_ref(pt)
         block = BlockTimer(idx=idx, ctx=self.blocks_ctx, timer_type=timer_type, pt=pt, en=en, rst=rst)
         return self.add_block(block)
     
@@ -190,6 +287,12 @@ class Code:
         from BlockCounter import BlockCounter, CounterMode
         if mode is None:
             mode = CounterMode.ON_RISING
+        cu    = self._resolve_ref(cu)
+        cd    = self._resolve_ref(cd)
+        reset = self._resolve_ref(reset)
+        step  = self._resolve_ref(step)
+        limit_max = self._resolve_ref(limit_max)
+        limit_min = self._resolve_ref(limit_min)
         block = BlockCounter(
             idx=idx, ctx=self.blocks_ctx,
             cu=cu, cd=cd, reset=reset,
@@ -213,6 +316,9 @@ class Code:
         :return: The created BlockClock instance
         """
         from BlockClock import BlockClock
+        en = self._resolve_ref(en)
+        period_ms = self._resolve_ref(period_ms)
+        width_ms  = self._resolve_ref(width_ms)
         block = BlockClock(idx=idx, ctx=self.blocks_ctx, period_ms=period_ms, width_ms=width_ms, en=en)
         return self.add_block(block)
     
@@ -223,39 +329,124 @@ class Code:
                   en=None) -> 'BlockLogic':
         """
         Create and add a Logic block.
-        
-        :param idx: Block index
-        :param expression: Logic expression (e.g., "(in_1 > 50) && (in_2 < 100)")
-        :param connections: List of Refs for in_1, in_2, etc.
-        :param en: Enable input Ref
-        :return: The created BlockLogic instance
+
+        Two calling styles:
+
+        **Classic (in_N)**::
+
+            code.add_logic(idx=1,
+                           expression="(in_1 > 50) && (in_2 < 100)",
+                           connections=[Ref("temp"), Ref("press")])
+
+        **Alias (new)**::
+
+            code.add_logic(idx=1,
+                           expression='("temp" > 50) && ("press" < 100)')
+
+        Block outputs: ``blk_3.out[1] > 10``.
+        If *connections* is provided the expression is used as-is.
         """
         from BlockLogic import BlockLogic
-        block = BlockLogic(idx=idx, ctx=self.blocks_ctx, expression=expression, connections=connections, en=en)
+        en = self._resolve_ref(en)
+        if connections is None:
+            expression, connections = self._extract_refs_from_expr(expression)
+        block = BlockLogic(idx=idx, ctx=self.blocks_ctx, expression=expression,
+                           connections=connections if connections else None, en=en)
         return self.add_block(block)
     
+    @staticmethod
+    def _parse_for_expr(expr: str):
+        """
+        Parse a C-style for expression into (start, condition_str, limit, operator_str, step).
+
+        Accepted formats (semicolon-separated, iterator name is ignored)::
+
+            "i = 0; i < 10; i += 1"
+            "i = 0; i < threshold; i += 1"
+
+        *start*, *limit*, *step* are returned as ``float`` when numeric,
+        or as ``Ref(alias)`` when they look like a variable name.
+        """
+        import re
+        from MemAcces import Ref
+
+        parts = [p.strip() for p in expr.split(';')]
+        if len(parts) != 3:
+            raise ValueError(f"For expression must have 3 semicolon-separated parts, got {len(parts)}: '{expr}'")
+
+        # --- init:  <var> = <value> ---
+        init_m = re.match(r'(\w+)\s*=\s*(.+)', parts[0])
+        if not init_m:
+            raise ValueError(f"Cannot parse init part: '{parts[0]}'")
+        start_tok = init_m.group(2).strip()
+
+        # --- condition:  <var> <op> <value> ---
+        cond_m = re.match(r'\w+\s*(<=|>=|<|>)\s*(.+)', parts[1])
+        if not cond_m:
+            raise ValueError(f"Cannot parse condition part: '{parts[1]}'")
+        cond_str = cond_m.group(1)
+        limit_tok = cond_m.group(2).strip()
+
+        # --- step:  <var> <op>= <value>  OR  <var> = <var> <op> <value> ---
+        step_m = re.match(r'\w+\s*([+\-*/])=\s*(.+)', parts[2])
+        if not step_m:
+            # try  i = i + 1  form
+            step_m2 = re.match(r'\w+\s*=\s*\w+\s*([+\-*/])\s*(.+)', parts[2])
+            if not step_m2:
+                raise ValueError(f"Cannot parse step part: '{parts[2]}'")
+            step_m = step_m2
+        op_str = step_m.group(1)
+        step_tok = step_m.group(2).strip()
+
+        def _to_val(tok):
+            """Number → float, else → Ref."""
+            # strip optional quotes
+            tok = tok.strip('"').strip("'")
+            try:
+                return float(tok)
+            except ValueError:
+                return Ref(tok)
+
+        return _to_val(start_tok), cond_str, _to_val(limit_tok), op_str, _to_val(step_tok)
+
     def add_for(self,
                 idx: int,
                 chain_len: int,
+                expr: str = None,
                 start=0.0, limit=10.0, step=1.0,
                 condition=None, operator=None,
                 en=None) -> 'BlockFor':
         """
         Create and add a FOR loop block.
-        
-        :param idx: Block index
-        :param chain_len: Number of blocks in loop body
-        :param start: Initial iterator value (constant or Ref)
-        :param limit: Loop end limit (constant or Ref)
-        :param step: Iterator step (constant or Ref)
-        :param condition: Loop condition (LT, GT, etc.)
-        :param operator: Iterator operator (ADD, SUB, etc.)
-        :param en: Enable input Ref
-        :return: The created BlockFor instance
+
+        Two calling styles:
+
+        **C-style expression (new)**::
+
+            code.add_for(idx=1, chain_len=2,
+                         expr="i = 0; i < 10; i += 1")
+
+        Variable names in the expression become Ref automatically::
+
+            code.add_for(idx=1, chain_len=2,
+                         expr="i = 0; i < threshold; i += 1")
+
+        **Classic keywords (still works)**::
+
+            code.add_for(idx=1, chain_len=2,
+                         start=0, limit=10, step=1,
+                         condition="<", operator="+")
+
+        :param expr: C-style for expression (takes priority over keywords)
         """
         from BlockFor import BlockFor, _resolve_condition, _resolve_operator
+        en = self._resolve_ref(en)
+
+        if expr is not None:
+            start, condition, limit, operator, step = self._parse_for_expr(expr)
+
         condition = _resolve_condition(condition)
-        operator = _resolve_operator(operator)
+        operator  = _resolve_operator(operator)
         block = BlockFor(
             idx=idx, ctx=self.blocks_ctx, chain_len=chain_len,
             start=start, limit=limit, step=step,
@@ -481,18 +672,16 @@ if __name__ == "__main__":
     # Block 0: Math - calculate error (setpoint - temperature)
     math_block = code.add_math(
         idx=0,
-        expression="in_1 - in_2",
-        connections=[code.ref("setpoint"), code.ref("temperature")],
-        en=code.ref("start_btn")
+        expression='"setpoint" - "temperature"',
+        en="start_btn"
     )
     print(f"[0] {math_block}")
     
     # Block 1: Logic - check if temperature is in range
     logic_block = code.add_logic(
         idx=1,
-        expression="(in_1 > 20) && (in_1 < 80)",
-        connections=[code.ref("temperature")],
-        en=code.ref("start_btn")
+        expression='("temperature" > 20) && ("temperature" < 80)',
+        en="start_btn"
     )
     print(f"[1] {logic_block}")
     
@@ -502,7 +691,7 @@ if __name__ == "__main__":
         timer_type=TimerType.TON,
         pt=2000,
         en=logic_block.out[1],  # Use logic result as enable
-        rst=code.ref("reset_btn")
+        rst="reset_btn"
     )
     print(f"[2] {timer_block}")
     
@@ -511,7 +700,7 @@ if __name__ == "__main__":
         idx=3,
         cu=timer_block.out[0],  # Count on timer output
         cd=None,
-        reset=code.ref("reset_btn"),
+        reset="reset_btn",
         step=1.0,
         limit_max=100.0,
         limit_min=0.0,
@@ -525,7 +714,7 @@ if __name__ == "__main__":
         idx=4,
         period_ms=1000.0,
         width_ms=500.0,
-        en=code.ref("start_btn")
+        en="start_btn"
     )
     print(f"[4] {clock_block}")
     
@@ -544,21 +733,17 @@ if __name__ == "__main__":
     # Block 6: Set - assign calculated value to motor_speed
     set_block = code.add_set(
         idx=6,
-        target=code.ref("motor_speed"),
-        value=math_block.out[1]  # RESULT from math block
+        target="motor_speed",
+        value=math_block.out[1]
     )
     print(f"[6] {set_block}")
     
     # Block 7: For loop - iterate 5 times
     for_block = code.add_for(
         idx=7,
-        chain_len=2,  # 2 blocks in loop body
-        start=0.0,
-        limit=5.0,
-        step=1.0,
-        condition="<",
-        operator="+",
-        en=code.ref("start_btn")
+        chain_len=2,
+        expr="i = 0; i < 5; i += 1",
+        en="start_btn"
     )
     print(f"[7] {for_block}")
     

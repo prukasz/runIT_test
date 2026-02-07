@@ -481,28 +481,23 @@ if __name__ == "__main__":
         idx = 0,
         period_ms = 5000,
         width_ms= 1000,
-        en = Ref("enable")
+        en = "enable"
     )
     block_for = code.add_for(
         idx = 1,
         chain_len = 2,
-        start= 0,
-        limit = 10,
-        step = 1,
-        operator= "+",
-        condition= "<",
+        expr = "i = 0; i < 10; i += 1",
         en = block_clok.out[0]
     )
     block_math = code.add_math(
         idx = 2,
-        expression = "(in_1 * in_2) + in_3",
-        connections = [Ref("input_a"), Ref("input_b")[2], Ref("output")],
-        en=block_for.out[0]
+        expression = '("input_a" * "input_b"[2]) + "output"',
+        en = block_for.out[0]
     )
     block_set = code.add_set(
         idx = 3,
-        target=Ref("output"),
-        value=block_math.out[1]
+        target = "output",
+        value = block_math.out[1]
     )
 
 

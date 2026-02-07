@@ -4,6 +4,8 @@ emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_
 void block_math_free(block_handle_t block);
 emu_result_t block_math_verify(block_handle_t block);
 
+#define LOG_RESULT
+//#define LOG_INPUTS
 
 
 

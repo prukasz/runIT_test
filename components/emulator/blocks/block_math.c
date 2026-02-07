@@ -7,7 +7,7 @@
 #include <float.h>
 #include <string.h>
 
-#define LOG_RESULT
+
 
 static const char* TAG = __FILE_NAME__;
 #define STACK_MAX_DEPTH 16
@@ -65,7 +65,9 @@ emu_result_t block_math(block_handle_t block){
     float inputs[block->cfg.in_cnt];
     for(uint8_t i = 1; i < block->cfg.in_cnt; i++){
         MEM_GET(&inputs[i], block->inputs[i]);
+        #ifdef LOG_INPUTS
         LOG_I(TAG, "[%"PRIu16"] Input %d value: %f", block->cfg.block_idx, i, inputs[i]);
+        #endif
     }   
 
     float result = 0.0f;
