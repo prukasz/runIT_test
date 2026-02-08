@@ -205,4 +205,86 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
     return res;
 }
 
+#undef OWNER
+#define OWNER EMU_OWNER_emu_parse_blocks_verify_all
+emu_result_t emu_parse_verify_code(emu_code_handle_t code){
 
+    if (!code) {
+        RET_ED(EMU_ERR_NULL_PTR, 0, 0, "Code handle is NULL");
+    }
+    if (!code->blocks_list) {
+        RET_ED(EMU_ERR_NULL_PTR, 0, 0, "blocks_list is NULL");
+    }
+    if (code->total_blocks == 0) {
+        RET_WD(EMU_ERR_BLOCK_INVALID_PARAM, 0, 0, "total_blocks is 0 — nothing to verify");
+    }
+
+    for (uint16_t i = 0; i < code->total_blocks; i++) {
+        block_handle_t block = code->blocks_list[i];
+
+        // ---- 1. Block must exist ----
+        if (!block) {
+            RET_ED(EMU_ERR_NULL_PTR, i, 0, "Block[%"PRIu16"] is NULL", i);
+        }
+
+        // ---- 2. Block must have a main function registered ----
+        uint8_t btype = block->cfg.block_type;
+        if (!blocks_main_functions_table[btype]) {
+            RET_ED(EMU_ERR_BLOCK_INVALID_PARAM, i, 0,
+                   "Block[%"PRIu16"] type %u has no main function", i, btype);
+        }
+
+        // ---- 3. Verify connected inputs are not NULL ----
+        uint16_t mask = block->cfg.in_connceted_mask;
+        for (uint8_t in = 0; in < block->cfg.in_cnt; in++) {
+            if (mask & (1u << in)) {
+                // Input marked as connected — pointer must be valid
+                if (!block->inputs) {
+                    RET_ED(EMU_ERR_NULL_PTR, i, 0,
+                           "Block[%"PRIu16"] inputs array is NULL", i);
+                }
+                if (!block->inputs[in]) {
+                    RET_ED(EMU_ERR_NULL_PTR, i, 0,
+                           "Block[%"PRIu16"] input[%u] marked connected but ptr is NULL", i, in);
+                }
+                if (!block->inputs[in]->instance) {
+                    RET_ED(EMU_ERR_NULL_PTR, i, 0,
+                           "Block[%"PRIu16"] input[%u] instance is NULL", i, in);
+                }
+            }
+        }
+
+        // ---- 4. Verify outputs are not NULL ----
+        if (block->cfg.q_cnt > 0) {
+            if (!block->outputs) {
+                RET_ED(EMU_ERR_NULL_PTR, i, 0,
+                       "Block[%"PRIu16"] outputs array is NULL (q_cnt=%u)", i, block->cfg.q_cnt);
+            }
+            for (uint8_t q = 0; q < block->cfg.q_cnt; q++) {
+                if (!block->outputs[q]) {
+                    RET_ED(EMU_ERR_NULL_PTR, i, 0,
+                           "Block[%"PRIu16"] output[%u] ptr is NULL", i, q);
+                }
+                if (!block->outputs[q]->instance) {
+                    RET_ED(EMU_ERR_NULL_PTR, i, 0,
+                           "Block[%"PRIu16"] output[%u] instance is NULL", i, q);
+                }
+            }
+        }
+
+        // ---- 5. Dispatch block-specific verify if registered ----
+        emu_block_verify_func verify_fn = emu_block_verify_table[btype];
+        if (verify_fn) {
+            emu_result_t res = verify_fn(block);
+            if (res.code != EMU_OK) {
+                RET_ED(res.code, i, ++res.depth,
+                       "Block[%"PRIu16"] type %u verify failed", i, btype);
+            }
+        }
+
+        LOG_I(TAG, "Block[%"PRIu16"] type %u — OK", i, btype);
+    }
+
+    LOG_I(TAG, "All %"PRIu16" blocks verified OK", code->total_blocks);
+    return EMU_RESULT_OK();
+}

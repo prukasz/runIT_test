@@ -1,6 +1,4 @@
 """
-FullDump.py - Generates complete emulator dump for new API (PythonNew2XD)
-
 Outputs hex packets in correct order for C parser:
 1. Context configurations
 2. Variable instances 
@@ -24,20 +22,6 @@ from Code import Code
 # FULL DUMP CLASS
 # =============================================================================
 class FullDump:
-    """
-    Generates a complete hex dump of Code (blocks + variables) for transmission
-    to ESP32 emulator.
-    
-    Usage:
-        code = Code()
-        code.add_variable(...)
-        code.add_math(...)
-        
-        dump = FullDump(code)
-        with open("output.txt", "w") as f:
-            dump.write(f)
-    """
-    
     def __init__(self, code: Code):
         self.code = code
     
@@ -446,85 +430,4 @@ class FullDump:
                     packets.extend(data_pkts)
         
         return packets
-
-
-# =============================================================================
-# DEMO / TEST
-# =============================================================================
-if __name__ == "__main__":
-    from Enums import mem_types_t
-    from BlockMath import BlockMath
-    from BlockTimer import TimerType, BlockTimer
-    from BlockClock import BlockClock
-    from BlockCounter import CounterMode
-    from MemAcces import Ref
-    import io
-    
-    print("=" * 70)
-    print("FullDump Test - New API")
-    print("=" * 70)
-    
-    # Create code with some blocks
-    code = Code()
-    
-    # Add user variables
-    code.add_variable(mem_types_t.MEM_F, "input_a", data=1.1)
-    code.add_variable(mem_types_t.MEM_F, "input_b", data=[1,2,3,4,5], dims=[5])
-    code.add_variable(mem_types_t.MEM_F, "output", data=0.0)
-    code.add_variable(mem_types_t.MEM_B, "enable", data=True)
-    
-    # Add for loop (idx 0, 100 iterations, chain_len=2, always active)
-    
-    
-    # Add math block (idx 1) - part of for loop chain
-    block_clok = code.add_clock(
-        idx = 0,
-        period_ms = 5000,
-        width_ms= 1000,
-        en = "enable"
-    )
-    block_for = code.add_for(
-        idx = 1,
-        chain_len = 2,
-        expr = "i = 0; i < 10; i += 1",
-        en = block_clok.out[0]
-    )
-    block_math = code.add_math(
-        idx = 2,
-        expression = '("input_a" * "input_b"[2]) + "output"',
-        en = block_for.out[0]
-    )
-    block_set = code.add_set(
-        idx = 3,
-        target = "output",
-        value = block_math.out[1]
-    )
-
-
-    
-    print(f"\n{code}")
-    print(f"Blocks: {[str(b) for b in code.get_blocks_sorted()]}")
-    
-    # Generate dump to string
-    dump = FullDump(code)
-    output = io.StringIO()
-    dump.write(output)
-    
-    print("\n" + "=" * 70)
-    print("Generated Dump (with comments):")
-    print("=" * 70)
-    print(output.getvalue())
-    
-    # Also test raw output
-    print("\n" + "=" * 70)
-    print("Raw Dump (for transmission):")
-    print("=" * 70)
-    raw_output = io.StringIO()
-    dump.write_raw(raw_output)
-    print(raw_output.getvalue())
-    
-    # Save to file
-    with open("test_dump.txt", "w") as f:
-        dump.write(f)
-    print("\nDump saved to test_dump.txt")
 

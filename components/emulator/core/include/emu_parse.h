@@ -34,3 +34,4 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
 
 
 
+emu_result_t emu_parse_verify_code(emu_code_handle_t code);

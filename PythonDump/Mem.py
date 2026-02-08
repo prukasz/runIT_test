@@ -26,7 +26,7 @@ class instance_head_t(ct.Structure):
     uint16_t updated   : 1;  /*Updated flag can be used for block output variables*/
     uint16_t can_clear : 1;  /*Can updated flag be cleared*/
     uint16_t reserved  : 3;  /*padding*/
-"""
+    """
     _pack_ = 1
     _fields_ = [
         ("context",       ct.c_uint16, 3),
@@ -36,8 +36,6 @@ class instance_head_t(ct.Structure):
         ("can_clear",     ct.c_uint16, 1),
         ("reserved",      ct.c_uint16, 3),
     ]
-
-
 
 
 @dataclass 
@@ -128,11 +126,15 @@ class mem_context_t:
         Adds an instance to the context.
         :param alias: Unique string name to refer to this variable later.
         """
-        # 1. Calculate the next index for this type
+        #Calculate the next index for this type
         current_list = self.storage[type]
         next_idx = len(current_list)
 
-        # 2. Create Instance
+        if alias in self.alias_map:
+            raise ValueError(f"Alias '{alias}' already exists in Context {self.ctx_id}")
+        self.alias_map[alias] = (type, next_idx)
+
+        #Create Instance
         new_inst = mem_instance_t(
             ctx=self.ctx_id,
             type=type,
@@ -143,14 +145,7 @@ class mem_context_t:
             idx=next_idx
         )
         
-        # 3. Store
         current_list.append(new_inst)
-        
-        # 4. Register Alias
-        if alias in self.alias_map:
-            raise ValueError(f"Alias '{alias}' already exists in Context {self.ctx_id}")
-        self.alias_map[alias] = (type, next_idx)
-        
         return new_inst
 
     def get_ref(self, alias: str) -> Tuple[mem_types_t, int]:
@@ -159,7 +154,7 @@ class mem_context_t:
             raise KeyError(f"Alias '{alias}' not found in Context {self.ctx_id}")
         return self.alias_map[alias]
 
-    # ... [generate_packets_instances SAME AS BEFORE] ...
+
     def generate_packets_instances(self) -> List[bytes]:
         packets = []
         for m_type in sorted(self.storage.keys()):
@@ -244,10 +239,9 @@ class mem_context_t:
         return packets
 
     def generate_packets_data(self) -> List[bytes]:
-        """Generate all data packets (scalars first, then arrays). Legacy wrapper."""
+        """Generate all data packets (scalars first, then arrays)"""
         return self.generate_packets_scalar_data() + self.generate_packets_array_data()
 
-    # ... [packet_generate_cfg SAME AS BEFORE] ...
     def packet_generate_cfg(self) -> bytes:
         packet = struct.pack('<B', self.ctx_id)
         for m_type in mem_types_t:

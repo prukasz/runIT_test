@@ -1,8 +1,3 @@
-"""
-BlockLogic - Logic expression evaluator block.
-
-Evaluates boolean expressions with comparison and logical operators.
-"""
 import struct
 import re
 from typing import List, Optional, Union, Dict
@@ -53,7 +48,7 @@ class LogicExpression:
     Parses logic expressions into RPN instructions.
     
     Supports:
-    - Variables: in_1, in_2, ... (in_0 is reserved for EN)
+    - Variables: in_1, in_2, ... in_0 is reserved for EN
     - Constants: numeric values (stored as floats for comparison)
     - Comparison: >, <, ==, >=, <=
     - Logical: &&, ||, !
@@ -216,16 +211,7 @@ class BlockLogic(Block):
                  expression: str,
                  connections: Optional[List[Optional[Ref]]] = None,
                  en: Optional[Ref] = None):
-        """
-        Create a Logic block.
         
-        :param idx: Block index
-        :param ctx: Context for output variables
-        :param expression: Logic expression (e.g., "(in_1 > 50) && (in_2 < 100)")
-        :param connections: List of Refs for in_1, in_2, etc.
-        :param en: Enable input Ref (optional)
-        """
-        # 1. Parse expression
         self.parser = LogicExpression(expression)
         self.expression = expression
         
@@ -293,71 +279,3 @@ class BlockLogic(Block):
     def __repr__(self) -> str:
         return (f"BlockLogic(idx={self.idx}, expr='{self.expression}', "
                 f"in={len(self.in_conn)}, q={len(self.q_conn)})")
-
-
-# ============================================================================
-# DEMO / TEST
-# ============================================================================
-
-if __name__ == "__main__":
-    from MemAcces import AccessManager
-    
-    print("=" * 60)
-    print("BlockLogic Test")
-    print("=" * 60)
-    
-    # 1. Create context
-    ctx = mem_context_t(ctx_id=0)
-    
-    # Add variables
-    ctx.add(mem_types_t.MEM_F, alias="temperature", data=75.0)
-    ctx.add(mem_types_t.MEM_F, alias="pressure", data=30.0)
-    ctx.add(mem_types_t.MEM_B, alias="enable", data=True)
-    
-    # 2. Register context
-    AccessManager.reset()
-    manager = AccessManager.get_instance()
-    manager.register_context(ctx)
-    
-    # 3. Create block context
-    block_ctx = mem_context_t(ctx_id=1)
-    manager.register_context(block_ctx)
-    
-    # 4. Create Logic block
-    print("\n--- Create BlockLogic ---")
-    block = BlockLogic(
-        idx=40,
-        ctx=block_ctx,
-        expression="(in_1 > 50) && (in_2 < 100)",
-        connections=[Ref("temperature"), Ref("pressure")],
-        en=Ref("enable")
-    )
-    
-    print(f"Block: {block}")
-    print(f"\nParsed expression: {block.expression}")
-    print(f"Constants: {block.parser.constants}")
-    print(f"Instructions: {[(i.opcode.name, i.index) for i in block.parser.instructions]}")
-    
-    # 5. Pack all packets
-    print("\n--- Pack Configuration ---")
-    cfg_bytes = block.pack_cfg()
-    print(f"Config ({len(cfg_bytes)} bytes): {cfg_bytes.hex().upper()}")
-    
-    print("\n--- Pack Inputs ---")
-    for i, pkt in enumerate(block.pack_inputs()):
-        print(f"  Input {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Outputs ---")
-    for i, pkt in enumerate(block.pack_outputs()):
-        print(f"  Output {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Data ---")
-    for pkt in block.pack_data():
-        packet_id = pkt[4]
-        if packet_id == 0x00:
-            print(f"  Constants: {pkt.hex().upper()}")
-        elif packet_id == 0x10:
-            print(f"  Instructions: {pkt.hex().upper()}")
-    
-    print("\n" + "=" * 60)
-

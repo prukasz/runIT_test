@@ -1,8 +1,3 @@
-"""
-BlockFor - FOR loop block for iterative execution.
-
-Implements a FOR loop with configurable start, limit, step, condition and operator.
-"""
 import struct
 from typing import Optional, Union, List
 from enum import IntEnum
@@ -50,6 +45,8 @@ class ForOperator(IntEnum):
     DIV = 0x04  # iterator /= step
 
 
+"""Operator string mapping for user-friendly input.
+Accepts '+', '-', '*', '/' as operator inputs in BlockFor constructor."""
 _OPERATOR_STR_MAP = {
     "+": ForOperator.ADD,
     "-": ForOperator.SUB,
@@ -117,30 +114,14 @@ class BlockFor(Block):
                  condition = ForCondition.LT,
                  operator = ForOperator.ADD,
                  en: Optional[Ref] = None):
-        """
-        Create a FOR loop block.
-        
-        :param idx: Block index
-        :param ctx: Context for output variables
-        :param chain_len: Number of blocks in the loop body
-        :param start: Initial iterator value (constant or Ref)
-        :param limit: Loop end limit (constant or Ref)
-        :param step: Iterator step (constant or Ref)
-        :param condition: Loop continuation condition (ForCondition or str: '<', '>', '<=', '>=')
-        :param operator: Iterator modification operator (ForOperator or str: '+', '-', '*', '/')
-        :param en: Enable input Ref
-        """
+
         # Initialize base Block
         super().__init__(idx=idx, block_type=block_types_t.BLOCK_FOR, ctx=ctx)
         
         self.chain_len = chain_len
         self.condition = _resolve_condition(condition)
         self.operator = _resolve_operator(operator)
-        
-        self.config_start = 0.0
-        self.config_limit = 10.0
-        self.config_step = 1.0
-        
+         
         # Process parameters
         def process_param(arg, default_val):
             if isinstance(arg, (int, float)):
@@ -198,87 +179,3 @@ class BlockFor(Block):
         return (f"BlockFor(idx={self.idx}, chain={self.chain_len}, "
                 f"start={self.config_start}, limit={self.config_limit}, step={self.config_step}, "
                 f"cond={self.condition.name}, op={self.operator.name})")
-
-
-# ============================================================================
-# DEMO / TEST
-# ============================================================================
-
-if __name__ == "__main__":
-    from MemAcces import AccessManager
-    
-    print("=" * 60)
-    print("BlockFor Test")
-    print("=" * 60)
-    
-    # 1. Create context
-    ctx = mem_context_t(ctx_id=0)
-    
-    # Add variables
-    ctx.add(mem_types_t.MEM_B, alias="enable", data=True)
-    ctx.add(mem_types_t.MEM_F, alias="dyn_limit", data=20.0)
-    
-    # 2. Register context
-    AccessManager.reset()
-    manager = AccessManager.get_instance()
-    manager.register_context(ctx)
-    
-    # 3. Create block context
-    block_ctx = mem_context_t(ctx_id=1)
-    manager.register_context(block_ctx)
-    
-    # 4. Create FOR block
-    print("\n--- Create BlockFor ---")
-    for_block = BlockFor(
-        idx=50,
-        ctx=block_ctx,
-        chain_len=5,  # 5 blocks in loop body
-        start=0.0,
-        limit=10.0,
-        step=1.0,
-        condition=ForCondition.LT,
-        operator=ForOperator.ADD,
-        en=Ref("enable")
-    )
-    
-    print(f"Block: {for_block}")
-    
-    # 5. Pack all packets
-    print("\n--- Pack Configuration ---")
-    cfg_bytes = for_block.pack_cfg()
-    print(f"Config ({len(cfg_bytes)} bytes): {cfg_bytes.hex().upper()}")
-    
-    print("\n--- Pack Inputs ---")
-    for i, pkt in enumerate(for_block.pack_inputs()):
-        print(f"  Input {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Outputs ---")
-    for i, pkt in enumerate(for_block.pack_outputs()):
-        print(f"  Output {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Data ---")
-    for pkt in for_block.pack_data():
-        packet_id = pkt[4]
-        if packet_id == 0x00:
-            print(f"  Constants: {pkt.hex().upper()}")
-        elif packet_id == 0x10:
-            print(f"  Config: {pkt.hex().upper()}")
-    
-    # 6. Create FOR with dynamic limit
-    print("\n--- Create BlockFor (dynamic limit) ---")
-    for_block2 = BlockFor(
-        idx=51,
-        ctx=block_ctx,
-        chain_len=3,
-        start=0.0,
-        limit=Ref("dyn_limit"),  # Dynamic from variable
-        step=2.0,
-        condition=ForCondition.LTE,
-        operator=ForOperator.ADD,
-        en=Ref("enable")
-    )
-    
-    print(f"Block: {for_block2}")
-    
-    print("\n" + "=" * 60)
-

@@ -9,6 +9,11 @@
 
 static const char* TAG = __FILE_NAME__;
 
+#define LOG_INPUTS
+#define LOG_RESULTS
+
+#define STACK_MAX_DEPTH 16
+
 /*Aviable operations*/
 typedef enum {
     CMP_OP_VAR      = 0x00, 
@@ -46,22 +51,25 @@ static __always_inline float bool_to_float(bool val) {return val ? 1.0f : 0.0f;}
 #undef OWNER
 #define OWNER EMU_OWNER_block_logic
 emu_result_t block_logic(block_handle_t block) {
-    //necessary checks for block execution
     if (!emu_block_check_inputs_updated(block)||!block_check_in_true(block, 0)) {RET_OK_INACTIVE(block->cfg.block_idx);}
 
     //stack opertatin variables
     logic_expression_t* eval = (logic_expression_t*)block->custom_data;
-    float stack[16]; 
+    float stack[STACK_MAX_DEPTH]; 
     int8_t over_top = 0;
     
     emu_result_t res;
 
     //this part gets all inputs first so we don't have to access memory multiple times during eval
     float inputs[block->cfg.in_cnt];
-    //skip input 0 (EN)
+    memset(inputs, 0, sizeof(inputs)); // Initialize all to safe default
+    //skip input 0 (EN) in reading, but initialize it
     for (uint8_t i = 1; i < block->cfg.in_cnt; i++) {
         if(block->cfg.in_connceted_mask & (1 << i)){
             MEM_GET(&inputs[i], block->inputs[i]);
+            #ifdef LOG_INPUTS
+            LOG_I(TAG, "[%"PRIu16"] Input %d value: %f", block->cfg.block_idx, i, inputs[i]);
+            #endif
         }
     }
 
@@ -72,11 +80,20 @@ emu_result_t block_logic(block_handle_t block) {
         logic_instruction_t *ins = &(eval->code[i]);
           
         switch (ins->op) {
-            case CMP_OP_VAR: 
+            case CMP_OP_VAR:
+                if (over_top >= STACK_MAX_DEPTH) {
+                    RET_ED(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, 0, "[%"PRIu16"] Stack overflow at VAR", block->cfg.block_idx);
+                }
                 stack[over_top++] = inputs[ins->input_index];
                 break;
 
             case CMP_OP_CONST:
+                if (!eval->constant_table) {
+                    RET_ED(EMU_ERR_NULL_PTR, block->cfg.block_idx, 0, "[%"PRIu16"] Constant table is NULL (no constants packet received)", block->cfg.block_idx);
+                }
+                if (over_top >= STACK_MAX_DEPTH) {
+                    RET_ED(EMU_ERR_BLOCK_INVALID_PARAM, block->cfg.block_idx, 0, "[%"PRIu16"] Stack overflow at CONST", block->cfg.block_idx);
+                }
                 stack[over_top++] = eval->constant_table[ins->input_index];
                 break;
               
@@ -148,16 +165,20 @@ emu_result_t block_logic(block_handle_t block) {
         }
     }
 
-    //get final result
-    bool final_bool = (over_top > 0) ? is_true(stack[0]) : false;
-    
+    //get final result from top of stack
+    bool final_bool = (over_top > 0) ? is_true(stack[over_top - 1]) : false;
+    #ifdef LOG_RESULTS
+    LOG_I(TAG, "[%"PRIu16"] Final logic result: %s", block->cfg.block_idx, final_bool ? "true" : "false");
+    #endif
     //We set ENO and OUT
     mem_var_t v_out = { .type = MEM_B, .data.val.b = true};
     res = block_set_output(block, v_out, 0);
+    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, ++res.depth, "[%"PRIu16"] Output access error (ENO): %s",block->cfg.block_idx,  EMU_ERR_TO_STR(res.code));}
+    
     v_out.data.val.b = final_bool;
     res = block_set_output(block, v_out, 1);
-
-    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, ++res.depth, "[%"PRIu16"] Output acces error: %s",block->cfg.block_idx,  EMU_ERR_TO_STR(res.code));}
+    if (unlikely(res.code != EMU_OK)) {RET_ED(res.code, block->cfg.block_idx, ++res.depth, "[%"PRIu16"] Output access error (OUT): %s",block->cfg.block_idx,  EMU_ERR_TO_STR(res.code));}
+    
     return EMU_RESULT_OK();
 }
 
@@ -210,8 +231,6 @@ static emu_err_t _parse_logic_instructions(const uint8_t *data, uint16_t len, lo
 emu_result_t block_logic_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block_ptr)
 {
     block_handle_t block = (block_handle_t)block_ptr;
-    if (!block) RET_E(EMU_ERR_NULL_PTR, "[%"PRIu16"] NULL block pointer", block->cfg.block_idx);
-    
     // Packet: [packet_id:u8][data...]
     if (packet_len < 1) RET_E(EMU_ERR_PACKET_INCOMPLETE, "[%"PRIu16"] Packet too short", block->cfg.block_idx);
     
@@ -219,9 +238,11 @@ emu_result_t block_logic_parse(const uint8_t *packet_data, const uint16_t packet
     const uint8_t *payload = &packet_data[1];
     uint16_t payload_len = packet_len - 1;
     
-    // Allocate custom data if not exists
-    block->custom_data = calloc(1, sizeof(logic_expression_t));
-    if (!block->custom_data) {RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "[%"PRIu16"] No memory for logic custom_data", block->cfg.block_idx);}
+    // Allocate custom data only if it doesn't exist yet
+    if (!block->custom_data) {
+        block->custom_data = calloc(1, sizeof(logic_expression_t));
+        if (!block->custom_data) {RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "[%"PRIu16"] No memory for logic custom_data", block->cfg.block_idx);}
+    }
     
     logic_expression_t *expr = (logic_expression_t*)block->custom_data;
     emu_err_t err = EMU_OK;

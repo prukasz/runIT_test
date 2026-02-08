@@ -1,8 +1,3 @@
-"""
-BlockCounter - Up/Down counter block.
-
-Supports counting on rising edge or continuous accumulation.
-"""
 import struct
 from typing import Optional, Union, List
 from enum import IntEnum
@@ -61,9 +56,9 @@ class BlockCounter(Block):
                  cu: Optional[Ref] = None,
                  cd: Optional[Ref] = None,
                  reset: Optional[Ref] = None,
-                 step: Union[float, int, Ref, None] = 1.0,
-                 limit_max: Union[float, int, Ref, None] = 100.0,
-                 limit_min: Union[float, int, Ref, None] = 0.0,
+                 step: Union[float, int, Ref] = 1.0,
+                 limit_max: Union[float, int, Ref] = 100.0,
+                 limit_min: Union[float, int, Ref] = 0.0,
                  start_val: float = 0.0,
                  mode: CounterMode = CounterMode.ON_RISING):
         """
@@ -136,73 +131,3 @@ class BlockCounter(Block):
         packets.append(header + payload)
         
         return packets
-    
-    def __repr__(self) -> str:
-        return (f"BlockCounter(idx={self.idx}, mode={self.mode.name}, "
-                f"start={self.config_start}, in={len(self.in_conn)}, q={len(self.q_conn)})")
-
-
-# ============================================================================
-# DEMO / TEST
-# ============================================================================
-
-if __name__ == "__main__":
-    from MemAcces import AccessManager
-    
-    print("=" * 60)
-    print("BlockCounter Test")
-    print("=" * 60)
-    
-    # 1. Create context
-    ctx = mem_context_t(ctx_id=0)
-    
-    # Add variables
-    ctx.add(mem_types_t.MEM_B, alias="btn_up", data=False)
-    ctx.add(mem_types_t.MEM_B, alias="btn_down", data=False)
-    ctx.add(mem_types_t.MEM_B, alias="btn_reset", data=False)
-    
-    # 2. Register context
-    AccessManager.reset()
-    manager = AccessManager.get_instance()
-    manager.register_context(ctx)
-    
-    # 3. Create block context
-    block_ctx = mem_context_t(ctx_id=1)
-    manager.register_context(block_ctx)
-    
-    # 4. Create Counter block
-    print("\n--- Create BlockCounter ---")
-    counter = BlockCounter(
-        idx=20,
-        ctx=block_ctx,
-        cu=Ref("btn_up"),
-        cd=Ref("btn_down"),
-        reset=Ref("btn_reset"),
-        step=1.0,
-        limit_max=10.0,
-        limit_min=0.0,
-        start_val=5.0,
-        mode=CounterMode.ON_RISING
-    )
-    
-    print(f"Block: {counter}")
-    
-    # 5. Pack all packets
-    print("\n--- Pack Configuration ---")
-    cfg_bytes = counter.pack_cfg()
-    print(f"Config ({len(cfg_bytes)} bytes): {cfg_bytes.hex().upper()}")
-    
-    print("\n--- Pack Inputs ---")
-    for i, pkt in enumerate(counter.pack_inputs()):
-        print(f"  Input {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Outputs ---")
-    for i, pkt in enumerate(counter.pack_outputs()):
-        print(f"  Output {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Data ---")
-    for pkt in counter.pack_data():
-        print(f"  Config: {pkt.hex().upper()}")
-    
-    print("\n" + "=" * 60)
-

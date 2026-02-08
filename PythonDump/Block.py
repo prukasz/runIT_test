@@ -43,7 +43,7 @@ class BlockOutputProxy:
     """
     Proxy class to access block outputs by index.
     
-    Outputs are named as "{block_idx}\_q\_{output_index}".
+    Outputs are named as "{block_idx}_q_{output_index}".
 
     Usage:
         block.out[0]           # Returns Ref to output 0
@@ -108,24 +108,8 @@ class Block:
                 self._in_connected.append(False)
         return self
     
-    def _add_output(self, 
-                    q_type: mem_types_t, 
-                    dims: Optional[List[int]] = None,
-                    data: Any = None) -> Ref:
-        """
-        Internal: Create an output variable and its reference.
+    def _add_output(self, q_type: mem_types_t, dims: Optional[List[int]] = None, data: Any = None) -> Ref:
         
-        Output variable is created in the context with name "{idx}_q_{q_num}".
-        For arrays, indices default to zero.
-        
-        NOTE: This is for internal use by block subclasses. Users should not
-        call this directly - each block type auto-creates its outputs.
-        
-        :param q_type: Memory type for the output variable
-        :param dims: Dimensions for array output (None for scalar)
-        :param data: Initial data value
-        :return: Reference to the created output
-        """
         q_num = len(self.q_conn)
         alias = f"{self.idx}_q_{q_num}"
         
@@ -150,21 +134,22 @@ class Block:
         return ref
     
     def _add_outputs(self, 
-                     output_specs: List[tuple]) -> List[Ref]:
+                     outputs: List[tuple]) -> List[Ref]:
         """
         Internal: Add multiple outputs at once.
         
         :param output_specs: List of (q_type,) or (q_type, dims) or (q_type, dims, data) tuples
         :return: List of created Refs
         """
-        refs = []
-        for spec in output_specs:
-            if len(spec) == 1:
-                refs.append(self._add_output(spec[0]))
-            elif len(spec) == 2:
-                refs.append(self._add_output(spec[0], spec[1]))
+        refs = [] 
+        #here we assume that the caller provides correct output specifications (type, optional dims, optional data)
+        for output in outputs:
+            if len(output) == 1:
+                refs.append(self._add_output(output[0]))
+            elif len(output) == 2:
+                refs.append(self._add_output(output[0], output[1]))
             else:
-                refs.append(self._add_output(spec[0], spec[1], spec[2]))
+                refs.append(self._add_output(output[0], output[1], output[2]))
         return refs
     
     def get_connected_mask(self) -> int:

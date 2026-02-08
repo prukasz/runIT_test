@@ -149,7 +149,7 @@ static __always_inline float emu_var_to_f(mem_var_t v) {
     emu_result_t _res = {.code = EMU_OK}; \
     \
     /* Ultra-fast path: resolved index + matching type = direct array access */ \
-    if (__builtin_expect(_ma->is_index_resolved, 1)) { \
+    if (likely(_ma->is_index_resolved)) { \
         mem_instance_t *_inst = _ma->instance; \
         uint16_t _idx = _ma->resolved_index; \
         \

@@ -204,9 +204,9 @@ class BlockMath(Block):
     Math block for evaluating mathematical expressions.
     
     Inputs:
-        - in_0 (EN): Enable input (optional, Boolean)
+        - in_0 (EN): Enable input 
         - in_1..N: Variables used in expression
-    
+        
     Outputs:
         - q_0 (ENO): Enable output (Boolean)
         - q_1 (RESULT): Expression result (Float)
@@ -225,9 +225,10 @@ class BlockMath(Block):
                  idx: int,
                  ctx: mem_context_t,
                  expression: str,
+                 en: Ref,
                  connections: Optional[List[Optional[Ref]]] = None,
-                 en: Optional[Ref] = None):
-        
+                 ):
+
         # 1. Parse expression
         self.parser = MathExpression(expression)
         self.expression = expression
@@ -247,7 +248,6 @@ class BlockMath(Block):
         inputs = [en] + connections
         self.add_inputs(inputs)
         
-        # 4. Create outputs (auto-created, hidden from API)
         # Output 0: ENO (Boolean)
         self._add_output(mem_types_t.MEM_B, data=False)
         # Output 1: RESULT (Float)
@@ -292,77 +292,3 @@ class BlockMath(Block):
             packets.append(header + count + bytes(instr_data))
         
         return packets
-    
-    def __repr__(self) -> str:
-        return (f"BlockMath(idx={self.idx}, expr='{self.expression}', "
-                f"in={len(self.in_conn)}, q={len(self.q_conn)})")
-
-# ============================================================================
-# 4. DEMO / TEST
-# ============================================================================
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("BlockMath Test")
-    print("=" * 60)
-    
-    # 1. Create context
-    ctx = mem_context_t(ctx_id=1)
-    
-    # Add input variables
-    ctx.add(mem_types_t.MEM_F, alias="speed", data=10.0)
-    ctx.add(mem_types_t.MEM_F, alias="angle", data=45.0)
-    ctx.add(mem_types_t.MEM_B, alias="enable", data=True)
-    
-    # 2. Register context
-    AccessManager.reset()
-    manager = AccessManager.get_instance()
-    manager.register_context(ctx)
-    
-    # 3. Create math block
-    print("\n--- Create BlockMath ---")
-    block = BlockMath(
-        idx=10,
-        ctx=ctx,
-        expression="in_1 * 3.14 + cos(in_2)",
-        connections=[Ref("speed"), Ref("angle")],
-        en=Ref("enable")
-    )
-    
-    print(f"Block: {block}")
-    print(f"\nParsed expression: {block.expression}")
-    print(f"Constants: {block.parser.constants}")
-    print(f"Instructions: {[(i.opcode.name, i.index) for i in block.parser.instructions]}")
-    print(f"Max input index: {block.parser.max_input_idx}")
-    
-    # 4. Check created outputs
-    print(f"\nContext aliases: {list(ctx.alias_map.keys())}")
-    
-    # 5. Pack all packets
-    print("\n--- Pack Configuration ---")
-    cfg_bytes = block.pack_cfg()
-    print(f"Config ({len(cfg_bytes)} bytes): {cfg_bytes.hex().upper()}")
-    
-    print("\n--- Pack Inputs ---")
-    for i, pkt in enumerate(block.pack_inputs()):
-        print(f"  Input {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Outputs ---")
-    for i, pkt in enumerate(block.pack_outputs()):
-        print(f"  Output {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Data (Constants & Instructions) ---")
-    for pkt in block.pack_data():
-        packet_id = pkt[4]  # packet_id is at byte 4 now (after header, idx, block_type)
-        if packet_id == 0x00:
-            print(f"  Constants: {pkt.hex().upper()}")
-        elif packet_id == 0x10:
-            print(f"  Instructions: {pkt.hex().upper()}")
-    
-    print("\n" + "=" * 60)
-    print("Math Block Structure:")
-    print("  Inputs: [EN, in_1, in_2, ...]")
-    print("  Outputs: [ENO (bool), RESULT (float)]")
-    print("  Expression evaluated using RPN instructions")
-    print("=" * 60)
-

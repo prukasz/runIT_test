@@ -1,8 +1,4 @@
-"""
-BlockTimer - Timer block with various modes (TON, TOF, TP).
 
-Supports Turn-On Delay, Turn-Off Delay, and Pulse timers.
-"""
 import struct
 from typing import Optional, Union, List
 from enum import IntEnum
@@ -38,7 +34,7 @@ class BlockTimer(Block):
     
     Config:
         - timer_type: Type of timer (TON, TOF, TP, etc.)
-        - config_pt: Default preset time if PT input not connected
+        - config_pt: Preset time in ms (used if PT input is not connected)
     
     Usage:
         block = BlockTimer(
@@ -55,19 +51,10 @@ class BlockTimer(Block):
                  idx: int,
                  ctx: mem_context_t,
                  timer_type: TimerType = TimerType.TON,
-                 pt: Union[int, float, Ref, None] = 1000,
+                 pt: Union[int, Ref] = 1000,
                  en: Optional[Ref] = None,
                  rst: Optional[Ref] = None):
-        """
-        Create a Timer block.
         
-        :param idx: Block index
-        :param ctx: Context for output variables
-        :param timer_type: Timer mode (TON, TOF, TP, etc.)
-        :param pt: Preset time in ms - constant value or Ref for dynamic
-        :param en: Enable input Ref
-        :param rst: Reset input Ref
-        """
         # Initialize base Block
         super().__init__(idx=idx, block_type=block_types_t.BLOCK_TIMER, ctx=ctx)
         
@@ -111,82 +98,3 @@ class BlockTimer(Block):
         packets.append(header + payload)
         
         return packets
-    
-    def __repr__(self) -> str:
-        return (f"BlockTimer(idx={self.idx}, type={self.timer_type.name}, "
-                f"pt={self.config_pt}ms, in={len(self.in_conn)}, q={len(self.q_conn)})")
-
-
-# ============================================================================
-# DEMO / TEST
-# ============================================================================
-
-if __name__ == "__main__":
-    from MemAcces import AccessManager
-    
-    print("=" * 60)
-    print("BlockTimer Test")
-    print("=" * 60)
-    
-    # 1. Create context
-    ctx = mem_context_t(ctx_id=0)
-    
-    # Add variables
-    ctx.add(mem_types_t.MEM_B, alias="start_btn", data=False)
-    ctx.add(mem_types_t.MEM_B, alias="reset_btn", data=False)
-    ctx.add(mem_types_t.MEM_U32, alias="delay_time", data=3000)
-    
-    # 2. Register context
-    AccessManager.reset()
-    manager = AccessManager.get_instance()
-    manager.register_context(ctx)
-    
-    # 3. Create block context
-    block_ctx = mem_context_t(ctx_id=1)
-    manager.register_context(block_ctx)
-    
-    # 4. Create Timer block with constant PT
-    print("\n--- Create BlockTimer (constant PT) ---")
-    timer1 = BlockTimer(
-        idx=10,
-        ctx=block_ctx,
-        timer_type=TimerType.TON,
-        pt=5000,  # 5 seconds
-        en=Ref("start_btn"),
-        rst=Ref("reset_btn")
-    )
-    
-    print(f"Block: {timer1}")
-    
-    # 5. Pack all packets
-    print("\n--- Pack Configuration ---")
-    cfg_bytes = timer1.pack_cfg()
-    print(f"Config ({len(cfg_bytes)} bytes): {cfg_bytes.hex().upper()}")
-    
-    print("\n--- Pack Inputs ---")
-    for i, pkt in enumerate(timer1.pack_inputs()):
-        print(f"  Input {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Outputs ---")
-    for i, pkt in enumerate(timer1.pack_outputs()):
-        print(f"  Output {i}: {pkt.hex().upper()}")
-    
-    print("\n--- Pack Data ---")
-    for pkt in timer1.pack_data():
-        print(f"  Config: {pkt.hex().upper()}")
-    
-    # 6. Create Timer with dynamic PT
-    print("\n--- Create BlockTimer (dynamic PT) ---")
-    timer2 = BlockTimer(
-        idx=11,
-        ctx=block_ctx,
-        timer_type=TimerType.TOF,
-        pt=Ref("delay_time"),  # Dynamic from variable
-        en=Ref("start_btn")
-    )
-    
-    print(f"Block: {timer2}")
-    print(f"  Note: PT connected to 'delay_time' variable")
-    
-    print("\n" + "=" * 60)
-

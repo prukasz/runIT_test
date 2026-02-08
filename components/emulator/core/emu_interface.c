@@ -63,6 +63,7 @@ void emu_interface_task(void* params){
                     break;
 
                 case ORD_EMU_LOOP_START:
+                    emu_parse_verify_code(emu_get_current_code_ctx());
                     res = emu_loop_start();
                     break;
 
