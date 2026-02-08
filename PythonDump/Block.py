@@ -44,19 +44,23 @@ class BlockOutputProxy:
     Proxy class to access block outputs by index.
     
     Outputs are named as "{block_idx}_q_{output_index}".
+    When a user alias is set (e.g. "calc"), outputs can also
+    be accessed as ``Ref("calc_q_0")``, ``Ref("calc_q_1")``, etc.
 
     Usage:
         block.out[0]           # Returns Ref to output 0
         block.out[1][0, 0]     # Returns Ref to output 1 with array indices
     """
     
-    def __init__(self, block_idx: int):
+    def __init__(self, block_idx: int, user_alias: Optional[str] = None):
         self.block_idx = block_idx
+        self.user_alias = user_alias
     
     def __getitem__(self, idx: int) -> Ref:
         """Get Ref for output at given index."""
-        alias = f"{self.block_idx}_q_{idx}"
-        return Ref(alias)
+        if self.user_alias is not None:
+            return Ref(f"{self.user_alias}_q_{idx}")
+        return Ref(f"{self.block_idx}_q_{idx}")
 
 # ============================================================================
 # 3. BLOCK CLASS

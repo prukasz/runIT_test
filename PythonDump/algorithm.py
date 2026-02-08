@@ -42,18 +42,40 @@ import re
 from typing import Dict, List, Set, Optional
 from collections import defaultdict
 
-# Pattern that identifies a block-output alias: "{block_idx}_q_{output_idx}"
-_BLOCK_OUTPUT_RE = re.compile(r'^(\d+)_q_(\d+)$')
+# Pattern that identifies a block-output alias:
+#   numeric form:  "1000_q_0"   (block idx 1000, output 0)
+#   named form:    "calc_q_0"   (user alias "calc", output 0)
+_BLOCK_OUTPUT_RE = re.compile(r'^(\w+)_q_(\d+)$')
+
+
+def _build_alias_to_idx_map(blocks: Dict[int, 'Block']) -> Dict[str, int]:
+    """
+    Build a mapping from every alias prefix that can appear before ``_q_N``
+    back to the block's *original* idx.
+
+    For each block with idx=1000 and out.user_alias="calc":
+      - "1000" → 1000
+      - "calc" → 1000
+    """
+    alias_map: Dict[str, int] = {}
+    for idx, block in blocks.items():
+        alias_map[str(idx)] = idx
+        if hasattr(block, 'out') and hasattr(block.out, 'user_alias') and block.out.user_alias:
+            alias_map[block.out.user_alias] = idx
+    return alias_map
 
 
 # ============================================================================
 # 1.  Dependency extraction
 # ============================================================================
 
-def _get_block_dependencies(block) -> Set[int]:
+def _get_block_dependencies(block, alias_map: Optional[Dict[str, int]] = None) -> Set[int]:
     """
     Return the set of *original* block indices that *block* depends on,
     by inspecting every input Ref alias.
+
+    *alias_map* maps alias prefixes ("1000" or "calc") to block indices.
+    If not provided, only numeric prefixes are recognised.
     """
     deps: Set[int] = set()
     for ref in block.in_conn:
@@ -61,13 +83,21 @@ def _get_block_dependencies(block) -> Set[int]:
             continue
         m = _BLOCK_OUTPUT_RE.match(ref.alias)
         if m:
-            dep_idx = int(m.group(1))
-            if dep_idx != block.idx:          # self-refs (shouldn't happen) ignored
+            prefix = m.group(1)
+            # Try numeric first
+            if prefix.isdigit():
+                dep_idx = int(prefix)
+            elif alias_map and prefix in alias_map:
+                dep_idx = alias_map[prefix]
+            else:
+                continue  # not a block output
+            if dep_idx != block.idx:
                 deps.add(dep_idx)
     return deps
 
 
-def _get_consumers(blocks: Dict[int, 'Block']) -> Dict[int, List[int]]:
+def _get_consumers(blocks: Dict[int, 'Block'],
+                   alias_map: Optional[Dict[str, int]] = None) -> Dict[int, List[int]]:
     """
     Build a mapping: producer_idx -> [consumer_idx, …]
     
@@ -75,7 +105,7 @@ def _get_consumers(blocks: Dict[int, 'Block']) -> Dict[int, List[int]]:
     """
     consumers: Dict[int, List[int]] = defaultdict(list)
     for idx, block in blocks.items():
-        for dep_idx in _get_block_dependencies(block):
+        for dep_idx in _get_block_dependencies(block, alias_map):
             consumers[dep_idx].append(idx)
     return consumers
 
@@ -101,13 +131,17 @@ def _get_for_chain_children(for_block, blocks: Dict[int, 'Block']) -> List[int]:
     Return indices of blocks whose EN input (in_conn[0]) is wired to
     for_block.out[0], i.e. the loop-body children.
     """
-    en_alias = f"{for_block.idx}_q_0"
+    # Accept both numeric and named alias forms
+    en_aliases = {f"{for_block.idx}_q_0"}
+    if hasattr(for_block, 'out') and hasattr(for_block.out, 'user_alias') and for_block.out.user_alias:
+        en_aliases.add(f"{for_block.out.user_alias}_q_0")
+
     children = []
     for idx, block in blocks.items():
         if idx == for_block.idx:
             continue
         if block.in_conn and block.in_conn[0] is not None:
-            if block.in_conn[0].alias == en_alias:
+            if block.in_conn[0].alias in en_aliases:
                 children.append(idx)
     return children
 
@@ -127,12 +161,13 @@ def topological_sort(blocks: Dict[int, 'Block']) -> List['Block']:
     :param blocks: dict  {original_idx: Block}
     :return: list[Block] in topological (execution) order
     """
-    # --- build dependency info ---
+    # --- build alias map and dependency info ---
+    alias_map = _build_alias_to_idx_map(blocks)
     deps: Dict[int, Set[int]] = {}          # idx -> set of dependency indices
-    consumers = _get_consumers(blocks)       # idx -> list of consumer indices
+    consumers = _get_consumers(blocks, alias_map)  # idx -> list of consumer indices
     
     for idx, block in blocks.items():
-        deps[idx] = _get_block_dependencies(block)
+        deps[idx] = _get_block_dependencies(block, alias_map)
 
     placed_set: Set[int] = set()
     result: List['Block'] = []
@@ -262,20 +297,42 @@ def reindex(sorted_blocks: List['Block']):
     for new_idx, block in enumerate(sorted_blocks):
         idx_map[block.idx] = new_idx
 
+    # Build alias prefix -> old_idx  (both numeric and named)
+    alias_to_old: Dict[str, int] = {}
+    for block in sorted_blocks:
+        alias_to_old[str(block.idx)] = block.idx
+        if hasattr(block, 'out') and hasattr(block.out, 'user_alias') and block.out.user_alias:
+            alias_to_old[block.out.user_alias] = block.idx
+
     # 1. Rename output aliases in context storage
+    #    Both numeric ("1000_q_0") and named ("calc_q_0") entries.
     for block in sorted_blocks:
         old_idx = block.idx
         new_idx = idx_map[old_idx]
         ctx = block.ctx
+        user_alias = getattr(block.out, 'user_alias', None)
 
         for q_num, q_ref in enumerate(block.q_conn):
-            old_alias = f"{old_idx}_q_{q_num}"
-            new_alias = f"{new_idx}_q_{q_num}"
-            if old_alias in ctx.alias_map:
-                entry = ctx.alias_map.pop(old_alias)
-                ctx.alias_map[new_alias] = entry
-            # Update the Ref object itself
-            q_ref.alias = new_alias
+            old_numeric = f"{old_idx}_q_{q_num}"
+            new_numeric = f"{new_idx}_q_{q_num}"
+            # Rename numeric alias
+            if old_numeric in ctx.alias_map:
+                entry = ctx.alias_map.pop(old_numeric)
+                ctx.alias_map[new_numeric] = entry
+
+            # Rename / keep named alias (e.g. "calc_q_0")
+            if user_alias:
+                named = f"{user_alias}_q_{q_num}"
+                if named not in ctx.alias_map:
+                    # Re-register pointing to the same entry
+                    ctx.alias_map[named] = ctx.alias_map[new_numeric]
+
+            # Update the Ref object: if it uses a named alias keep it,
+            # otherwise switch to the new numeric alias.
+            if user_alias and q_ref.alias.startswith(user_alias + "_q_"):
+                pass  # already named, stays valid
+            else:
+                q_ref.alias = new_numeric
 
     # 2. Update input Refs that point to block outputs
     for block in sorted_blocks:
@@ -283,11 +340,16 @@ def reindex(sorted_blocks: List['Block']):
             if ref is None:
                 continue
             m = _BLOCK_OUTPUT_RE.match(ref.alias)
-            if m:
-                old_dep = int(m.group(1))
-                out_num = m.group(2)
-                if old_dep in idx_map:
-                    ref.alias = f"{idx_map[old_dep]}_q_{out_num}"
+            if not m:
+                continue
+            prefix, out_num = m.group(1), m.group(2)
+            if prefix in alias_to_old:
+                old_dep = alias_to_old[prefix]
+                new_dep = idx_map[old_dep]
+                # If prefix is a named alias, keep the named form
+                if prefix.isdigit():
+                    ref.alias = f"{new_dep}_q_{out_num}"
+                # else: named alias stays — the context entry already exists
 
     # 3. Update block.idx and block.out proxy
     for new_idx, block in enumerate(sorted_blocks):

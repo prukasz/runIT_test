@@ -17,12 +17,12 @@ Usage::
     code.var(mem_types_t.MEM_B, "enable", data=True)
     code.var(mem_types_t.MEM_F, "arr", data=[1,2,3,4,5], dims=[5])
 
-    # Blocks — no idx needed (auto-assigned), refs as "alias" strings
-    clk = code.add_clock(period_ms=1000, width_ms=500, en="enable")
-    loop = code.add_for(expr="i=0; i<10; i+=1", en=clk.out[0])
-    m   = code.add_math(expression='"speed" * 2.0', en=loop.out[0])
-    code.add_set(target="result", value=m.out[1])
-    l   = code.add_logic(expression='"result" > 10.0', en=m.out[1])
+    # Blocks — no idx needed, alias= gives block a name for referencing
+    clk = code.add_clock(period_ms=1000, width_ms=500, en="enable", alias="clk")
+    loop = code.add_for(expr="i=0; i<10; i+=1", en="clk[0]", alias="loop")
+    m   = code.add_math(expression='"speed" * 2.0', en="loop[0]", alias="calc")
+    code.add_set(target="result", value="calc[1]")
+    l   = code.add_logic(expression='"calc[1]" > 10.0')   # ref in expression
 
     # Generate (auto-sort, reindex, write hex dump)
     code.generate("test_dump.txt")
@@ -116,6 +116,9 @@ class Code:
         # auto-idx
         self._idx = _IdxCounter()
 
+        # block aliases:  name → Block
+        self._block_aliases: Dict[str, Block] = {}
+
     # ====================================================================
     # Variables
     # ====================================================================
@@ -146,20 +149,48 @@ class Code:
     # Internal helpers — resolve aliases / expression refs
     # ====================================================================
 
-    @staticmethod
-    def _resolve_ref(value):
-        """Ref|str → Ref,  int/float/None → as-is."""
+    def _resolve_ref(self, value):
+        """
+        Resolve a value to a Ref.
+
+        Accepts:
+          - None / int / float / Ref  → returned as-is
+          - ``"alias"``               → Ref("alias")  (user variable)
+          - ``"name[N]"``             → block output if *name* is a block alias,
+                                        otherwise Ref("name")[N]  (array var)
+        """
         if value is None or isinstance(value, (int, float, Ref)):
             return value
         if isinstance(value, str):
+            m = re.match(r'^(\w+)\[(\d+)\]$', value)
+            if m:
+                name, out_idx = m.group(1), int(m.group(2))
+                if name in self._block_aliases:
+                    return self._block_aliases[name].out[out_idx]
+                # not a block alias → treat as array variable
+                return Ref(name)[out_idx]
             return Ref(value)
         raise TypeError(f"Cannot resolve {type(value)} to Ref")
 
-    @staticmethod
-    def _extract_refs_from_expr(expression: str):
+    def _extract_refs_from_expr(self, expression: str):
         """
-        Scan *expression* for ``"alias"`` / ``"alias"[idx]`` /
-        ``blk_N.out[M]`` tokens and replace each with ``in_N``.
+        Scan *expression* for quoted tokens and replace with ``in_N``.
+
+        Recognised forms inside the expression string:
+
+        * ``"var"``                    → Ref("var")                  (scalar)
+        * ``"var"[2]``                 → Ref("var")[2]               (array, outer idx)
+        * ``"var[2]"``                 → Ref("var")[2]               (array, inner idx)
+        * ``"blk_alias[1]"``           → block output Ref            (block alias)
+        * ``"arr["idx_var"]"``         → Ref("arr")[Ref("idx_var")]  (dynamic index)
+        * ``"arr["blk[0]"]"``          → Ref("arr")[blk.out[0]]      (dynamic, block out)
+        * ``"arr["other[2]"]"``        → Ref("arr")[Ref("other")[2]] (dynamic, array elem)
+        * ``blk_3.out[1]``            → Ref("3_q_1")                (raw numeric block)
+
+        Nesting: an inner ``"..."`` inside an outer ``"..."`` is treated
+        as a **dynamic array index**.  The inner part is resolved first
+        (scalar var, ``name[N]`` block alias or array element) and used
+        as a ``Ref`` index on the outer variable.
 
         Returns ``(rewritten_expr, connections_list)``.
         """
@@ -176,6 +207,54 @@ class Code:
                 refs.append(ref_obj)
             return f'in_{alias_to_idx[alias_key]}'
 
+        def _resolve_inner(text: str):
+            """
+            Resolve an inner token (the text between quotes) to a Ref.
+            Handles: scalar ``var``, ``name[N]`` (block alias or array),
+            and nested ``outer["inner"]`` with arbitrary depth.
+            """
+            # --- nested dynamic index:  name["..."]  ---
+            # Find the first  ["  which opens a nested ref.
+            # We can't use a simple regex because the inner part may
+            # itself contain quotes, so we scan for the bracket-quote pair.
+            bracket_quote = text.find('["')
+            if bracket_quote != -1:
+                outer_name = text[:bracket_quote]
+                # outer_name must be a plain identifier
+                if outer_name.isidentifier():
+                    # Find the matching  "]  at the end, respecting nesting.
+                    # Everything between  ["  and  "]  is the inner content.
+                    inner_start = bracket_quote + 2   # skip  ["
+                    # Scan from inner_start to find the balanced  "]  close.
+                    depth = 1
+                    k = inner_start
+                    while k < len(text):
+                        if text[k:k+2] == '["':
+                            depth += 1
+                            k += 2
+                            continue
+                        if text[k:k+2] == '"]':
+                            depth -= 1
+                            if depth == 0:
+                                inner_text = text[inner_start:k]
+                                # resolve recursively
+                                inner_ref = _resolve_inner(inner_text)
+                                return Ref(outer_name)[inner_ref]
+                            k += 2
+                            continue
+                        k += 1
+
+            # --- name[N] (static integer index) ---
+            idx_m = re.match(r'^(\w+)\[(\d+)\]$', text)
+            if idx_m:
+                name, idx_val = idx_m.group(1), int(idx_m.group(2))
+                if name in self._block_aliases:
+                    return self._block_aliases[name].out[idx_val]
+                return Ref(name)[idx_val]
+
+            # --- plain scalar ---
+            return Ref(text)
+
         result = expression
 
         # 1) block output tokens:  blk_<N>.out[<M>]
@@ -186,19 +265,90 @@ class Code:
             return _register(key, Ref(key))
         result = blk_pat.sub(_replace_blk, result)
 
-        # 2) quoted aliases with optional array index:  "alias"[idx]
-        quoted_pat = re.compile(r'"([^"]+)"(?:\[(\d+)\])?')
-        def _replace_quoted(m):
-            alias = m.group(1)
-            arr_idx = m.group(2)
-            if arr_idx is not None:
-                key = f'{alias}[{arr_idx}]'
-                ref = Ref(alias)[int(arr_idx)]
-            else:
-                key = alias
-                ref = Ref(alias)
-            return _register(key, ref)
-        result = quoted_pat.sub(_replace_quoted, result)
+        # 2) Quoted tokens — character-level scan that handles nesting.
+        #
+        #    Top-level form:  "content"  optionally followed by  [N]
+        #    Nested form:     "outer["inner["deep"]"]"
+        #
+        #    Nesting rule (arbitrary depth):
+        #      ["  opens a deeper level   (depth += 1)
+        #      "]  closes a level         (depth -= 1)
+        #    A plain '"' at depth 1 closes the top-level span.
+
+        def _find_top_level_quoted(text: str, start: int):
+            """
+            Starting at *start* (which must be a ``"``), find the full
+            top-level quoted span, supporting **arbitrary** nesting depth.
+
+            Nesting is delimited by the two-character sequences ``["``
+            (open) and ``"]`` (close).
+
+            Returns ``(raw_content, end_pos)`` where *end_pos* is the
+            index right after the closing ``"``.
+            """
+            assert text[start] == '"'
+            depth = 1
+            j = start + 1
+            while j < len(text):
+                # Check two-char sequences first (higher priority)
+                pair = text[j:j+2]
+                if pair == '["':
+                    depth += 1
+                    j += 2
+                    continue
+                if pair == '"]':
+                    depth -= 1
+                    if depth == 0:
+                        # The '"' of  "]  is the closing outer quote
+                        raw = text[start + 1 : j]
+                        return raw, j + 2   # skip past  "]
+                    j += 2
+                    continue
+                # Single '"' at depth 1 → closing outer quote (no nesting)
+                if text[j] == '"' and depth == 1:
+                    raw = text[start + 1 : j]
+                    return raw, j + 1
+                j += 1
+            # Fallback: unterminated quote — take everything
+            raw = text[start + 1:]
+            return raw, len(text)
+
+        def _scan_quoted(text: str) -> str:
+            """Replace all top-level \"...\" (possibly nested) tokens."""
+            out_parts: list = []
+            i = 0
+            while i < len(text):
+                if text[i] == '"':
+                    raw, end = _find_top_level_quoted(text, i)
+                    # optional trailing [idx] OUTSIDE the quotes
+                    outer_idx = None
+                    trail_m = re.match(r'\[(\d+)\]', text[end:])
+                    if trail_m:
+                        outer_idx = int(trail_m.group(1))
+                        end += trail_m.end()
+                    # resolve content
+                    ref = _resolve_inner(raw)
+                    if outer_idx is not None and not ref.indices:
+                        # outer [idx] applied to a plain alias
+                        alias_name = ref.alias
+                        if alias_name in self._block_aliases:
+                            ref = self._block_aliases[alias_name].out[outer_idx]
+                            key = f'__blk__{alias_name}[{outer_idx}]'
+                            out_parts.append(_register(key, ref))
+                            i = end
+                            continue
+                        ref = Ref(alias_name)[outer_idx]
+                    key = f'__expr__{raw}'
+                    if outer_idx is not None:
+                        key += f'[{outer_idx}]'
+                    out_parts.append(_register(key, ref))
+                    i = end
+                else:
+                    out_parts.append(text[i])
+                    i += 1
+            return ''.join(out_parts)
+
+        result = _scan_quoted(result)
 
         return result, refs
 
@@ -259,7 +409,8 @@ class Code:
                  expression: str,
                  connections=None,
                  en=None,
-                 idx: Optional[int] = None) -> 'BlockMath':
+                 idx: Optional[int] = None,
+                 alias: Optional[str] = None) -> 'BlockMath':
         """
         Add a Math block.
 
@@ -284,13 +435,14 @@ class Code:
             connections=connections if connections else None,
             en=en,
         )
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     def add_logic(self,
                   expression: str,
                   connections=None,
                   en=None,
-                  idx: Optional[int] = None) -> 'BlockLogic':
+                  idx: Optional[int] = None,
+                  alias: Optional[str] = None) -> 'BlockLogic':
         """
         Add a Logic block.
 
@@ -312,12 +464,13 @@ class Code:
             connections=connections if connections else None,
             en=en,
         )
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     def add_set(self,
                 target=None,
                 value=None,
-                idx: Optional[int] = None) -> 'BlockSet':
+                idx: Optional[int] = None,
+                alias: Optional[str] = None) -> 'BlockSet':
         """
         Add a SET block.
 
@@ -331,7 +484,7 @@ class Code:
         target = self._resolve_ref(target)
         value  = self._resolve_ref(value)
         block = BlockSet(idx=idx, ctx=self.blocks_ctx, target=target, value=value)
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     def add_for(self,
                 expr: str = None,
@@ -339,7 +492,8 @@ class Code:
                 condition=None, operator=None,
                 en=None,
                 chain_len: int = 0,
-                idx: Optional[int] = None) -> 'BlockFor':
+                idx: Optional[int] = None,
+                alias: Optional[str] = None) -> 'BlockFor':
         """
         Add a FOR loop block.
 
@@ -364,13 +518,14 @@ class Code:
             start=start, limit=limit, step=step,
             condition=condition, operator=operator, en=en,
         )
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     def add_clock(self,
                   period_ms=1000.0,
                   width_ms=500.0,
                   en=None,
-                  idx: Optional[int] = None) -> 'BlockClock':
+                  idx: Optional[int] = None,
+                  alias: Optional[str] = None) -> 'BlockClock':
         """
         Add a Clock / PWM block.
 
@@ -386,14 +541,15 @@ class Code:
             idx=idx, ctx=self.blocks_ctx,
             period_ms=period_ms, width_ms=width_ms, en=en,
         )
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     def add_timer(self,
                   timer_type=None,
                   pt=1000,
                   en=None,
                   rst=None,
-                  idx: Optional[int] = None) -> 'BlockTimer':
+                  idx: Optional[int] = None,
+                  alias: Optional[str] = None) -> 'BlockTimer':
         """
         Add a Timer block.
 
@@ -412,13 +568,14 @@ class Code:
             idx=idx, ctx=self.blocks_ctx,
             timer_type=timer_type, pt=pt, en=en, rst=rst,
         )
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     def add_counter(self,
                     cu=None, cd=None, reset=None,
                     step=1.0, limit_max=100.0, limit_min=0.0,
                     start_val=0.0, mode=None,
-                    idx: Optional[int] = None) -> 'BlockCounter':
+                    idx: Optional[int] = None,
+                    alias: Optional[str] = None) -> 'BlockCounter':
         """
         Add a Counter block.
 
@@ -442,12 +599,13 @@ class Code:
             step=step, limit_max=limit_max, limit_min=limit_min,
             start_val=start_val, mode=mode,
         )
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     def add_selector(self,
                      selector=None,
                      options=None,
-                     idx: Optional[int] = None) -> 'BlockSelector':
+                     idx: Optional[int] = None,
+                     alias: Optional[str] = None) -> 'BlockSelector':
         """
         Add a Selector / Multiplexer block.
 
@@ -467,16 +625,43 @@ class Code:
             idx=idx, ctx=self.blocks_ctx,
             selector=selector, options=options or [],
         )
-        return self._register_block(block)
+        return self._register_block(block, alias=alias)
 
     # ====================================================================
     # Block management
     # ====================================================================
 
-    def _register_block(self, block: Block) -> Block:
-        """Register a block (internal)."""
+    def _register_block(self, block: Block, alias: Optional[str] = None) -> Block:
+        """Register a block, optionally storing a named alias.
+
+        When *alias* is provided, every block output ``{idx}_q_N``
+        gets a secondary alias ``{alias}_q_N`` in the blocks context
+        so that ``Ref("calc_q_0")`` resolves just like ``Ref("1000_q_0")``.
+        The ``BlockOutputProxy`` is also updated so that ``block.out[N]``
+        returns ``Ref("{alias}_q_N")``.
+        """
         if block.idx in self.blocks:
             raise ValueError(f"Block with index {block.idx} already exists")
+        if alias is not None:
+            if alias in self._block_aliases:
+                raise ValueError(f"Block alias '{alias}' already in use")
+            self._block_aliases[alias] = block
+
+            # Set the user alias on the output proxy so that
+            # block.out[N] returns Ref("alias_q_N") instead of
+            # Ref("{idx}_q_N").
+            block.out.user_alias = alias
+
+            # Register secondary aliases in blocks_ctx.alias_map:
+            # "calc_q_0" → same (type, idx) as "1000_q_0", etc.
+            for q_num in range(len(block.q_conn)):
+                numeric_alias = f"{block.idx}_q_{q_num}"
+                named_alias   = f"{alias}_q_{q_num}"
+                if numeric_alias in self.blocks_ctx.alias_map:
+                    self.blocks_ctx.alias_map[named_alias] = (
+                        self.blocks_ctx.alias_map[numeric_alias]
+                    )
+
         self.blocks[block.idx] = block
         return block
 
@@ -537,8 +722,6 @@ class Code:
             else:
                 dump.write(f)
 
-        if verbose:
-            self._print_summary(filename)
 
     def generate_raw_string(self, sort: bool = True) -> str:
         """Return raw hex dump as a string (useful for BLE transmission)."""
@@ -638,65 +821,3 @@ class Code:
                         print(f"  [{block.idx}] Data(0x{pid:02X}): {pkt.hex().upper()}")
 
         print('='*60)
-
-    # ====================================================================
-    # Summary
-    # ====================================================================
-
-    def _print_summary(self, filename: str):
-        blocks = self.get_blocks_sorted()
-        print(f"\n{'='*60}")
-        print(f"  Code — generated {filename}")
-        print(f"{'='*60}")
-        print(f"  Variables : {len(self.user_ctx.alias_map)}")
-        print(f"  Blocks    : {len(blocks)}")
-        print(f"  Execution order:")
-        for b in blocks:
-            extra = ""
-            if hasattr(b, 'chain_len'):
-                extra = f"  chain_len={b.chain_len}"
-            print(f"    [{b.idx}] {b.block_type.name}{extra}")
-        print(f"{'='*60}\n")
-
-    def __repr__(self) -> str:
-        return (f"Code(blocks={self.block_count}, "
-                f"user_vars={len(self.user_ctx.alias_map)}, "
-                f"block_outputs={len(self.blocks_ctx.alias_map)})")
-
-
-# ============================================================================
-# DEMO
-# ============================================================================
-
-if __name__ == "__main__":
-    from MemAcces import Ref
-
-    print("=" * 60)
-    print("Code Demo")
-    print("=" * 60)
-
-    code = Code()
-
-    # --- Variables ---
-    code.var(mem_types_t.MEM_F, "speed",     data=3.3)
-    code.var(mem_types_t.MEM_F, "factor",    data=2.0)
-    code.var(mem_types_t.MEM_F, "result",    data=0.0)
-    code.var(mem_types_t.MEM_B, "enable",    data=True)
-    code.var(mem_types_t.MEM_F, "threshold", data=50.0)
-
-    # --- Blocks (no idx, any order) ---
-    c = code.add_clock(period_ms=5000, width_ms=1000, en="enable")
-    l = code.add_logic(expression='"speed" > "threshold"', en="enable")
-    m = code.add_math(expression='"speed" * "factor"', en=c.out[0])
-    s = code.add_set(target="result", value=m.out[1])
-    f = code.add_for(expr="i=0; i<5; i+=1", en=m.out[1])
-    m2 = code.add_math(expression='100+100', en=f.out[0])
-    s1 = code.add_set(target="result", value=m2.out[1])
-    s2 = code.add_set(target="result", value=m2.out[0])
-    s3 = code.add_set(target="result", value=m2.out[1])
-    m3 = code.add_math(expression='"result" * 3.0', en=f.out[0])
-
-
-
-    # --- Generate ---
-    code.generate("test_dump.txt")
