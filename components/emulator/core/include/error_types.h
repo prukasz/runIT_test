@@ -130,10 +130,8 @@ typedef enum {
     EMU_OWNER__resolve_mem_offset,
     EMU_OWNER_mem_get,
     EMU_OWNER_block_check_in_true,
-    EMU_OWNER_block_selector,
-    EMU_OWNER_block_selector_parse,
-    EMU_OWNER_block_selector_verify,
-    EMU_OWNER_block_selector_free,
+    EMU_OWNER_block_in_selector,
+
     EMU_OWNER_mem_context_delete,
     EMU_OWNER_mem_allocate_context,
     EMU_OWNER_mem_access_allocate_space,
