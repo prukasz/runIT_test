@@ -230,6 +230,18 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
             _TRY_ADD_STATUS(&_rep); \
             return (emu_result_t){ .code = EMU_OK }; \
         })
+    #define EMU_RETURN_OK_SILENT(log_msg_enum, owner_name_enum, owner_custom_idx) \
+        ({ \
+            emu_report_t _rep = { \
+                .log = log_msg_enum, \
+                .owner = owner_name_enum, \
+                .owner_idx = owner_custom_idx, \
+                .time = emu_loop_get_time(), \
+                .cycle = emu_loop_get_iteration() \
+            }; \
+            _TRY_ADD_STATUS(&_rep); \
+            return (emu_result_t){ .code = EMU_OK }; \
+        })
 
      /**
      * @brief Push logs if enabled (no return)
@@ -255,6 +267,13 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
             (void)(owner_custom_idx); \
             (void)(tag); \
             (void)(fmt); \
+            return (emu_result_t){ .code = EMU_OK }; \
+        })
+    #define EMU_RETURN_OK_SILENT(log_msg_enum, owner_name_enum, owner_custom_idx) \
+        ({ \
+            (void)(log_msg_enum); \
+            (void)(owner_name_enum); \
+            (void)(owner_custom_idx); \
             return (emu_result_t){ .code = EMU_OK }; \
         })
 
@@ -283,7 +302,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 #define RET_WD(code, block_idx, depth, msg, ...) EMU_RETURN_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_ND(code, block_idx, depth, msg, ...) EMU_RETURN_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_OKD(block_idx, msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
-#define RET_OK_INACTIVE(block_idx) EMU_RETURN_OK(EMU_LOG_block_inactive, OWNER, block_idx, TAG, "")
+#define RET_OK_INACTIVE(block_idx) EMU_RETURN_OK_SILENT(EMU_LOG_block_inactive, OWNER, block_idx)
 
 
 

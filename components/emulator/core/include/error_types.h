@@ -131,6 +131,7 @@ typedef enum {
     EMU_OWNER_mem_get,
     EMU_OWNER_block_check_in_true,
     EMU_OWNER_block_in_selector,
+    EMU_OWNER_block_q_selector,
 
     EMU_OWNER_mem_context_delete,
     EMU_OWNER_mem_allocate_context,

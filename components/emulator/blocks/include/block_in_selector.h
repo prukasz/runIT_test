@@ -5,17 +5,20 @@
 /****************************************************************************
                     IN SELECTOR BLOCK
                 ________________
-    -->SEL  [0]|UINT8_T    [ANY]|[SELECTED] -->
-    -->OPT1 [1]|                |
-    -->OPT2 [2]|                |
-    -->OPTN [3]|                |
+    -->EN   [0]|BOOL           |
+    -->SEL  [1]|UINT8_T    [ANY]|[SELECTED] -->
+    -->OPT1 [2]|                |
+    -->OPT2 [3]|                |
+    -->OPTN [N]|                |
                |________________|
  
 ****************************************************************************
 DESCRIPTION:
 Provide input to be selected as output based on selector value.
 INPUTS:
-- SEL (UINT8_T (ANY)): Selector input that determines which variable instance is output.
+- EN (BOOL): Enable input. Block only executes when EN is true.
+- SEL (UINT8_T): Selector input that determines which variable instance is output.
+- OPT1..OPTN: Options to select from (any compatible type).
 OUTPUTS:
 - SELECTED (ANY): The selected variable instance based on the selector input.
 NOTE: 

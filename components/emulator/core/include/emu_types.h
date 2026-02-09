@@ -22,6 +22,7 @@ typedef enum{
     BLOCK_FOR = 0x08,
     BLOCK_TIMER = 0x09,
     BLOCK_IN_SELECTOR = 0x0A,
+    BLOCK_Q_SELECTOR = 0x0B,
 }block_type_t;
 
 

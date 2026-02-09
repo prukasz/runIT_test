@@ -49,7 +49,8 @@ if TYPE_CHECKING:
     from BlockClock import BlockClock
     from BlockTimer import BlockTimer
     from BlockCounter import BlockCounter
-    from BlockSelector import BlockSelector
+    from BlockInSelector import BlockInSelector
+    from BlockQSelector import BlockQSelector
 
 # ============================================================================
 # Context IDs
@@ -361,6 +362,9 @@ class Code:
         """
         Parse C-style ``"i=0; i<10; i+=1"`` into
         ``(start, cond_str, limit, op_str, step)``.
+        
+        Returns raw tokens (strings or floats), which should then be
+        resolved via ``_resolve_ref()`` by the caller.
         """
         parts = [p.strip() for p in expr.split(';')]
         if len(parts) != 3:
@@ -393,11 +397,17 @@ class Code:
         step_tok = step_m.group(2).strip()
 
         def _to_val(tok):
-            tok = tok.strip('"').strip("'")
+            """Convert token to float or leave as string (for _resolve_ref)."""
+            # Remove outer quotes if present
+            if tok.startswith('"') and tok.endswith('"'):
+                tok = tok[1:-1]
+            elif tok.startswith("'") and tok.endswith("'"):
+                tok = tok[1:-1]
+            # Try numeric conversion
             try:
                 return float(tok)
             except ValueError:
-                return Ref(tok)
+                return tok  # return as string for _resolve_ref
 
         return _to_val(start_tok), cond_str, _to_val(limit_tok), op_str, _to_val(step_tok)
 
@@ -469,21 +479,23 @@ class Code:
     def add_set(self,
                 target=None,
                 value=None,
+                en=None,
                 idx: Optional[int] = None,
                 alias: Optional[str] = None) -> 'BlockSet':
         """
         Add a SET block.
 
-        ``target`` / ``value`` accept string alias or Ref::
+        ``target`` / ``value`` / ``en`` accept string alias or Ref::
 
-            code.add_set(target="motor_speed", value=math.out[1])
+            code.add_set(target="motor_speed", value=math.out[1], en="enable")
         """
         from BlockSet import BlockSet
         if idx is None:
             idx = self._idx()
         target = self._resolve_ref(target)
         value  = self._resolve_ref(value)
-        block = BlockSet(idx=idx, ctx=self.blocks_ctx, target=target, value=value)
+        en     = self._resolve_ref(en)
+        block = BlockSet(idx=idx, ctx=self.blocks_ctx, target=target, value=value, en=en)
         return self._register_block(block, alias=alias)
 
     def add_for(self,
@@ -510,6 +522,10 @@ class Code:
 
         if expr is not None:
             start, condition, limit, operator, step = self._parse_for_expr(expr)
+            # Resolve tokens via _resolve_ref (handles block aliases, arrays, etc.)
+            start = self._resolve_ref(start)
+            limit = self._resolve_ref(limit)
+            step  = self._resolve_ref(step)
 
         condition = _resolve_condition(condition)
         operator  = _resolve_operator(operator)
@@ -601,29 +617,59 @@ class Code:
         )
         return self._register_block(block, alias=alias)
 
-    def add_selector(self,
-                     selector=None,
-                     options=None,
-                     idx: Optional[int] = None,
-                     alias: Optional[str] = None) -> 'BlockSelector':
+    def add_in_selector(self,
+                        selector=None,
+                        options=None,
+                        en=None,
+                        idx: Optional[int] = None,
+                        alias: Optional[str] = None) -> 'BlockInSelector':
         """
-        Add a Selector / Multiplexer block.
+        Add an IN_SELECTOR / Multiplexer block.
 
-        ``selector`` and ``options`` accept string aliases::
+        ``selector``, ``options`` and ``en`` accept string aliases::
 
-            code.add_selector(selector="mode",
-                              options=["speed_low", "speed_med", "speed_high"])
+            code.add_in_selector(selector="mode",
+                                 options=["speed_low", "speed_med", "speed_high"],
+                                 en="enable")
         """
-        from BlockSelector import BlockSelector
+        from BlockInSelector import BlockInSelector
         if idx is None:
             idx = self._idx()
-        if isinstance(selector, str):
-            selector = Ref(selector)
+        selector = self._resolve_ref(selector)
+        en = self._resolve_ref(en)
         if options and isinstance(options[0], str):
             options = [Ref(o) if isinstance(o, str) else o for o in options]
-        block = BlockSelector(
+        block = BlockInSelector(
             idx=idx, ctx=self.blocks_ctx,
-            selector=selector, options=options or [],
+            selector=selector, options=options or [], en=en,
+        )
+        return self._register_block(block, alias=alias)
+
+    # Backward compatibility alias
+    add_selector = add_in_selector
+
+    def add_q_selector(self,
+                       selector=None,
+                       output_count=1,
+                       en=None,
+                       idx: Optional[int] = None,
+                       alias: Optional[str] = None) -> 'BlockQSelector':
+        """
+        Add a Q_SELECTOR / Demultiplexer block.
+
+        Produces N boolean outputs where only the selected one is true::
+
+            code.add_q_selector(selector="mode", output_count=3, en="enable", alias="switch")
+            # switch.out[0], switch.out[1], switch.out[2] are bool outputs
+        """
+        from BlockQSelector import BlockQSelector
+        if idx is None:
+            idx = self._idx()
+        selector = self._resolve_ref(selector)
+        en = self._resolve_ref(en)
+        block = BlockQSelector(
+            idx=idx, ctx=self.blocks_ctx,
+            selector=selector, output_count=output_count, en=en,
         )
         return self._register_block(block, alias=alias)
 

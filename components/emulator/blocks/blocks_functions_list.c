@@ -12,7 +12,8 @@ emu_block_func blocks_main_functions_table[255]={
     [BLOCK_SET]=block_set,
     [BLOCK_COUNTER]=block_counter,
     [BLOCK_CLOCK]=block_clock,
-    [BLOCK_IN_SELECTOR]=block_in_selector
+    [BLOCK_IN_SELECTOR]=block_in_selector,
+    [BLOCK_Q_SELECTOR]=block_q_selector
 };
 
 

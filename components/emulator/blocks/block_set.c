@@ -7,10 +7,9 @@
 
 static const char* TAG = __FILE_NAME__;
 
-#define BLOCK_SET_VALUE    0
-#define BLOCK_SET_TARGET   1
-
-//we use only VALUE and TARGET inputs no enable input as we check is VALUE updated
+#define BLOCK_SET_EN       0
+#define BLOCK_SET_VALUE    1
+#define BLOCK_SET_TARGET   2
 
 
 /*-------------------------------BLOCK IMPLEMENTATION---------------------------------------------- */
@@ -18,7 +17,10 @@ static const char* TAG = __FILE_NAME__;
 #undef OWNER
 #define OWNER EMU_OWNER_block_set
 emu_result_t block_set(block_handle_t block) {
-    // Fast exit: check if input is updated
+    // Check EN input first (in_0)
+    if (!block_check_in_true(block, BLOCK_SET_EN)) {RET_OK_INACTIVE(block->cfg.block_idx);}
+    
+    // Fast exit: check if value input is updated
     if(!block_in_updated(block, BLOCK_SET_VALUE)) {RET_OK_INACTIVE(block->cfg.block_idx);}
 
     mem_access_t *src_access = block->inputs[BLOCK_SET_VALUE];
