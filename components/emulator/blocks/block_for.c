@@ -171,10 +171,7 @@ emu_result_t block_for(block_handle_t block) {
     return EMU_RESULT_OK();
 }
 
-/* ============================================================================
-    PARSING LOGIC - New packet-based approach
-    Packet format: [block_idx:u16][block_type:u8][packet_id:u8][data...]
-   ============================================================================ */
+/*--------------------PARSE FUNCTION------------------------------------------------------------ */
 
 #undef OWNER
 #define OWNER EMU_OWNER_block_for_parse

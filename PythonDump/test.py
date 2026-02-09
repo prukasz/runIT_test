@@ -15,8 +15,9 @@ code.var(mem_types_t.MEM_B, "enable", True)
 code.var(mem_types_t.MEM_F, "gains", data=[1,2,3,4,5,6,7,8,9,10], dims=[10])
 
 # ── Blocks ─────────────────────────────────────────────────
+ton = code.add_timer(pt = 20000, alias="ton", en = "enable")
 
-clk  = code.add_clock(period_ms=5000, width_ms=1000, en="enable", alias="clk")
+clk  = code.add_clock(period_ms=5000, width_ms=1000, en=ton.out[0], alias="clk")
 
 # Test IN_SELECTOR (multiplexer - selects ONE input to output)
 sel_in = code.add_in_selector(selector=Ref("selector"), 

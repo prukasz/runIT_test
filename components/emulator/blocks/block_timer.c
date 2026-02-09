@@ -45,16 +45,15 @@ typedef struct {
 #define BLOCK_TIMER_OUT_Q    0
 #define BLOCK_TIMER_OUT_ET   1  //elapsed time 
 
-/* ========================================================================= */
-/* LOGIKA WYKONAWCZA                                                         */
-/* ========================================================================= */
+/*-------------------------------BLOCK IMPLEMENTATION---------------------------------------------- */
 
 #undef OWNER
 #define OWNER EMU_OWNER_block_timer
 emu_result_t block_timer(block_handle_t block) {
 
     uint64_t now_ms = emu_loop_get_time();
-    block_timer_t* data = (block_timer_t*)block->custom_data;
+    block_timer_t* data = block->custom_data;
+
     emu_result_t res = EMU_RESULT_OK();
 
     bool IN = block_check_in_true(block, BLOCK_TIMER_IN_EN);
@@ -68,7 +67,6 @@ emu_result_t block_timer(block_handle_t block) {
 
     block_timer_type_t type = data->type;
 
-    LOG_I(TAG, "Type: %d, PT: %ld,  delta: %ld, now %lld", type, PT, data->delta_time, now_ms);
     if (RST) {
         data->delta_time = 0;
         data->q_out = (type == TIMER_TYPE_TOF); // TOF w resecie ma Q=1 (zazwyczaj)
@@ -151,15 +149,12 @@ emu_result_t block_timer(block_handle_t block) {
     data->prev_in = IN;
     
     mem_var_t v_en = { .type = MEM_B, .data.val.b = data->q_out};
-    LOG_I(TAG, "is out active %d", data->q_out);
+
     res = block_set_output(block, v_en, 0);
     if (unlikely(res.code != EMU_OK)) {
         RET_ED(res.code, block->cfg.block_idx, 0, "Output acces error %s", EMU_ERR_TO_STR(res.code));
     }
     
-    // Ustawienie wyjścia ET (czasu) - brakowało tego w twoim kodzie, ale zgodnie z logiką timera powinno być
-    // Zakładam, że chcesz to dodać, skoro liczysz delta_time.
-    // Jeśli nie chcesz zmieniać logiki, usuń poniższy blok.
     mem_var_t v_et = { .type = MEM_F, .data.val.f = (float)data->delta_time };
     res = block_set_output(block, v_et, BLOCK_TIMER_OUT_ET);
     if (unlikely(res.code != EMU_OK)) {
@@ -169,6 +164,7 @@ emu_result_t block_timer(block_handle_t block) {
     return EMU_RESULT_OK();
 }
 
+/*-------------------------------BLOCK PARSER------------------------------------------------------- */
 
 #undef OWNER
 #define OWNER EMU_OWNER_block_timer_parse
@@ -204,13 +200,8 @@ emu_result_t block_timer_parse(const uint8_t *packet_data, const uint16_t packet
     return EMU_RESULT_OK();
 }
 
-void block_timer_free(block_handle_t block) {
-    if (block->custom_data) {
-        free(block->custom_data);
-        block->custom_data = NULL;
-        LOG_D(TAG, "Cleared timer data");
-    }
-}
+/*-------------------------------BLOCK VERIFIER---------------------------------------------- */
+
 
 #undef OWNER
 #define OWNER EMU_OWNER_block_timer_verify
@@ -223,3 +214,14 @@ emu_result_t block_timer_verify(block_handle_t block) {
 
     return EMU_RESULT_OK();
 }
+
+/*-------------------------------BLOCK FREE FUNCTION---------------------------------------------- */
+
+
+void block_timer_free(block_handle_t block) {
+    if (block->custom_data) {
+        free(block->custom_data);
+        block->custom_data = NULL;
+    }
+}
+
