@@ -11,8 +11,9 @@ static const char* TAG = __FILE_NAME__;
 #define BLOCK_SET_VALUE    1
 #define BLOCK_SET_TARGET   2
 
-
 /*-------------------------------BLOCK IMPLEMENTATION---------------------------------------------- */
+
+
 
 #undef OWNER
 #define OWNER EMU_OWNER_block_set
@@ -49,7 +50,7 @@ emu_result_t block_set(block_handle_t block) {
             case MEM_U32: tgt_inst->data.u32[tgt_offset] = src_inst->data.u32[src_offset]; return EMU_RESULT_OK();
             case MEM_I16: tgt_inst->data.i16[tgt_offset] = src_inst->data.i16[src_offset]; return EMU_RESULT_OK();
             case MEM_I32: tgt_inst->data.i32[tgt_offset] = src_inst->data.i32[src_offset]; return EMU_RESULT_OK();
-        }
+        }  
     }
     
     // STANDARD PATH: Need mem_get for dynamic resolution or type conversion

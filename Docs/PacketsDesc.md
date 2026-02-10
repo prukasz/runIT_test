@@ -223,7 +223,7 @@ emu_result_t emu_mem_fill_instance_array(const uint8_t *data, const uint16_t dat
 
 **Order Code:** `ORD_PARSE_CODE_CFG = 0xAAAA`
 
-**Purpose:** Initialize code execution context and specify block count, or send control commands.
+**Purpose:** Initialize code execution context and specify block count.
 
 ### 5a. Code Header (Block Count)
 
@@ -494,16 +494,19 @@ typedef enum {
 
 **Instruction Format:** `[opcode:u8][operand:u8]`
 
-**Math Opcodes:**
+**Math Opcodes (from op_code_t enum):**
 | Opcode | Value | Operand | Description |
 |--------|-------|---------|-------------|
-| PUSH_CONST | 0x01 | const_idx | Push constant[operand] |
-| PUSH_VAR | 0x02 | var_idx | Push input variable[operand] |
-| ADD | 0x10 | - | Pop 2, push sum |
-| SUB | 0x11 | - | Pop 2, push difference |
-| MUL | 0x12 | - | Pop 2, push product |
-| DIV | 0x13 | - | Pop 2, push quotient |
-| NEG | 0x14 | - | Pop 1, push negation |
+| OP_VAR | 0x00 | input_idx | Push input variable[operand] |
+| OP_CONST | 0x01 | const_idx | Push constant[operand] |
+| OP_ADD | 0x02 | - | Pop 2, push sum |
+| OP_MUL | 0x03 | - | Pop 2, push product |
+| OP_DIV | 0x04 | - | Pop 2, push quotient |
+| OP_COS | 0x05 | - | Pop 1, push cos(x) |
+| OP_SIN | 0x06 | - | Pop 1, push sin(x) |
+| OP_POW | 0x07 | - | Pop 2, push pow(a,b) |
+| OP_ROOT | 0x08 | - | Pop 1, push sqrt(x) |
+| OP_SUB | 0x09 | - | Pop 2, push difference |
 
 **Example - Expression: `a + b * 2.5`**
 ```python
@@ -513,11 +516,11 @@ typedef enum {
 
 # Instructions packet
 [BA][00 00][01][10][05]
-    [02 00]  # PUSH_VAR 0 (a)
-    [02 01]  # PUSH_VAR 1 (b)
-    [01 00]  # PUSH_CONST 0 (2.5)
-    [12 00]  # MUL
-    [10 00]  # ADD
+    [00 00]  # OP_VAR 0 (a = IN1)
+    [00 01]  # OP_VAR 1 (b = IN2)
+    [01 00]  # OP_CONST 0 (2.5)
+    [03 00]  # OP_MUL
+    [02 00]  # OP_ADD
 ```
 
 ---
@@ -614,30 +617,30 @@ No custom data packets required.
 [BA][idx:u16][06][10][count:u8][instruction × count]
 ```
 
-**Logic Opcodes:**
-| Opcode | Value | Description |
-|--------|-------|-------------|
-| AND | 0x20 | Pop 2, push AND |
-| OR | 0x21 | Pop 2, push OR |
-| XOR | 0x22 | Pop 2, push XOR |
-| NOT | 0x23 | Pop 1, push NOT |
-| EQ | 0x30 | Pop 2, push == |
-| NE | 0x31 | Pop 2, push != |
-| LT | 0x32 | Pop 2, push < |
-| LE | 0x33 | Pop 2, push <= |
-| GT | 0x34 | Pop 2, push > |
-| GE | 0x35 | Pop 2, push >= |
+**Logic Opcodes (from logic_op_code_t enum):**
+| Opcode | Value | Operand | Description |
+|--------|-------|---------|-------------|
+| CMP_OP_VAR | 0x00 | input_idx | Push input variable[operand] |
+| CMP_OP_CONST | 0x01 | const_idx | Push constant[operand] |
+| CMP_OP_GT | 0x10 | - | Pop 2, push (a > b) |
+| CMP_OP_LT | 0x11 | - | Pop 2, push (a < b) |
+| CMP_OP_EQ | 0x12 | - | Pop 2, push (a == b) |
+| CMP_OP_GTE | 0x13 | - | Pop 2, push (a >= b) |
+| CMP_OP_LTE | 0x14 | - | Pop 2, push (a <= b) |
+| CMP_OP_AND | 0x20 | - | Pop 2, push (a && b) |
+| CMP_OP_OR | 0x21 | - | Pop 2, push (a \|\| b) |
+| CMP_OP_NOT | 0x22 | - | Pop 1, push (!a) |
 
 **Example - Expression: `a AND (b OR NOT c)`**
 ```python
 # RPN: a b c NOT OR AND
 [BA][04 00][06][10][06]
-    [02 00]  # PUSH_VAR 0 (a)
-    [02 01]  # PUSH_VAR 1 (b)
-    [02 02]  # PUSH_VAR 2 (c)
-    [23 00]  # NOT
-    [21 00]  # OR
-    [20 00]  # AND
+    [00 00]  # CMP_OP_VAR 0 (a = IN1)
+    [00 01]  # CMP_OP_VAR 1 (b = IN2)
+    [00 02]  # CMP_OP_VAR 2 (c = IN3)
+    [22 00]  # CMP_OP_NOT
+    [21 00]  # CMP_OP_OR
+    [20 00]  # CMP_OP_AND
 ```
 
 ---

@@ -144,6 +144,7 @@ static __always_inline float emu_var_to_f(mem_var_t v) {
  * @param mem_access_t_ptr what we want to get
  * @return emu_result_t from mem_get
  */
+
 #define MEM_GET(dst_ptr, mem_access_t_ptr) ({ \
     const mem_access_t *_ma = (mem_access_t_ptr); \
     emu_result_t _res = {.code = EMU_OK}; \

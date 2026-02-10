@@ -19,7 +19,8 @@ static __always_inline bool is_zero(float a){
 
 typedef enum{
     OP_VAR   = 0x00,      
-    OP_CONST = 0x01,      
+    OP_CONST = 0x01, 
+         
     OP_ADD   = 0x02,     
     OP_MUL   = 0x03,      
     OP_DIV   = 0x04,      

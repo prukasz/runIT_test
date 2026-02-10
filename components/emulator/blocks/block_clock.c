@@ -34,6 +34,7 @@ emu_result_t block_clock(block_handle_t block) {
     block_clock_cfg_t *cfg = (block_clock_cfg_t*)block->custom_data;
 
     bool en = block_check_in_true(block, CLK_IN_EN);
+    
     if (!en) {
         cfg->prev_en = false;
         mem_var_t v_out = { .type = MEM_B, .data.val.b = false };

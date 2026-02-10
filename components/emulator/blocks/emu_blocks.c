@@ -37,10 +37,14 @@ emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t data_len, v
     LOG_I(TAG, "Parsing block configuration.....");
     emu_code_handle_t code = (emu_code_handle_t)emu_code_handle;
     block_data_t block_tmp = {0};
+
     memcpy(&block_tmp.cfg, data, sizeof(block_tmp.cfg));
+
     uint16_t idx = block_tmp.cfg.block_idx;
+
     if (idx>code->total_blocks){RET_ED(EMU_ERR_BLOCK_INVALID_PARAM, idx, 0, "No space for block with index %d", idx);}
     block_handle_t block = code->blocks_list[idx];
+    
     *block = block_tmp;
     block -> inputs = (mem_access_t**)calloc(block_tmp.cfg.in_cnt, sizeof(mem_access_t*));
     block -> outputs = (mem_access_t**)calloc(block_tmp.cfg.q_cnt, sizeof(mem_access_t*));

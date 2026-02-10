@@ -9,6 +9,8 @@ static const char *TAG = __FILE_NAME__;
 #define BLOCK_IN_SEL_SEL      1
 #define BLOCK_IN_SEL_OPT_BASE 2
 
+
+
 #undef OWNER
 #define OWNER EMU_OWNER_block_in_selector
 emu_result_t block_in_selector(block_handle_t block){
@@ -29,6 +31,7 @@ emu_result_t block_in_selector(block_handle_t block){
         // Mimic output struct from selected option
         *block->outputs[0]->instance = *block->inputs[BLOCK_IN_SEL_OPT_BASE + selector]->instance;
     }
+    
     block->outputs[0]->instance->updated = 1; // Mark output as updated so it can trigger next blocks
     return EMU_RESULT_OK();
 }
