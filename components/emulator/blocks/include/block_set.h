@@ -27,4 +27,10 @@ OUTPUTS:
  */
 emu_result_t block_set(block_handle_t block_data);
 
+emu_result_t block_set_verify(block_handle_t block);
+
+void block_set_free(block_handle_t block);
+
+emu_result_t block_set_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block_ptr);
+
 

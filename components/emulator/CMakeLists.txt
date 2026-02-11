@@ -20,7 +20,6 @@ idf_component_register(
         "blocks/block_in_selector.c"
         "blocks/block_q_selector.c"
         "core/emu_helpers.c"
-        "core/emu_subscribe.c"
 
     INCLUDE_DIRS 
         "blocks/include"

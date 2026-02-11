@@ -107,6 +107,8 @@ typedef enum {
     EMU_OWNER_block_timer_parse,
     EMU_OWNER_block_timer_verify,
     EMU_OWNER_block_set,
+    EMU_OWNER_block_set_parse,
+    EMU_OWNER_block_set_verify,
     EMU_OWNER_block_math_parse,
     EMU_OWNER_block_math,
     EMU_OWNER_block_math_verify,
