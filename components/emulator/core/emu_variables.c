@@ -5,7 +5,7 @@
 
 static const char *TAG = __FILE_NAME__;
 
-__attribute__((aligned(32)))mem_context_t mem_contexts[MAX_CONTEXTS];
+__attribute__((aligned(32))) mem_context_t mem_contexts[MAX_CONTEXTS];
 static bool is_ctx_allocated[MAX_CONTEXTS];
 
 
