@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from BlockCounter import BlockCounter
     from BlockInSelector import BlockInSelector
     from BlockQSelector import BlockQSelector
+    from BlockLatch import BlockLatch
 
 # ============================================================================
 # Context IDs
@@ -90,6 +91,7 @@ class Code:
     * ``add_timer()``    — add a Timer block
     * ``add_counter()``  — add a Counter block
     * ``add_selector()`` — add a Selector block
+    * ``add_latch()``    — add a Latch block (SR or RS)
     * ``generate()``     — sort → reindex → write hex dump
 
     All ``add_*`` methods accept string aliases for refs
@@ -647,6 +649,41 @@ class Code:
 
     # Backward compatibility alias
     add_selector = add_in_selector
+
+    def add_latch(self,
+                 set=None,
+                 reset=None,
+                 en=None,
+                 latch_type=None,
+                 idx: Optional[int] = None,
+                 alias: Optional[str] = None) -> 'BlockLatch':
+        """
+        Add a Latch block (SR or RS).
+
+        :param set:        Set input (str alias or Ref)
+        :param reset:      Reset input (str alias or Ref)
+        :param en:         Enable input (str alias or Ref)
+        :param latch_type: BlockLatchCfg.LATCH_SR (default) or LATCH_RS
+
+        Example::
+
+            code.add_latch(set="btn_start", reset="btn_stop", en="enable",
+                           latch_type=BlockLatchCfg.LATCH_SR, alias="motor_latch")
+        """
+        from BlockLatch import BlockLatch, BlockLatchCfg
+        if idx is None:
+            idx = self._idx()
+        if latch_type is None:
+            latch_type = BlockLatchCfg.LATCH_SR
+        set_ref   = self._resolve_ref(set)
+        reset_ref = self._resolve_ref(reset)
+        en        = self._resolve_ref(en)
+        block = BlockLatch(
+            idx=idx, ctx=self.blocks_ctx,
+            set=set_ref, reset=reset_ref, en=en,
+            latch_type=latch_type,
+        )
+        return self._register_block(block, alias=alias)
 
     def add_q_selector(self,
                        selector=None,

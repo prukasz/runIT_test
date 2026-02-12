@@ -13,7 +13,8 @@ emu_block_func blocks_main_functions_table[255]={
     [BLOCK_COUNTER]=block_counter,
     [BLOCK_CLOCK]=block_clock,
     [BLOCK_IN_SELECTOR]=block_in_selector,
-    [BLOCK_Q_SELECTOR]=block_q_selector
+    [BLOCK_Q_SELECTOR]=block_q_selector,
+    [BLOCK_LATCH] = block_latch,
 };
 
 
@@ -28,6 +29,7 @@ emu_block_parse_func emu_block_parsers_table[255]={
     [BLOCK_SET]=block_set_parse,
     [BLOCK_COUNTER]=block_counter_parse,
     [BLOCK_CLOCK]=block_clock_parse,
+    [BLOCK_LATCH] = block_latch_parse,
 };
 /**
  * @brief Table for block specific free functions (cleanup/reset)
@@ -39,6 +41,7 @@ emu_block_free_func emu_block_free_table[255]={
     [BLOCK_TIMER]=block_timer_free,
     [BLOCK_COUNTER]=block_counter_free,
     [BLOCK_CLOCK]=block_clock_free,
+    [BLOCK_LATCH] = block_latch_free,
 };
 
 /**
@@ -50,7 +53,8 @@ emu_block_verify_func emu_block_verify_table[255]={
     [BLOCK_FOR]=block_for_verify,
     [BLOCK_TIMER]=block_timer_verify,
     [BLOCK_COUNTER]=block_counter_verify,
-    [BLOCK_CLOCK]=block_clock_verify
+    [BLOCK_CLOCK]=block_clock_verify,
+    [BLOCK_LATCH] = block_latch_verify,
 };
 
 
