@@ -192,7 +192,6 @@ emu_result_t block_set_parse(const uint8_t *packet_data, const uint16_t packet_l
                 config->value.type = (tmp >> 4) & 0x0F;
 
                 
-                //jak zdecydujesz sie na padding to robisz
                 //memcpy(&config->value.data.val, &payload[2], MEM_TYPE_SIZES[type(wcześniej odczytany)])
                 // i wtedy usuwasz wszystko na dole 
                 switch (config->value.type) {
