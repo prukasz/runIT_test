@@ -93,7 +93,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
     #define _TRY_ADD_STATUS(_rep_ptr)  ({ (void)(_rep_ptr); })
 #endif
 
-#define _EMU_RETURN_ERR(_code, _owner, _idx, _depth, _is_notice, _is_warn, _is_abort) \
+#define _EMU_ADD_RET_ERR(_code, _owner, _idx, _depth, _is_notice, _is_warn, _is_abort) \
     ({ \
         emu_result_t _err = { \
             .code      = (_code), \
@@ -109,6 +109,22 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
         _TRY_ADD_ERROR(&_err); \
         return _err; \
     })
+
+#define _EMU_ADD_ERR(_code, _owner, _idx, _depth, _is_notice, _is_warn, _is_abort) \
+    ({ \
+        emu_result_t _err = { \
+            .code      = (_code), \
+            .owner     = (_owner), \
+            .owner_idx = (_idx),        /* Maps to owner_idx (Block ID) */ \
+            .notice    = (_is_notice), \
+            .warning   = (_is_warn), \
+            .abort     = (_is_abort), \
+            .depth     = (_depth), \
+            .time      = emu_loop_get_time(), \
+            .cycle     = emu_loop_get_iteration() \
+        }; \
+        _TRY_ADD_ERROR(&_err); \
+    })  
 
 /*********************************************************************************************
 
@@ -134,8 +150,8 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
      */
 #define EMU_RETURN_CRITICAL(code, owner_name_enum, owner_idx, depth_arg, tag, fmt, ...) \
     ({ \
-        _LOG_X_FROM_ERR(LOG_E, tag, "CRITICAL: " fmt, ##__VA_ARGS__); \
-        _EMU_RETURN_ERR(code, owner_name_enum, owner_idx, depth_arg, 0, 0, 1); \
+        _LOG_X_FROM_ERR(LOG_E, tag, fmt, ##__VA_ARGS__); \
+        _EMU_ADD_RET_ERR(code, owner_name_enum, owner_idx, depth_arg, 0, 0, 1); \
     })
 
     /**
@@ -143,8 +159,8 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
      */
 #define EMU_RETURN_WARN(code, owner_name_enum, owner_idx, depth_arg, tag, fmt, ...) \
     ({ \
-        _LOG_X_FROM_ERR(LOG_W, tag, "WARNING: " fmt, ##__VA_ARGS__); \
-        _EMU_RETURN_ERR(code, owner_name_enum, owner_idx, depth_arg, 0, 1, 0); \
+        _LOG_X_FROM_ERR(LOG_W, tag, fmt, ##__VA_ARGS__); \
+        _EMU_ADD_RET_ERR(code, owner_name_enum, owner_idx, depth_arg, 0, 1, 0); \
     })
 
     /**
@@ -153,7 +169,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 #define EMU_RETURN_NOTICE(code, owner_name_enum, owner_idx, depth_arg, tag, fmt, ...) \
     ({ \
         _LOG_X_FROM_ERR(LOG_I, tag, "NOTICE: " fmt, ##__VA_ARGS__); \
-        _EMU_RETURN_ERR(code, owner_name_enum, owner_idx, depth_arg, 1, 0, 0); \
+        _EMU_ADD_RET_ERR(code, owner_name_enum, owner_idx, depth_arg, 1, 0, 0); \
     })
 
     /**
@@ -163,60 +179,24 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 #define EMU_REPORT_ERROR_CRITICAL(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
     ({ \
         _LOG_X_FROM_ERR(LOG_E, tag, fmt, ##__VA_ARGS__); \
-        emu_result_t _err = { \
-            .code = code_arg, \
-            .owner = owner_name_enum, \
-            .owner_idx = owner_idx_arg, \
-            .notice = 0, \
-            .warning = 0, \
-            .abort = 1, \
-            .depth = depth_arg, \
-            .time = emu_loop_get_time(), \
-            .cycle = emu_loop_get_iteration() \
-        }; \
-        _TRY_ADD_ERROR(&_err); \
+        _EMU_ADD_ERR(code_arg, owner_name_enum, owner_idx_arg, depth_arg, 0, 0, 1); \
     }) 
 
 #define EMU_REPORT_ERROR_WARN(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
     ({ \
         _LOG_X_FROM_ERR(LOG_W, tag, fmt, ##__VA_ARGS__); \
-        emu_result_t _err = { \
-            .code = code_arg, \
-            .owner = owner_name_enum, \
-            .owner_idx = owner_idx_arg, \
-            .notice = 0, \
-            .warning = 1, \
-            .abort = 0, \
-            .depth = depth_arg, \
-            .time = emu_loop_get_time(), \
-            .cycle = emu_loop_get_iteration() \
-        }; \
-        _TRY_ADD_ERROR(&_err); \
+        _EMU_ADD_ERR(code_arg, owner_name_enum, owner_idx_arg, depth_arg, 0, 1, 0); \
     })
 
 #define EMU_REPORT_ERROR_NOTICE(code_arg, owner_name_enum, owner_idx_arg, depth_arg, tag, fmt, ...)  \
     ({ \
         _LOG_X_FROM_ERR(LOG_I, tag, fmt, ##__VA_ARGS__); \
-        emu_result_t _err = { \
-            .code = code_arg, \
-            .owner = owner_name_enum, \
-            .owner_idx = owner_idx_arg, \
-            .notice = 1, \
-            .warning = 0, \
-            .abort = 0, \
-            .depth = depth_arg, \
-            .time = emu_loop_get_time(), \
-            .cycle = emu_loop_get_iteration() \
-        }; \
-        _TRY_ADD_ERROR(&_err); \
+        _EMU_ADD_ERR(code_arg, owner_name_enum, owner_idx_arg, depth_arg, 1, 0, 0); \
     })
 
 
-#ifdef ENABLE_STATUS_BUFF
-    /* Returns EMU_OK and pushes a report to log_queue */
-    /**
-     * @brief Return EMU_OK code and push logs if enabled
-     */
+#ifdef ENABLE_STATUS_BUFF  
+
     #define EMU_RETURN_OK(log_msg_enum, owner_name_enum, owner_custom_idx,  tag, fmt, ...) \
         ({ \
             _LOG_X_FROM_STAT(LOG_I, tag, "OK: " fmt, ##__VA_ARGS__); \
@@ -230,6 +210,7 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
             _TRY_ADD_STATUS(&_rep); \
             return (emu_result_t){ .code = EMU_OK }; \
         })
+
     #define EMU_RETURN_OK_SILENT(log_msg_enum, owner_name_enum, owner_custom_idx) \
         ({ \
             emu_report_t _rep = { \
@@ -243,9 +224,6 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
             return (emu_result_t){ .code = EMU_OK }; \
         })
 
-     /**
-     * @brief Push logs if enabled (no return)
-     */
     #define EMU_REPORT(log_msg_enum, owner_name_enum, owner_custom_idx, tag, fmt, ...) \
         ({ \
             _LOG_X_FROM_STAT(LOG_I, tag, "OK: " fmt, ##__VA_ARGS__); \
@@ -287,32 +265,53 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
         })
 #endif
 
-#define EMU_RESULT_OK() ((emu_result_t){ .code = EMU_OK })
+
 
 /************************************************************************************************************ *
+                                    PUBLIC API
 * SHORTCUT MACROS FOR ERROR HANDLING "D": means with depth and block idx                *
 ************************************************************************************************************ */
 
+/*emu_result_t with .code = EMU_OK*/
+#define EMU_RESULT_OK() ((emu_result_t){ .code = EMU_OK })
+
+/*Use when no details can be provided*/
 #define RET_E(code, msg, ...) EMU_RETURN_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+/*Use when no details can be provided*/
 #define RET_W(code, msg, ...) EMU_RETURN_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+/*Use when no details can be provided*/
 #define RET_N(code, msg, ...) EMU_RETURN_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+/*Use when no details can be provided*/
 #define RET_OK(msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
 
+/*Use when want to give block index and error depth*/
 #define RET_ED(code, block_idx, depth, msg, ...) EMU_RETURN_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+/*Use when want to give block index and error depth*/
 #define RET_WD(code, block_idx, depth, msg, ...) EMU_RETURN_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+/*Use when want to give block index and error depth*/
 #define RET_ND(code, block_idx, depth, msg, ...) EMU_RETURN_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+/*Use when want to give block index and error depth*/
 #define RET_OKD(block_idx, msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
 
+/*Return when block inactive, no logging*/
 #define RET_OK_INACTIVE(block_idx) EMU_RETURN_OK_SILENT(EMU_LOG_block_inactive, OWNER, block_idx)
 
-
+/*Add error to queue, no return*/
 #define REP_E(code, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+/*Add error to queue, no return*/
 #define REP_W(code, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+/*Add error to queue, no return*/
 #define REP_N(code, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)
+/*Add error to queue, no return*/
 #define REP_OK(msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, 0xFFFF, TAG, msg, ##__VA_ARGS__)
+/*Add status to queue, no return*/
 #define REP_MSG(log_enum, idx,  msg, ...) EMU_REPORT(log_enum, OWNER, idx, TAG, msg, ##__VA_ARGS__)
 
+/*Add error to queue, no return , detailed*/
 #define REP_ED(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+/*Add error to queue, no return , detailed*/
 #define REP_WD(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+/*Add error to queue, no return , detailed*/
 #define REP_ND(code, block_idx, depth, msg, ...) EMU_REPORT_ERROR_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
+/*Add error to queue, no return , detailed*/
 #define REP_OKD(block_idx, msg, ...) EMU_REPORT(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)

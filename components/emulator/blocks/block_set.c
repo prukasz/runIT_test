@@ -12,6 +12,8 @@ typedef struct{
     mem_var_t value;
     uint8_t is_val_given;
 }block_set_handle_t;
+//Tutaj nie trzeba własnego structa,
+//korzystamy z mem_var_t tylko
 
 #define BLOCK_SET_EN       0
 #define BLOCK_SET_VALUE    1
@@ -27,9 +29,21 @@ emu_result_t block_set(block_handle_t block) {
     // Check EN input first (in_0)
     if (!block_check_in_true(block, BLOCK_SET_EN)) {RET_OK_INACTIVE(block->cfg.block_idx);}
     
+
+
+
+
+    //tutaj robisz trick i sprawdzasz czy custom data to null ptr, jesli tak to bierzesz wejscie
+    //jesli nie to cast na mem_var_t*
+
+
+
+
     block_set_handle_t* config = (block_set_handle_t*)block->custom_data;
     
     // Fast exit: check if value input is updated and value is not given by config
+
+    //to sprawdzasz tylko jak jest null ptr 
     if(!block_in_updated(block, BLOCK_SET_VALUE)) {
         if(unlikely(!config->is_val_given)){
             RET_OK_INACTIVE(block->cfg.block_idx);}
@@ -42,7 +56,7 @@ emu_result_t block_set(block_handle_t block) {
     mem_var_t v_source;
     mem_var_t v_target;
 
-    if(!config->is_val_given)
+    if(!config->is_val_given)  
     {
         mem_access_t *src_access = block->inputs[BLOCK_SET_VALUE];
         mem_instance_t *src_inst = src_access->instance;
@@ -156,24 +170,31 @@ emu_result_t block_set_parse(const uint8_t *packet_data, const uint16_t packet_l
     
     // Allocate custom data if not exists
     if (!block->custom_data) {
-        block->custom_data = calloc(1, sizeof(block_set_handle_t));
+        block->custom_data = calloc(1, sizeof(block_set_handle_t));  //tu samo mem_var_t , wiadomo, że pakiet jak przyjdzie to trzeba alokacje i tyle 
         if (!block->custom_data) RET_ED(EMU_ERR_NO_MEM, block->cfg.block_idx, 0, "Alloc failed");
     }
 
     block_set_handle_t *config = (block_set_handle_t*)block->custom_data;
 
         if(packet_id == BLOCK_PKT_CFG){
+
+            // to ci zadziała jak zrobisz, ale masz rózne rozmiary payloadu (1 + 1+ 1:4 ) więc albo spradzasz typ i potem dludoc przez mem_types_sizes
+            //albo robisz padding, i dajesz zawsze pakiet max size (typ + 4 bajty niezależnie od typu)
             if(payload_len < 3) RET_ED(EMU_ERR_PACKET_INCOMPLETE, block->cfg.block_idx, 0, "CONFIG payload too short");
 
-            memcpy(&config->is_val_given, &payload[0], 1);
+            memcpy(&config->is_val_given, &payload[0], 1); // mozna bez memcpy , poprosty tmp = payload[0] to i tak 1 bajt
             config->value.by_reference = false;
 
             if(config->is_val_given){
                 uint8_t tmp;
 
-                memcpy(&tmp, &payload[1], 1);
+                memcpy(&tmp, &payload[1], 1); // mozna bez memcpy , poprosty tmp = payload[1] to i tak 1 bajt
                 config->value.type = (tmp >> 4) & 0x0F;
+
                 
+                //jak zdecydujesz sie na padding to robisz
+                //memcpy(&config->value.data.val.b, &payload[2], MEM_TYPE_SIZES[type(wcześniej odczytany)])
+                // i wtedy usuwasz wszystko na dole 
                 switch (config->value.type) {
                     case MEM_B:   memcpy(&config->value.data.val.b, &payload[2], MEM_TYPE_SIZES[MEM_B]);     break;
                     case MEM_F:   memcpy(&config->value.data.val.f, &payload[2], MEM_TYPE_SIZES[MEM_F]);     break;
@@ -183,8 +204,9 @@ emu_result_t block_set_parse(const uint8_t *packet_data, const uint16_t packet_l
                     case MEM_I16: memcpy(&config->value.data.val.i16, &payload[2], MEM_TYPE_SIZES[MEM_I16]); break;
                     case MEM_I32: memcpy(&config->value.data.val.i32, &payload[2], MEM_TYPE_SIZES[MEM_I32]); break;
                 }
+                
             }
-            
+            // jak printujesz to który blok?
             LOG_I(TAG, "Parsed CONFIG: Value Given=%"PRIu8" Type=%s", 
                   config->is_val_given, EMU_DATATYPE_TO_STR[config->value.type]);
         }
@@ -195,6 +217,8 @@ emu_result_t block_set_parse(const uint8_t *packet_data, const uint16_t packet_l
 #undef OWNER
 #define OWNER EMU_OWNER_block_set_verify
 emu_result_t block_set_verify(block_handle_t block) {
+
+    // tu teraz po modyfikacji sprawszasz czy flaga is_in_connected jest, jesli jest to nie sprawdzasz czy null, jak nie ma flagi to wtedy sprawdzasz
     if (!block->custom_data) {RET_ED(EMU_ERR_NULL_PTR, block->cfg.block_idx, 0, "Custom Data is NULL %d", block->cfg.block_idx);}
     return EMU_RESULT_OK();
 }
