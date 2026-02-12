@@ -10,9 +10,9 @@ static bool is_ctx_allocated[MAX_CONTEXTS];
 
 
 typedef struct {
-    uint32_t heap_elements[MAX_CONTEXTS];  /*Capacity in elements of given type*/
-    uint16_t max_instances[MAX_CONTEXTS];  /*Total isntances of given type*/
-    uint16_t max_dims[MAX_CONTEXTS];       /*Sum of dimensions for every non scalar instance dims>0*/
+    uint32_t heap_elements[MEM_TYPES_COUNT];  /*Capacity in elements of given type*/
+    uint16_t max_instances[MEM_TYPES_COUNT];  /*Total isntances of given type*/
+    uint16_t max_dims[MEM_TYPES_COUNT];       /*Sum of dimensions for every non scalar instance dims>0*/
 } mem_ctx_config_t;
 
 // CTX ID (uint8_t) + TYPES CNT (9)* mem_ctx_config_t members

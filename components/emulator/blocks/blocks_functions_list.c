@@ -25,6 +25,7 @@ emu_block_parse_func emu_block_parsers_table[255]={
     [BLOCK_MATH]=block_math_parse,
     [BLOCK_FOR]=block_for_parse,
     [BLOCK_TIMER]=block_timer_parse,
+    [BLOCK_SET]=block_set_parse,
     [BLOCK_COUNTER]=block_counter_parse,
     [BLOCK_CLOCK]=block_clock_parse,
 };

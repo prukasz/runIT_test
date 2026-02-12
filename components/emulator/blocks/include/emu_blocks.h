@@ -7,6 +7,22 @@
 #include "emu_variables_acces.h"
 
 /**
+* @brief Block type identification code
+*/
+typedef enum{
+    BLOCK_MATH = 0x01,
+    BLOCK_SET = 0x02,
+    BLOCK_LOGIC = 0x03,
+    BLOCK_COUNTER = 0x04,
+    BLOCK_CLOCK = 0x05,
+    BLOCK_FOR = 0x08,
+    BLOCK_TIMER = 0x09,
+    BLOCK_IN_SELECTOR = 0x0A,
+    BLOCK_Q_SELECTOR = 0x0B,
+}block_type_t;
+
+
+/**
  * @brief Block data packet IDs - identifies type of data in PACKET_H_BLOCK_DATA packets
  * @note Packet format after header: [block_idx:u16][block_type:u8][packet_id:u8][data...]
  */

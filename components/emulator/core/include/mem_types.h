@@ -103,10 +103,12 @@ typedef struct mem_access_t {
     uint8_t  indices_cnt       : 4; /*Provided indices cnt*/
     uint8_t  is_index_resolved : 1; /*Is array index resolved*/
     uint8_t  can_resolve_index : 1; /*Can array index be resolved*/
-    uint8_t  reserved          : 2; /*paddign*/
+    uint8_t  whole_array       : 1; /*padding*/
+    uint8_t  reserved          : 1; /*padding*/
     uint8_t  is_idx_static_mask; /*mask for provided array indices type example: 0x01 means that idx 0 is number and rest is mem_access_t*/
     idx_val_t indices_values[]; /*Indices values as number or mem_access_t*/
 } mem_access_t;
+
 
 /**
 *@brief Tagged union to know type runtime

@@ -302,8 +302,8 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
 #define RET_WD(code, block_idx, depth, msg, ...) EMU_RETURN_WARN(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_ND(code, block_idx, depth, msg, ...) EMU_RETURN_NOTICE(code, OWNER, block_idx, depth, TAG, msg, ##__VA_ARGS__)
 #define RET_OKD(block_idx, msg, ...) EMU_RETURN_OK(EMU_LOG_finished, OWNER, block_idx, TAG, msg, ##__VA_ARGS__)
-#define RET_OK_INACTIVE(block_idx) EMU_RETURN_OK_SILENT(EMU_LOG_block_inactive, OWNER, block_idx)
 
+#define RET_OK_INACTIVE(block_idx) EMU_RETURN_OK_SILENT(EMU_LOG_block_inactive, OWNER, block_idx)
 
 
 #define REP_E(code, msg, ...) EMU_REPORT_ERROR_CRITICAL(code, OWNER, 0xFFFF, 0, TAG, msg, ##__VA_ARGS__)

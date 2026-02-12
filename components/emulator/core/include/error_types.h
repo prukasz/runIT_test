@@ -63,6 +63,8 @@ typedef enum {
     EMU_ERR_CTX_ALREADY_CREATED,
     EMU_ERR_INVALID_PACKET_SIZE,
     EMU_ERR_SEQUENCE_VIOLATION,
+    EMU_ERR_SUBSCRIPTION_FULL,
+
 
 
 } emu_err_t;
@@ -105,6 +107,8 @@ typedef enum {
     EMU_OWNER_block_timer_parse,
     EMU_OWNER_block_timer_verify,
     EMU_OWNER_block_set,
+    EMU_OWNER_block_set_parse,
+    EMU_OWNER_block_set_verify,
     EMU_OWNER_block_math_parse,
     EMU_OWNER_block_math,
     EMU_OWNER_block_math_verify,
@@ -145,6 +149,12 @@ typedef enum {
     EMU_OWNER_emu_block_parse_input,
     EMU_OWNER_emu_block_parse_output,
     EMU_OWNER_parse_block_data,
+    EMU_OWNER_emu_subscribe_init,
+    EMU_OWNER_EMU_OWNER_emu_subscribe_register,
+    EMU_OWNER_emu_subscribe_process,
+    EMU_OWNER_emu_subscribe_reset,
+    EMU_OWNER_emu_subscribe_send,
+    
 
 }emu_owner_t;
 

@@ -1,6 +1,7 @@
 import ctypes as ct 
 from enum import IntEnum
 from struct import pack
+from typing import Any
 
 class mem_types_t(IntEnum):
     MEM_U8   = 0
@@ -12,7 +13,7 @@ class mem_types_t(IntEnum):
     MEM_F    = 6
 
 
-mem_types_map: dict[mem_types_t, ct._ctype] = {
+mem_types_map: dict[mem_types_t, Any] = {
     mem_types_t.MEM_U8:  ct.c_uint8,
     mem_types_t.MEM_U16: ct.c_uint16,
     mem_types_t.MEM_U32: ct.c_uint32,
