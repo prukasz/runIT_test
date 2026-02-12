@@ -19,7 +19,7 @@ ton = code.add_timer(pt = 20000, alias="ton", en = "enable")
 
 clk  = code.add_clock(period_ms=5000, width_ms=1000, en=ton.out[0], alias="clk")
 
-latch = code.add_latch(set=Ref("one"), reset=Ref("two"), en=clk.out[0], latch_type=0, alias="latch")
+latch = code.add_latch(set=ton.out[0], reset="zero", en="enable", latch_type=0, alias="latch")
 
 # Test IN_SELECTOR (multiplexer - selects ONE input to output)
 sel_in = code.add_in_selector(selector=Ref("selector"), 
@@ -41,3 +41,5 @@ m2 = code.add_math(expression=' "gains[1]" +0 ', en=sel_q.out[1])
 m3 = code.add_math(expression=' "gains[2]" +0 ', en=sel_q.out[2])
 
 code.generate("test_dump.txt")
+
+code.add_for(expr="i=0; i<10; i+=1", en=clk.out[0])

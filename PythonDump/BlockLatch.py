@@ -45,7 +45,7 @@ class BlockLatch(Block):
             self.block_type,
             block_packet_id_t.PKT_CFG
         )
-        payload = struct.pack('<B', self.latch_type.value << 1)
+        payload = struct.pack('<B', self.latch_type << 1)
         packets.append(header + payload)
         
         return packets
