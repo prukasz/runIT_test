@@ -19,23 +19,27 @@ ton = code.add_timer(pt = 20000, alias="ton", en = "enable")
 
 clk  = code.add_clock(period_ms=5000, width_ms=1000, en=ton.out[0], alias="clk")
 
+latch = code.add_latch(set=ton.out[0], reset="zero", en="enable", latch_type=0, alias="latch")
+
 # Test IN_SELECTOR (multiplexer - selects ONE input to output)
 sel_in = code.add_in_selector(selector=Ref("selector"), 
                                 options=[Ref("one"), Ref("two"), Ref("zero")], 
-                                en=clk.out[0],
+                                en=latch.out[0],
                                 alias="sel_in")
 
 
 # Test Q_SELECTOR (demultiplexer - activates ONE of N outputs)
 sel_q = code.add_q_selector(selector=Ref("selector"), 
                              output_count=3, 
-                             en=clk.out[0],
+                             en=latch.out[0],
                              alias="sel_q")
 
-set = code.add_set(target=Ref("selector"), value=sel_in.out[0], en=clk.out[0])
+set = code.add_set(target=Ref("selector"), value=sel_in.out[0], en=latch.out[0])
 
 m1 = code.add_math(expression=' "gains[0]" +0 ', en=sel_q.out[0])
 m2 = code.add_math(expression=' "gains[1]" +0 ', en=sel_q.out[1])
 m3 = code.add_math(expression=' "gains[2]" +0 ', en=sel_q.out[2])
 
 code.generate("test_dump.txt")
+
+code.add_for(expr="i=0; i<10; i+=1", en=clk.out[0])

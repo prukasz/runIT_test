@@ -19,6 +19,7 @@ idf_component_register(
         "blocks/block_clock.c"
         "blocks/block_in_selector.c"
         "blocks/block_q_selector.c"
+        "blocks/block_latch.c"
         "core/emu_helpers.c"
 
     INCLUDE_DIRS 

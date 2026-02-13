@@ -47,6 +47,7 @@ __attribute__((hot)) static emu_result_t emu_execute_code(emu_code_handle_t code
 
         //If watchdog triggered during execution of block, abort further execution
         } else {
+            LOG_E(TAG,"chuj");
             RET_ED(EMU_ERR_BLOCK_WTD_TRIGGERED, emu_loop_iterator, 0, 
                                 "While executing loop %lld, after block %lld, watchdog triggered, total running time %lld ms, wtd is set to %lld ms",
                                 emu_loop_get_iteration(), emu_loop_iterator,
@@ -80,7 +81,13 @@ void emu_body_loop_task(void* params){
                     xSemaphoreTake(logger_done_sem, portMAX_DELAY);
                 }
             }
-            //debug_blocks_value_dump(emu_block_struct_execution_list, emu_block_total_cnt, 100);
+
+            if (emu_loop_wtd_status()) {
+                    REP_ED(EMU_ERR_BLOCK_WTD_TRIGGERED, emu_loop_iterator > 0 ? emu_loop_iterator - 1 : 0, 0,
+                        "After full loop pass, watchdog triggered, total running time %lld ms, wtd is set to %lld ms",
+                        emu_loop_get_time(), (uint64_t)(emu_loop_get_wtd_max_skipped() * emu_loop_get_period()) / 1000);
+            }
+
             emu_loop_notify_cycle_end();
             taskYIELD();
         }
