@@ -1,0 +1,215 @@
+"""
+Subscribe module – builds PACKET_H_SUBSCRIPTION_INIT and PACKET_H_SUBSCRIPTION_ADD
+packets for the emulator subscription system.
+
+Protocol (from emu_subscribe.c):
+──────────────────────────────────────────────────────────────────────
+SUBSCRIPTION_INIT  (0xC0)
+    Packet layout:  [header 0xC0][sub_list_size: u16]
+    Order:          ORD_PARSE_SUBSCRIPTION_INIT (0xAAC0)
+    Purpose:        Allocates subscription list on device side.
+
+SUBSCRIPTION_ADD   (0xC1)
+    Packet layout:  [header 0xC1][ctx: u8][count: u8][ (type: u8, inst_idx: u16) × count ]
+    Order:          ORD_PARSE_SUBSCRIPTION_ADD  (0xAAC1)
+    Purpose:        Registers concrete instances to be published back.
+──────────────────────────────────────────────────────────────────────
+
+Usage example:
+    from Subscribe import SubscriptionBuilder
+    from Code import Code
+
+    code = Code()
+    code.var(MEM_F, "temperature", data=0.0)
+    code.var(MEM_U16, "counter", data=0)
+
+    sub = SubscriptionBuilder(code)
+    sub.add("temperature")
+    sub.add("counter")
+
+    # Get raw packet bytes (with headers)
+    init_pkt, add_pkts = sub.build()
+
+    # Or get full sections (packets + orders) for FullDump integration
+    sections = sub.collect_sections()
+"""
+
+import struct
+from typing import List, Tuple, Optional
+from dataclasses import dataclass, field
+
+from Enums import (
+    packet_header_t,
+    emu_order_t,
+    mem_types_t,
+)
+from Mem import mem_context_t
+from MemAcces import AccessManager
+
+
+# ============================================================================
+# Subscription entry – resolved reference to a single instance
+# ============================================================================
+@dataclass
+class SubscriptionEntry:
+    """One subscription target: context + type + instance index."""
+    ctx_id: int
+    mem_type: mem_types_t
+    inst_idx: int
+
+    def pack(self) -> bytes:
+        """Serialize to 3-byte wire format: [type: u8][inst_idx: u16 LE]."""
+        return struct.pack('<BH', int(self.mem_type), self.inst_idx)
+
+
+# ============================================================================
+# SubscriptionBuilder – high-level API
+# ============================================================================
+class SubscriptionBuilder:
+    """
+    Collects instance aliases (or raw references) and produces the two
+    subscription packets that the emulator parser expects.
+
+    Parameters
+    ----------
+    code : Code
+        Code object that owns user_ctx / blocks_ctx for alias resolution.
+    pkt_size : int
+        Maximum payload size per SUBSCRIPTION_ADD packet (default 512).
+    """
+
+    def __init__(self, code, pkt_size: int = 512):
+        self.code = code
+        self.pkt_size = pkt_size
+        self._entries: List[SubscriptionEntry] = []
+        self._manager: AccessManager = code._manager
+
+    # ------------------------------------------------------------------
+    # Public API – adding subscriptions
+    # ------------------------------------------------------------------
+
+    def add(self, alias: str) -> 'SubscriptionBuilder':
+        """
+        Subscribe to an instance by its alias.
+        Resolves through AccessManager to find context, type & index.
+        """
+        ctx_id, m_type, idx, _ = self._manager.resolve_alias(alias)
+        self._entries.append(SubscriptionEntry(ctx_id, m_type, idx))
+        return self
+
+    def add_raw(self, ctx_id: int, mem_type: mem_types_t, inst_idx: int) -> 'SubscriptionBuilder':
+        """Subscribe to an instance by explicit context / type / index."""
+        self._entries.append(SubscriptionEntry(ctx_id, mem_type, inst_idx))
+        return self
+
+    # ------------------------------------------------------------------
+    # Packet generation
+    # ------------------------------------------------------------------
+
+    def _pack_init(self) -> bytes:
+        """
+        Build SUBSCRIPTION_INIT packet.
+        Layout: [header 0xC0][sub_list_size: u16 LE]
+        """
+        header = struct.pack('<B', packet_header_t.PACKET_H_SUBSCRIPTION_INIT)
+        payload = struct.pack('<H', len(self._entries))
+        return header + payload
+
+    def _pack_add_packets(self) -> List[bytes]:
+        """
+        Build one or more SUBSCRIPTION_ADD packets.
+        Layout per packet: [header 0xC1][ctx: u8][count: u8][ (type:u8, inst_idx:u16) × count ]
+
+        Entries are grouped by context and split across packets when
+        the payload would exceed *pkt_size*.
+        """
+        # Group entries by ctx_id (preserve insertion order)
+        groups: dict[int, List[SubscriptionEntry]] = {}
+        for entry in self._entries:
+            groups.setdefault(entry.ctx_id, []).append(entry)
+
+        packets: List[bytes] = []
+        header_byte = struct.pack('<B', packet_header_t.PACKET_H_SUBSCRIPTION_ADD)
+
+        for ctx_id, entries in groups.items():
+            # Each entry = 3 bytes (type u8 + inst_idx u16).  Fixed overhead = 2 (ctx + count).
+            overhead = 2  # ctx(1) + count(1)
+            entry_size = 3
+            max_per_pkt = (self.pkt_size - overhead) // entry_size
+
+            # Split into chunks that fit in a single packet
+            for start in range(0, len(entries), max_per_pkt):
+                chunk = entries[start : start + max_per_pkt]
+                count = len(chunk)
+                payload = struct.pack('<BB', ctx_id, count)
+                for e in chunk:
+                    payload += e.pack()
+                packets.append(header_byte + payload)
+
+        return packets
+
+    def build(self) -> Tuple[bytes, List[bytes]]:
+        """
+        Returns
+        -------
+        init_packet : bytes
+            The SUBSCRIPTION_INIT packet (with header byte).
+        add_packets : list[bytes]
+            One or more SUBSCRIPTION_ADD packets (with header byte).
+        """
+        if not self._entries:
+            raise ValueError("No subscriptions added – call .add() first")
+        return self._pack_init(), self._pack_add_packets()
+
+    # ------------------------------------------------------------------
+    # FullDump integration helpers
+    # ------------------------------------------------------------------
+
+    def collect_sections(self) -> List[Tuple[str, List[Tuple[bytes, str]], List[emu_order_t]]]:
+        """
+        Return sections compatible with FullDump._collect_sections() format:
+        ``[(title, [(pkt_bytes, comment), ...], [order, ...])]``
+
+        Produces two sections:
+            1. Subscription Init  – single init packet + ORD_PARSE_SUBSCRIPTION_INIT
+            2. Subscription Add   – one or more add packets + ORD_PARSE_SUBSCRIPTION_ADD
+        """
+        init_pkt, add_pkts = self.build()
+
+        sections = []
+
+        # Section: init
+        sections.append((
+            "Sub Init",
+            [(init_pkt, f"SUB_INIT (max {len(self._entries)} entries)")],
+            [emu_order_t.ORD_PARSE_SUBSCRIPTION_INIT],
+        ))
+
+        # Section: add
+        add_items = []
+        for i, pkt in enumerate(add_pkts):
+            ctx_id = pkt[1]  # first payload byte after header
+            count  = pkt[2]
+            add_items.append((pkt, f"SUB_ADD [{i}] ctx={ctx_id} cnt={count}"))
+
+        sections.append((
+            "Sub Add",
+            add_items,
+            [emu_order_t.ORD_PARSE_SUBSCRIPTION_ADD],
+        ))
+
+        return sections
+
+    # ------------------------------------------------------------------
+    # Debug / display
+    # ------------------------------------------------------------------
+
+    def summary(self) -> str:
+        """Human-readable summary of current subscriptions."""
+        lines = [f"Subscriptions ({len(self._entries)} total):"]
+        for i, e in enumerate(self._entries):
+            lines.append(f"  [{i}] ctx={e.ctx_id}  type={e.mem_type.name:<6s}  idx={e.inst_idx}")
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return f"SubscriptionBuilder(entries={len(self._entries)})"

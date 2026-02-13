@@ -4,7 +4,7 @@
 #include "mem_types.h"
 
 
-static inline bool parse_check_header(const uint8_t *data, size_t data_len, const uint8_t header){
+static inline bool parse_check_header(const uint8_t *data, size_t el_cnt, const uint8_t header){
     if (data[0] != header) return false;
     return true;
 }

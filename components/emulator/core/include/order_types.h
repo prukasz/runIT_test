@@ -25,6 +25,8 @@ typedef enum {
     ORD_PARSE_BLOCK_DATA         = 0xAABA,
 
     ORD_PARSE_RESET_STATUS       = 0xAA00, //Reset parser status to initial state (for new code parsing)
+    ORD_PARSE_SUBSCRIPTION_INIT  = 0xAAC0, //Initialize subscription system with provided config
+    ORD_PARSE_SUBSCRIPTION_ADD   = 0xAAC1, //Add subscription
 
     /********RESET ORDERS  ***************/ 
     ORD_RESET_ALL             = 0x0001,  //Brings emulator to startup state, provides way to eaisly send new code

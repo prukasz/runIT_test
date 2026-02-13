@@ -17,12 +17,16 @@ typedef enum{
     PACKET_H_BLOCK_INPUTS         = 0xB1,
     PACKET_H_BLOCK_OUTPUTS        = 0xB2,
     PACKET_H_BLOCK_DATA           = 0xBA,
+    
+    PACKET_H_SUBSCRIPTION_INIT    = 0xC0,
+    PACKET_H_SUBSCRIPTION_ADD     = 0xC1,
+
+    PACKET_H_PUBLISH       = 0xD0,
 }packet_header_t;
 
 typedef emu_result_t (*emu_parse_func)(const uint8_t *packet_data, const uint16_t packet_len, void* custom);
 
 extern emu_parse_func parse_dispatch_table[255];
-
 
 /**
  * @brief Dispatch parser for given packet header

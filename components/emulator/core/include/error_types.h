@@ -152,8 +152,8 @@ typedef enum {
     EMU_OWNER_emu_block_parse_input,
     EMU_OWNER_emu_block_parse_output,
     EMU_OWNER_parse_block_data,
-    EMU_OWNER_emu_subscribe_init,
-    EMU_OWNER_EMU_OWNER_emu_subscribe_register,
+    EMU_OWNER_emu_subscribe_parse_init,
+    EMU_OWNER_emu_subscribe_parse_register,
     EMU_OWNER_emu_subscribe_process,
     EMU_OWNER_emu_subscribe_reset,
     EMU_OWNER_emu_subscribe_send,
@@ -237,6 +237,7 @@ typedef enum {
     EMU_LOG_created_ctx,
     EMU_LOG_clock_out_active,
     EMU_LOG_clock_out_inactive,
+    EMU_LOG_to_large_to_sub
 } emu_log_t;
 
 

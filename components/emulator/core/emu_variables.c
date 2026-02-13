@@ -156,7 +156,7 @@ typedef struct __packed {
 
 #undef OWNER
 #define OWNER EMU_OWNER_mem_parse_instance_packet
-emu_result_t emu_mem_parse_instance_packet(const uint8_t *data,const uint16_t data_len, void* nothing) {
+emu_result_t emu_mem_parse_instance_packet(const uint8_t *data,const uint16_t el_cnt, void* nothing) {
     instance_head_t head;
 
     //index in data packet
@@ -165,9 +165,9 @@ emu_result_t emu_mem_parse_instance_packet(const uint8_t *data,const uint16_t da
     //dim sizes are located after instance head
     uint16_t dim_sizes[MAX_DIMS];
 
-    while (idx < data_len) {
+    while (idx < el_cnt) {
         
-        if (idx + sizeof(instance_head_t) > data_len) {RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Instances packet incomplete");}
+        if (idx + sizeof(instance_head_t) > el_cnt) {RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Instances packet incomplete");}
 
         memcpy(&head, data + idx, sizeof(instance_head_t));
         uint16_t next_offset = idx + sizeof(instance_head_t);
@@ -176,7 +176,7 @@ emu_result_t emu_mem_parse_instance_packet(const uint8_t *data,const uint16_t da
         uint16_t dims_bytes = head.dims_cnt * sizeof(uint16_t);
         
         //check if dims really provided
-        if (next_offset + dims_bytes > data_len) {RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Instances packet incomplete");}
+        if (next_offset + dims_bytes > el_cnt) {RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Instances packet incomplete");}
 
         //copy provided dimensions
         if (head.dims_cnt > 0) {memcpy(dim_sizes, data + next_offset, dims_bytes);}
@@ -202,8 +202,8 @@ emu_result_t emu_mem_parse_instance_packet(const uint8_t *data,const uint16_t da
 
 #undef OWNER
 #define OWNER EMU_OWNER_emu_mem_parse_create_context
-emu_result_t emu_mem_parse_create_context(const uint8_t *data,const uint16_t data_len, void *nothing){
-    if (data_len != CTX_CFG_PACKET_SIZE){RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Invalid packet size for ctx config");}
+emu_result_t emu_mem_parse_create_context(const uint8_t *data,const uint16_t el_cnt, void *nothing){
+    if (el_cnt != CTX_CFG_PACKET_SIZE){RET_E(EMU_ERR_INVALID_PACKET_SIZE, "Invalid packet size for ctx config");}
 
     mem_ctx_config_t cfg = {0};
     uint16_t idx = 0;
@@ -225,7 +225,7 @@ emu_result_t emu_mem_parse_create_context(const uint8_t *data,const uint16_t dat
 
 #undef OWNER
 #define OWNER EMU_OWNER_emu_mem_fill_instance_scalar
-emu_result_t emu_mem_fill_instance_scalar(const uint8_t* data, const uint16_t data_len, void* nothing){
+emu_result_t emu_mem_fill_instance_scalar(const uint8_t* data, const uint16_t el_cnt, void* nothing){
     uint16_t idx = 0;
     uint8_t ctx_id = data[idx++];
     uint8_t type = data[idx++];
@@ -233,7 +233,7 @@ emu_result_t emu_mem_fill_instance_scalar(const uint8_t* data, const uint16_t da
     //we need size of element 
     size_t el_size = MEM_TYPE_SIZES[type];
     //check packet size [uint8_t ctx_id] + [uint8_t type] + [uint8_t count] + count*([uint16_t inst_idx]+[sizeof(type) data])
-    if(data_len<(3*sizeof(uint8_t))+ (sizeof(uint16_t)+MEM_TYPE_SIZES[type])*count){REP_ED(EMU_ERR_INVALID_PACKET_SIZE, ctx_id, 0, "Size of instances data to fill incomplete");}
+    if(el_cnt<(3*sizeof(uint8_t))+ (sizeof(uint16_t)+MEM_TYPE_SIZES[type])*count){REP_ED(EMU_ERR_INVALID_PACKET_SIZE, ctx_id, 0, "Size of instances data to fill incomplete");}
 
     type_manager_t *mgr = &mem_contexts[ctx_id].types[type];
 
@@ -255,7 +255,7 @@ emu_result_t emu_mem_fill_instance_scalar(const uint8_t* data, const uint16_t da
 
 #undef OWNER
 #define OWNER EMU_OWNER_emu_mem_fill_instance_array
-emu_result_t emu_mem_fill_instance_array(const uint8_t* data, const uint16_t data_len, void* nothing){
+emu_result_t emu_mem_fill_instance_array(const uint8_t* data, const uint16_t el_cnt, void* nothing){
     uint16_t idx = 0;
     uint8_t ctx_id = data[idx++];
     uint8_t type = data[idx++];

@@ -1,55 +1,143 @@
 #include "emu_subscribe.h"
+#include "emu_parse.h"
+#include "emu_helpers.h"
+#include "mem_types.h"
 
 #define TAG __FILE_NAME__
-static emu_subscribe_buff_t* subscription_list;
-static uint16_t subs_nex_idx = 0;
-static uint16_t subs_count = 0;
 
+extern __attribute__((aligned(32))) mem_context_t mem_contexts[];
 
-/**
- * @brief Each value tells how many can pack in one buff 
- */
-static uint8_t* packing_list;
+typedef struct{
+    struct{
+        uint16_t inst_idx; 
+        uint8_t context   : 3;  /*Context that isnstance shall belong to*/
+        uint8_t type      : 4;  /*mem_types_t type*/
+        uint8_t updated   : 1;  /*Updated flag can be used for block output variables*/
+    }head;
+    //info 
+    uint16_t el_cnt;
+    void *data;
+}pub_instance_t;
 
+struct
+{
+    uint8_t buff[512]; //space for packet 
 
-static uint8_t buff[512];
+    pub_instance_t *sub_list;
+    size_t sub_list_max_size;
+    size_t next_free_sub_idx;
+
+    uint8_t *pub_pack;
+    size_t pub_pack_size;
+    size_t pub_pack_max_size;
+} config;
 
 #undef OWNER
-#define OWNER EMU_OWNER_emu_subscribe_init
-emu_result_t emu_subscribe_init(const uint16_t count){
-    //create space for list
-    subscription_list = (emu_subscribe_buff_t*)calloc(count, sizeof(emu_subscribe_buff_t));
-    if(!subscription_list){
-        RET_E(EMU_ERR_NO_MEM, "Failed to allocate subscription list for %d items", count);
-    }
-    //
-    packing_list = (uint8_t*)calloc(count, sizeof(uint8_t));
-    if(!packing_list){
-        free(subscription_list);
-        RET_E(EMU_ERR_NO_MEM, "Failed to allocate packing list for %d items", count);
-    }
-    subs_count = count;
+#define OWNER EMU_OWNER_emu_subscribe_parse_init
+emu_result_t emu_subscribe_parse_init(const uint8_t *packet_data, const uint16_t packet_len, void* custom){
+    uint16_t sub_list_size = parse_get_u16(packet_data, 0);
+    config.sub_list_max_size = sub_list_size;
+    config.sub_list = (pub_instance_t *)calloc(sub_list_size, sizeof(pub_instance_t));
+
+    config.pub_pack_max_size =sub_list_size;
+    config.pub_pack = (uint8_t *)calloc(config.pub_pack_max_size, sizeof(uint8_t));
+
+    config.next_free_sub_idx = 0;
+    config.pub_pack_size = 0;
     return EMU_RESULT_OK();
 }
 
 #undef OWNER
-#define OWNER EMU_OWNER_EMU_OWNER_emu_subscribe_register
-emu_result_t emu_subscribe_register(const mem_access_t* what, const uint16_t index){
-    
-    if(subs_nex_idx >= subs_count){RET_E(EMU_ERR_SUBSCRIPTION_FULL, "Subscription list is full, cannot register more items");}
+#define OWNER EMU_OWNER_emu_subscribe_parse_register
+emu_result_t emu_subscribe_parse_register(const uint8_t *packet_data, const uint16_t packet_len, void* custom){
 
-    subscription_list[subs_nex_idx].instance = what;
-    //one element subscirbed, Only support for non recursive
-    subscription_list[subs_nex_idx].self_index = index;
-    if(!what->whole_array){
-        subscription_list[subs_nex_idx].data_size_in_bytes = MEM_TYPE_SIZES[what->instance->type];
-    }else{
+    uint8_t ctx = packet_data[0];
+    uint8_t count = packet_data[1];
+    if(packet_len < 2 + count * 3) RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet too short");
+
+    const uint8_t *payload = &packet_data[2];
+    uint16_t payload_len = packet_len - 2;
+
+    for(int i = 0; i < count; i++){
+        uint8_t type = payload[0];
+        uint16_t inst_idx = parse_get_u16(payload, 1);
+
+        if (config.next_free_sub_idx >= config.sub_list_max_size) RET_E(EMU_ERR_SUBSCRIPTION_FULL, "Subscription list is full");
         
-    }
+        uint8_t el_cnt = 1;
+        for(int j = 0; j < mem_contexts[ctx].types[type].instances[inst_idx].dims_cnt; j++){
+            el_cnt *= mem_contexts[ctx].types[type].dims_pool[mem_contexts[ctx].types[type].instances[inst_idx].dims_idx + j];
+        }
 
-    subscription_list[subs_nex_idx].context = what->instance->context;
-    subscription_list[subs_nex_idx].type = what->instance->type;
-    subscription_list[subs_nex_idx].updated = what->instance->updated;
+        config.sub_list[config.next_free_sub_idx].head.inst_idx = inst_idx;
+        config.sub_list[config.next_free_sub_idx].head.context = ctx;
+        config.sub_list[config.next_free_sub_idx].head.type = type;
+        config.sub_list[config.next_free_sub_idx].head.updated = mem_contexts[ctx].types[type].instances[inst_idx].updated;
+        config.sub_list[config.next_free_sub_idx].el_cnt = el_cnt; 
+        config.sub_list[config.next_free_sub_idx].data = mem_contexts[ctx].types[type].instances[inst_idx].data.raw;
+    
+        payload += 3;
+        payload_len -= 3;
+        config.next_free_sub_idx++;
+    }
+    emu_subscribe_process();
+    return EMU_RESULT_OK();
 }
 
+#undef OWNER
+#define OWNER EMU_OWNER_emu_subscribe_process
+emu_result_t emu_subscribe_process()
+{
+    int i = 0;
+    int packet = 0;
+    for(i = 0; i < config.next_free_sub_idx; i++){
+
+        size_t total_size = 0;
+        while(total_size < 511)
+        {
+            size_t next_size  = sizeof(((pub_instance_t *)0)->head) + config.sub_list[i].el_cnt * MEM_TYPE_SIZES[config.sub_list[i].head.type];
+            if(next_size){
+                REP_W(EMU_LOG_to_large_to_sub, "Instance data to large %"PRIu16"", config.sub_list[i].el_cnt);
+            }
+            total_size += next_size;
+            if (total_size < 511){
+                config.pub_pack[packet]++;
+                i++;
+            }
+            else{
+                packet++;
+                break;
+            }
+        }
+        i++;
+    }
+    config.pub_pack_size = packet+1;
+    return EMU_RESULT_OK();
+}
+
+#undef OWNER
+#define OWNER EMU_OWNER_emu_subscribe_send
+emu_result_t emu_subscribe_send(){
+
+    uint16_t offset = 1;
+    uint16_t instance = 0;
+
+    for(int packet = 0; packet < config.pub_pack_size; packet++){
+        config.buff[0] = PACKET_H_PUBLISH;
+        while(instance < config.pub_pack[packet]){ //config.pub_pack[0] - ilosc pakietow do wyslania
+            memcpy(config.buff+offset, &config.sub_list[instance].head, sizeof(((pub_instance_t *)0)->head));
+            offset+= sizeof(((pub_instance_t *)0)->head);
+            memcpy(config.buff+offset, config.sub_list[instance].data, config.sub_list[instance].el_cnt * MEM_TYPE_SIZES[config.sub_list[instance].head.type]);
+            offset+= config.sub_list[instance].el_cnt * MEM_TYPE_SIZES[config.sub_list[instance].head.type];
+
+            instance++;
+        }
+        //send buff with offset length
+        ESP_LOG_BUFFER_HEX(TAG, config.buff, offset);
+        //
+        offset = 0;
+        instance = 0;
+    }   
+    return EMU_RESULT_OK();
+}
 

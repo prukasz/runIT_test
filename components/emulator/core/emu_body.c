@@ -1,6 +1,7 @@
 #include "emu_interface.h"
 #include "emu_loop.h"
 #include "emu_variables.h"
+#include "emu_subscribe.h"
 #include "emu_blocks.h"
 #include "emu_logging.h"
 #include "block_types.h"
@@ -69,6 +70,7 @@ void emu_body_loop_task(void* params){
 
             int64_t end_time = esp_timer_get_time();
             ESP_LOGI(TAG, "Loop completed in %lld us", (end_time - start_time));
+            emu_subscribe_send();
             // Request logger to dump accumulated logs/reports and wait until it's done
             if (logger_task_handle) {
                 xTaskNotifyGive(logger_task_handle);

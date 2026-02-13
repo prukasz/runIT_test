@@ -47,6 +47,11 @@ class packet_header_t(IntEnum):
     PACKET_H_BLOCK_OUTPUTS        = 0xB2,
     PACKET_H_BLOCK_DATA           = 0xBA,
 
+    PACKET_H_SUBSCRIPTION_INIT    = 0xC0,
+    PACKET_H_SUBSCRIPTION_ADD     = 0xC1,
+
+    PACKET_H_PUBLISH              = 0xD0,
+
 class emu_order_t(IntEnum):
     #/********PARSER ORDERS **************/
     ORD_PARSE_CONTEXT_CFG        = 0xAAF0,  #/*Parse and create context*/
@@ -61,6 +66,9 @@ class emu_order_t(IntEnum):
     ORD_PARSE_BLOCK_INPUTS       = 0xAAB1,
     ORD_PARSE_BLOCK_OUTPUTS      = 0xAAB2,
     ORD_PARSE_BLOCK_DATA         = 0xAABA,
+
+    ORD_PARSE_SUBSCRIPTION_INIT   = 0xAAC0, #//Initialize subscription system
+    ORD_PARSE_SUBSCRIPTION_ADD     = 0xAAC1, #//Add subscription entries
 
     ORD_PARSE_RESET_STATUS       = 0xAA00, #//Reset parser status to initial state (for new code parsing)
 

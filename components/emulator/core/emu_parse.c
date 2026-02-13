@@ -8,6 +8,7 @@
 #include "emu_helpers.h"
 #include "blocks_functions_list.h"
 #include <string.h>
+#include "emu_subscribe.h"
 
 static const char *TAG = __FILE_NAME__;
 
@@ -18,17 +19,17 @@ static const char *TAG = __FILE_NAME__;
  * Parser receives: [packet_id:u8][data...]
  * 
  * @param data Packet data after header byte (starts with block_idx)
- * @param data_len Length of data
+ * @param el_cnt Length of data
  * @param emu_code_handle Code handle containing block list
  */
 #undef OWNER
 #define OWNER EMU_OWNER_parse_block_data
-static emu_result_t emu_block_parse_data(const uint8_t *data, const uint16_t data_len, void *emu_code_handle) {
+static emu_result_t emu_block_parse_data(const uint8_t *data, const uint16_t el_cnt, void *emu_code_handle) {
     emu_code_handle_t code = (emu_code_handle_t)emu_code_handle;
     
     // Minimum packet: [block_idx:u16][block_type:u8][packet_id:u8] = 4 bytes
-    if (data_len < 4) {
-        RET_E(EMU_ERR_PACKET_INCOMPLETE, "Block data packet too short: %d bytes", data_len);
+    if (el_cnt < 4) {
+        RET_E(EMU_ERR_PACKET_INCOMPLETE, "Block data packet too short: %d bytes", el_cnt);
     }
     
     // Extract block_idx, block_type
@@ -61,7 +62,7 @@ static emu_result_t emu_block_parse_data(const uint8_t *data, const uint16_t dat
     
     // Call parser with stripped packet: [packet_id:u8][data...]
     const uint8_t *parser_payload = &data[3];  // Skip block_idx(2) + block_type(1)
-    uint16_t parser_payload_len = data_len - 3;
+    uint16_t parser_payload_len = el_cnt - 3;
     
     emu_result_t res = parser(parser_payload, parser_payload_len, block);
     if (res.code != EMU_OK) {
@@ -84,6 +85,8 @@ emu_parse_func parse_dispatch_table[255] = {
     [PACKET_H_BLOCK_INPUTS]          = emu_block_parse_input, 
     [PACKET_H_BLOCK_OUTPUTS]         = emu_block_parse_output,
     [PACKET_H_BLOCK_DATA]            = emu_block_parse_data,
+    [PACKET_H_SUBSCRIPTION_INIT]     = emu_subscribe_parse_init,
+    [PACKET_H_SUBSCRIPTION_ADD]      = emu_subscribe_parse_register,
  };
 
 emu_result_t parse_dispatch(chr_msg_buffer_t *source, packet_header_t header_to_parse, void* extra_arg){
@@ -195,6 +198,18 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
             parse_status |= STATUS_CREATED_LOOP;
             break;
 
+        case ORD_PARSE_SUBSCRIPTION_INIT:
+            EMU_GUARD_ORDER(STATUS_CREATED_LOOP);
+            res = parse_dispatch(source, PACKET_H_SUBSCRIPTION_INIT, code_handle);
+            parse_status |= STATUS_CREATED_LOOP;
+            break;
+
+        case ORD_PARSE_SUBSCRIPTION_ADD:
+            EMU_GUARD_ORDER(STATUS_CREATED_LOOP);
+            res = parse_dispatch(source, PACKET_H_SUBSCRIPTION_ADD, code_handle);
+            parse_status |= STATUS_CREATED_LOOP;
+            break;
+        
         case ORD_PARSE_RESET_STATUS:
             parse_status = 0;
             break;

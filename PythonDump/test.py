@@ -42,6 +42,9 @@ m1 = code.add_math(expression=' "gains[0]" +0 ', en=sel_q.out[0])
 m2 = code.add_math(expression=' "gains[1]" +0 ', en=sel_q.out[1])
 m3 = code.add_math(expression=' "gains[2]" +0 ', en=sel_q.out[2])
 
-code.generate("test_dump.txt")
+# ── Subscriptions ──────────────────────────────────────────
+sub = code.subscribe("selector", "enable", "gains")
+
+code.generate("test_dump.txt", subscriptions=sub)
 
 code.add_for(expr="i=0; i<10; i+=1", en=clk.out[0])

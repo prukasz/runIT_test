@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from BlockInSelector import BlockInSelector
     from BlockQSelector import BlockQSelector
     from BlockLatch import BlockLatch
+    from Subscribe import SubscriptionBuilder
 
 # ============================================================================
 # Context IDs
@@ -577,21 +578,24 @@ class Code:
                  filename: str = "test_dump.txt",
                  raw: bool = False,
                  sort: bool = True,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 subscriptions=None):
         """
         Sort blocks → reindex → write hex dump to *filename*.
 
-        :param filename: Output file path.
-        :param raw:      If True, write without comments (for BLE send).
-        :param sort:     If True (default), run topological sort + reindex.
-        :param verbose:  Print summary to stdout.
+        :param filename:       Output file path.
+        :param raw:            If True, write without comments (for BLE send).
+        :param sort:           If True (default), run topological sort + reindex.
+        :param verbose:        Print summary to stdout.
+        :param subscriptions:  SubscriptionBuilder instance – if given, subscription
+                               packets are appended after block data and before loop control.
         """
         from FullDump import FullDump
 
         if sort:
             self._sort()
 
-        dump = FullDump(self)
+        dump = FullDump(self, subscriptions=subscriptions)
 
         with open(filename, "w") as f:
             if raw:
@@ -651,6 +655,33 @@ class Code:
                     packets.extend(data_packets)
 
         return packets
+
+    # ====================================================================
+    # Subscription helpers
+    # ====================================================================
+
+    def subscribe(self, *aliases: str) -> 'SubscriptionBuilder':
+        """
+        Create a SubscriptionBuilder and subscribe to the given aliases.
+
+        Usage:
+            sub = code.subscribe("temperature", "counter", "gains")
+            # returns SubscriptionBuilder with those entries added
+
+        You can also chain more calls:
+            sub = code.subscribe("temp").add("counter")
+
+        To get raw packets:
+            init_pkt, add_pkts = sub.build()
+
+        To append subscription sections into a dump file:
+            code.generate("dump.txt", subscriptions=sub)
+        """
+        from Subscribe import SubscriptionBuilder
+        builder = SubscriptionBuilder(self)
+        for alias in aliases:
+            builder.add(alias)
+        return builder
 
     def generate_packets_hex(self, manager: Optional[AccessManager] = None) -> List[str]:
         if manager is None:

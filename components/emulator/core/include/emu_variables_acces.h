@@ -30,14 +30,14 @@ emu_result_t mem_set(const mem_var_t source, const mem_access_t *target);
 /**
  * @brief Parse and create space for access structs
  * @param data packet buff (skip header)
- * @param data_len packet buff len (-header len)
+ * @param el_cnt packet buff len (-header len)
  * @param nothing pass NULL
  * @return emu_result_t.code = EMU_OK when success, else look emu_result_t struct def
  * @note Packet [uint16_t ref_cnt][uint16_t total_indices]
  * @details Access space is common for all contexts,
  * Total_indices value is computed as sum of provided static/dynamic indices_values in each struct
  */
-emu_result_t emu_mem_parse_access_create(const uint8_t*data, const uint16_t data_len, void* nothing);
+emu_result_t emu_mem_parse_access_create(const uint8_t*data, const uint16_t el_cnt, void* nothing);
 
 /**
 * @brief Free space for mem_access storage
@@ -47,7 +47,7 @@ void mem_access_free_space(void);
 /**
  * @brief Parse one access message (recursive if in need)
  */
-emu_err_t emu_mem_parse_access(const uint8_t *data, const uint16_t data_len, uint16_t* idx, mem_access_t **out_ptr);
+emu_err_t emu_mem_parse_access(const uint8_t *data, const uint16_t el_cnt, uint16_t* idx, mem_access_t **out_ptr);
 
 emu_result_t mem_access_allocate_space(uint16_t references_count, uint16_t total_indices);
 

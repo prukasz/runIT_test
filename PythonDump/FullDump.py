@@ -21,8 +21,9 @@ from Code import Code
 # FULL DUMP CLASS
 # =============================================================================
 class FullDump:
-    def __init__(self, code: Code):
+    def __init__(self, code: Code, subscriptions=None):
         self.code = code
+        self.subscriptions = subscriptions
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -127,7 +128,12 @@ class FullDump:
         sections.append(("Block Data", blk_data,
                          [emu_order_t.ORD_PARSE_BLOCK_DATA] if blk_data else []))
 
-        # 10. Loop control
+        # 10. Subscriptions (optional)
+        if self.subscriptions is not None:
+            sub_sections = self.subscriptions.collect_sections()
+            sections.extend(sub_sections)
+
+        # 11. Loop control
         loop_orders = []
         if include_loop_init:
             loop_orders.append(emu_order_t.ORD_EMU_LOOP_INIT)

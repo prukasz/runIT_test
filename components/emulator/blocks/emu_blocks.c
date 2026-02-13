@@ -10,7 +10,7 @@ static const char* TAG = __FILE_NAME__;
 
 #undef OWNER
 #define OWNER EMU_OWNER_emu_parse_block
-emu_result_t emu_block_parse_create_list(const uint8_t *data, const uint16_t data_len, void * emu_code_handle){
+emu_result_t emu_block_parse_create_list(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle){
     emu_code_handle_t code = (emu_code_handle_t)emu_code_handle;
     uint16_t count = parse_get_u16(data, 0);
     size_t ptr_list_size = count * sizeof(block_handle_t);
@@ -33,7 +33,7 @@ emu_result_t emu_block_parse_create_list(const uint8_t *data, const uint16_t dat
 
 #undef OWNER
 #define OWNER EMU_OWNER_parse_cfg
-emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t data_len, void * emu_code_handle){
+emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle){
     LOG_I(TAG, "Parsing block configuration.....");
     emu_code_handle_t code = (emu_code_handle_t)emu_code_handle;
     block_data_t block_tmp = {0};
@@ -55,14 +55,14 @@ emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t data_len, v
 
 #undef OWNER
 #define OWNER EMU_OWNER_emu_block_parse_input
-emu_result_t emu_block_parse_input(const uint8_t *data, const uint16_t data_len, void * emu_code_handle){
+emu_result_t emu_block_parse_input(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle){
     emu_code_handle_t code = (emu_code_handle_t)emu_code_handle;
     uint16_t block_idx = parse_get_u16(data, 0);
     uint8_t in_idx = data[2];
     mem_access_t *access = NULL;
     uint16_t parse_idx = 3;
     uint16_t index = 0;
-    emu_err_t res_code = emu_mem_parse_access(data + parse_idx, data_len - parse_idx, &index, &access);
+    emu_err_t res_code = emu_mem_parse_access(data + parse_idx, el_cnt - parse_idx, &index, &access);
     if(res_code != EMU_OK){RET_ED(res_code, block_idx, 0, "Failed to parse input access for block %d input %d, error %s", block_idx, in_idx, EMU_ERR_TO_STR(res_code));}
     if(block_idx >= code->total_blocks){RET_ED(EMU_ERR_BLOCK_INVALID_PARAM, block_idx, 0, "Invalid block idx %d for input parse", block_idx);}
     block_handle_t block = code->blocks_list[block_idx];
@@ -74,14 +74,14 @@ emu_result_t emu_block_parse_input(const uint8_t *data, const uint16_t data_len,
 
 #undef OWNER
 #define OWNER EMU_OWNER_emu_block_parse_output
-emu_result_t emu_block_parse_output(const uint8_t *data, const uint16_t data_len, void * emu_code_handle){
+emu_result_t emu_block_parse_output(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle){
     emu_code_handle_t code = (emu_code_handle_t)emu_code_handle;
     uint16_t block_idx = parse_get_u16(data, 0);
     uint8_t q_idx = data[2];
     mem_access_t *access = NULL;
     uint16_t parse_idx = 3;
     uint16_t index = 0;
-    emu_err_t res_code = emu_mem_parse_access(data + parse_idx, data_len - parse_idx, &index, &access);
+    emu_err_t res_code = emu_mem_parse_access(data + parse_idx, el_cnt - parse_idx, &index, &access);
     if(res_code != EMU_OK){RET_ED(res_code, block_idx, 0, "Failed to parse output access for block %d output %d", block_idx, q_idx);}
     if(block_idx >= code->total_blocks){RET_ED(EMU_ERR_BLOCK_INVALID_PARAM, block_idx, 0, "Invalid block idx %d for output parse", block_idx);}
     block_handle_t block = code->blocks_list[block_idx];
