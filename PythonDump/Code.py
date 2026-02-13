@@ -1,33 +1,3 @@
-"""
-Code.py — Unified block-programming environment.
-
-Combines the old Code (packet generation, block factory, ref resolution)
-with the old TestSpace (auto-idx, topological sort, generate pipeline).
-
-Usage::
-
-    from Code import Code
-    from Enums import mem_types_t
-
-    code = Code()
-
-    # Variables — plain scalars or arrays
-    code.var(mem_types_t.MEM_F, "speed", data=10.0)
-    code.var(mem_types_t.MEM_F, "result", data=0.0)
-    code.var(mem_types_t.MEM_B, "enable", data=True)
-    code.var(mem_types_t.MEM_F, "arr", data=[1,2,3,4,5], dims=[5])
-
-    # Blocks — no idx needed, alias= gives block a name for referencing
-    clk = code.add_clock(period_ms=1000, width_ms=500, en="enable", alias="clk")
-    loop = code.add_for(expr="i=0; i<10; i+=1", en="clk[0]", alias="loop")
-    m   = code.add_math(expression='"speed" * 2.0', en="loop[0]", alias="calc")
-    code.add_set(target="result", value="calc[1]")
-    l   = code.add_logic(expression='"calc[1]" > 10.0')   # ref in expression
-
-    # Generate (auto-sort, reindex, write hex dump)
-    code.generate("test_dump.txt")
-"""
-
 from __future__ import annotations
 import io
 import re
@@ -85,14 +55,15 @@ class Code:
     * ``var()``          — add user variables
     * ``add_math()``     — add a Math block
     * ``add_logic()``    — add a Logic block
-    * ``add_set()``      — add a Set block
-    * ``add_for()``      — add a For block
-    * ``add_clock()``    — add a Clock block
-    * ``add_timer()``    — add a Timer block
-    * ``add_counter()``  — add a Counter block
-    * ``add_selector()`` — add a Selector block
-    * ``add_latch()``    — add a Latch block (SR or RS)
-    * ``generate()``     — sort → reindex → write hex dump
+    * ``add_set()``        — add a Set block
+    * ``add_for()``        — add a For block
+    * ``add_clock()``      — add a Clock block
+    * ``add_timer()``      — add a Timer block
+    * ``add_counter()``    — add a Counter block
+    * ``add_in_selector()`` — add an IN_SELECTOR block
+    * ``add_q_selector()`` — add a Q_SELECTOR block
+    * ``add_latch()``      — add a Latch block (SR or RS)
+    * ``generate()``       — sort → reindex → write hex dump
 
     All ``add_*`` methods accept string aliases for refs
     (auto-wrapped in ``Ref``).  Math / Logic expressions support
@@ -126,23 +97,8 @@ class Code:
     # Variables
     # ====================================================================
 
-    def var(self,
-            var_type: mem_types_t,
-            alias: str,
-            data=None,
-            dims: Optional[List[int]] = None):
-        """
-        Add a user variable to Context 0.
-
-        :param var_type: MEM_F, MEM_B, MEM_U8, MEM_U16, MEM_U32, MEM_I32 …
-        :param alias:    Unique name
-        :param data:     Initial value (scalar or list for arrays)
-        :param dims:     Array dimensions (e.g. [5] for 1-D)
-        """
+    def var(self,var_type: mem_types_t, alias: str, data=None, dims: Optional[List[int]] = None):
         self.user_ctx.add(type=var_type, alias=alias, data=data, dims=dims)
-
-    # kept for backward compat
-    add_variable = var
 
     def ref(self, alias: str) -> Ref:
         """Get a Ref to a user variable by alias."""
@@ -414,301 +370,142 @@ class Code:
         return _to_val(start_tok), cond_str, _to_val(limit_tok), op_str, _to_val(step_tok)
 
     # ====================================================================
+    # Block factory helpers
+    # ====================================================================
+
+    def _add_block(self, block_cls, *, alias=None, idx=None,
+                   resolve: tuple = (), **kwargs):
+        """Generic block creation: auto-idx → resolve refs → instantiate → register."""
+        if idx is None:
+            idx = self._idx()
+        for key in resolve:
+            if key in kwargs:
+                kwargs[key] = self._resolve_ref(kwargs[key])
+        block = block_cls(idx=idx, ctx=self.blocks_ctx, **kwargs)
+        return self._register_block(block, alias=alias)
+
+    def _add_expr_block(self, block_cls, expression, connections, *,
+                        en=None, alias=None, idx=None):
+        """Creation helper for expression-based blocks (Math, Logic)."""
+        en = self._resolve_ref(en)
+        if connections is None:
+            expression, connections = self._extract_refs_from_expr(expression)
+        return self._add_block(
+            block_cls, alias=alias, idx=idx,
+            expression=expression,
+            connections=connections or None,
+            en=en,
+        )
+
+    # ====================================================================
     # Block factory methods  (no idx required — auto-assigned)
     # ====================================================================
 
-    def add_math(self,
-                 expression: str,
-                 connections=None,
-                 en=None,
+    def add_math(self, expression: str, connections=None, en=None,
                  idx: Optional[int] = None,
                  alias: Optional[str] = None) -> 'BlockMath':
-        """
-        Add a Math block.
-
-        Expression can contain ``"alias"`` tokens (auto-resolved)::
-
-            code.add_math(expression='"speed" * 3.14 + "offset"')
-
-        Or classic ``in_N`` with explicit connections::
-
-            code.add_math(expression="in_1 * 3.14",
-                          connections=[Ref("speed")])
-        """
         from BlockMath import BlockMath
-        if idx is None:
-            idx = self._idx()
-        en = self._resolve_ref(en)
-        if connections is None:
-            expression, connections = self._extract_refs_from_expr(expression)
-        block = BlockMath(
-            idx=idx, ctx=self.blocks_ctx,
-            expression=expression,
-            connections=connections if connections else None,
-            en=en,
-        )
-        return self._register_block(block, alias=alias)
+        return self._add_expr_block(BlockMath, expression, connections,
+                                    en=en, alias=alias, idx=idx)
 
-    def add_logic(self,
-                  expression: str,
-                  connections=None,
-                  en=None,
+    def add_logic(self, expression: str, connections=None, en=None,
                   idx: Optional[int] = None,
                   alias: Optional[str] = None) -> 'BlockLogic':
-        """
-        Add a Logic block.
-
-        Expression can contain ``"alias"`` tokens::
-
-            code.add_logic(expression='("temp" > 50) && ("press" < 100)')
-
-        Block outputs: ``blk_3.out[1] > 10``.
-        """
         from BlockLogic import BlockLogic
-        if idx is None:
-            idx = self._idx()
-        en = self._resolve_ref(en)
-        if connections is None:
-            expression, connections = self._extract_refs_from_expr(expression)
-        block = BlockLogic(
-            idx=idx, ctx=self.blocks_ctx,
-            expression=expression,
-            connections=connections if connections else None,
-            en=en,
-        )
-        return self._register_block(block, alias=alias)
+        return self._add_expr_block(BlockLogic, expression, connections,
+                                    en=en, alias=alias, idx=idx)
 
-    def add_set(self,
-                target=None,
-                value=None,
-                en=None,
+    def add_set(self, target=None, value=None, en=None,
                 idx: Optional[int] = None,
                 alias: Optional[str] = None) -> 'BlockSet':
-        """
-        Add a SET block.
-
-        ``target`` / ``value`` / ``en`` accept string alias or Ref::
-
-            code.add_set(target="motor_speed", value=math.out[1], en="enable")
-        """
         from BlockSet import BlockSet
-        if idx is None:
-            idx = self._idx()
-        target = self._resolve_ref(target)
-        value  = self._resolve_ref(value)
-        en     = self._resolve_ref(en)
-        block = BlockSet(idx=idx, ctx=self.blocks_ctx, target=target, value=value, en=en)
-        return self._register_block(block, alias=alias)
+        return self._add_block(BlockSet, alias=alias, idx=idx,
+                               resolve=('target', 'value', 'en'),
+                               target=target, value=value, en=en)
 
-    def add_for(self,
-                expr: str = None,
+    def add_for(self, expr: str = None,
                 start=0.0, limit=10.0, step=1.0,
-                condition=None, operator=None,
-                en=None,
+                condition=None, operator=None, en=None,
                 chain_len: int = 0,
                 idx: Optional[int] = None,
                 alias: Optional[str] = None) -> 'BlockFor':
-        """
-        Add a FOR loop block.
-
-        C-style expression (preferred)::
-
-            code.add_for(expr="i=0; i<10; i+=1", en=clk.out[0])
-
-        ``chain_len`` is auto-computed during ``generate()``.
-        """
         from BlockFor import BlockFor, _resolve_condition, _resolve_operator
-        if idx is None:
-            idx = self._idx()
         en = self._resolve_ref(en)
-
         if expr is not None:
             start, condition, limit, operator, step = self._parse_for_expr(expr)
-            # Resolve tokens via _resolve_ref (handles block aliases, arrays, etc.)
             start = self._resolve_ref(start)
             limit = self._resolve_ref(limit)
             step  = self._resolve_ref(step)
-
-        condition = _resolve_condition(condition)
-        operator  = _resolve_operator(operator)
-        block = BlockFor(
-            idx=idx, ctx=self.blocks_ctx, chain_len=chain_len,
-            start=start, limit=limit, step=step,
-            condition=condition, operator=operator, en=en,
+        return self._add_block(
+            BlockFor, alias=alias, idx=idx,
+            chain_len=chain_len, start=start, limit=limit, step=step,
+            condition=_resolve_condition(condition),
+            operator=_resolve_operator(operator), en=en,
         )
-        return self._register_block(block, alias=alias)
 
-    def add_clock(self,
-                  period_ms=1000.0,
-                  width_ms=500.0,
-                  en=None,
+    def add_clock(self, period_ms=1000.0, width_ms=500.0, en=None,
                   idx: Optional[int] = None,
                   alias: Optional[str] = None) -> 'BlockClock':
-        """
-        Add a Clock / PWM block.
-
-        ``en`` accepts string alias or Ref.
-        """
         from BlockClock import BlockClock
-        if idx is None:
-            idx = self._idx()
-        en        = self._resolve_ref(en)
-        period_ms = self._resolve_ref(period_ms)
-        width_ms  = self._resolve_ref(width_ms)
-        block = BlockClock(
-            idx=idx, ctx=self.blocks_ctx,
-            period_ms=period_ms, width_ms=width_ms, en=en,
-        )
-        return self._register_block(block, alias=alias)
+        return self._add_block(BlockClock, alias=alias, idx=idx,
+                               resolve=('en', 'period_ms', 'width_ms'),
+                               period_ms=period_ms, width_ms=width_ms, en=en)
 
-    def add_timer(self,
-                  timer_type=None,
-                  pt=1000,
-                  en=None,
-                  rst=None,
+    def add_timer(self, timer_type=None, pt=1000, en=None, rst=None,
                   idx: Optional[int] = None,
                   alias: Optional[str] = None) -> 'BlockTimer':
-        """
-        Add a Timer block.
-
-        :param timer_type: TON, TOF, TP, etc.  (default: TON)
-        :param pt: Preset time in ms (constant or Ref)
-        """
         from BlockTimer import BlockTimer, TimerType
-        if idx is None:
-            idx = self._idx()
         if timer_type is None:
             timer_type = TimerType.TON
-        en  = self._resolve_ref(en)
-        rst = self._resolve_ref(rst)
-        pt  = self._resolve_ref(pt)
-        block = BlockTimer(
-            idx=idx, ctx=self.blocks_ctx,
-            timer_type=timer_type, pt=pt, en=en, rst=rst,
-        )
-        return self._register_block(block, alias=alias)
+        return self._add_block(BlockTimer, alias=alias, idx=idx,
+                               resolve=('en', 'rst', 'pt'),
+                               timer_type=timer_type, pt=pt, en=en, rst=rst)
 
-    def add_counter(self,
-                    cu=None, cd=None, reset=None,
+    def add_counter(self, cu=None, cd=None, reset=None,
                     step=1.0, limit_max=100.0, limit_min=0.0,
                     start_val=0.0, mode=None,
                     idx: Optional[int] = None,
                     alias: Optional[str] = None) -> 'BlockCounter':
-        """
-        Add a Counter block.
-
-        :param cu/cd/reset: Count-Up / Count-Down / Reset inputs (str or Ref)
-        :param mode: ON_RISING (default) or WHEN_ACTIVE
-        """
         from BlockCounter import BlockCounter, CounterMode
-        if idx is None:
-            idx = self._idx()
         if mode is None:
             mode = CounterMode.ON_RISING
-        cu    = self._resolve_ref(cu)
-        cd    = self._resolve_ref(cd)
-        reset = self._resolve_ref(reset)
-        step      = self._resolve_ref(step)
-        limit_max = self._resolve_ref(limit_max)
-        limit_min = self._resolve_ref(limit_min)
-        block = BlockCounter(
-            idx=idx, ctx=self.blocks_ctx,
+        return self._add_block(
+            BlockCounter, alias=alias, idx=idx,
+            resolve=('cu', 'cd', 'reset', 'step', 'limit_max', 'limit_min'),
             cu=cu, cd=cd, reset=reset,
             step=step, limit_max=limit_max, limit_min=limit_min,
             start_val=start_val, mode=mode,
         )
-        return self._register_block(block, alias=alias)
 
-    def add_in_selector(self,
-                        selector=None,
-                        options=None,
-                        en=None,
+    def add_in_selector(self, selector=None, options=None, en=None,
                         idx: Optional[int] = None,
                         alias: Optional[str] = None) -> 'BlockInSelector':
-        """
-        Add an IN_SELECTOR / Multiplexer block.
-
-        ``selector``, ``options`` and ``en`` accept string aliases::
-
-            code.add_in_selector(selector="mode",
-                                 options=["speed_low", "speed_med", "speed_high"],
-                                 en="enable")
-        """
         from BlockInSelector import BlockInSelector
-        if idx is None:
-            idx = self._idx()
-        selector = self._resolve_ref(selector)
-        en = self._resolve_ref(en)
         if options and isinstance(options[0], str):
             options = [Ref(o) if isinstance(o, str) else o for o in options]
-        block = BlockInSelector(
-            idx=idx, ctx=self.blocks_ctx,
-            selector=selector, options=options or [], en=en,
-        )
-        return self._register_block(block, alias=alias)
+        return self._add_block(BlockInSelector, alias=alias, idx=idx,
+                               resolve=('selector', 'en'),
+                               selector=selector, options=options or [], en=en)
 
-    # Backward compatibility alias
-    add_selector = add_in_selector
-
-    def add_latch(self,
-                 set=None,
-                 reset=None,
-                 en=None,
-                 latch_type=None,
-                 idx: Optional[int] = None,
-                 alias: Optional[str] = None) -> 'BlockLatch':
-        """
-        Add a Latch block (SR or RS).
-
-        :param set:        Set input (str alias or Ref)
-        :param reset:      Reset input (str alias or Ref)
-        :param en:         Enable input (str alias or Ref)
-        :param latch_type: BlockLatchCfg.LATCH_SR (default) or LATCH_RS
-
-        Example::
-
-            code.add_latch(set="btn_start", reset="btn_stop", en="enable",
-                           latch_type=BlockLatchCfg.LATCH_SR, alias="motor_latch")
-        """
+    def add_latch(self, set=None, reset=None, en=None, latch_type=None,
+                  idx: Optional[int] = None,
+                  alias: Optional[str] = None) -> 'BlockLatch':
         from BlockLatch import BlockLatch, BlockLatchCfg
-        if idx is None:
-            idx = self._idx()
         if latch_type is None:
             latch_type = BlockLatchCfg.LATCH_SR
-        set_ref   = self._resolve_ref(set)
-        reset_ref = self._resolve_ref(reset)
-        en        = self._resolve_ref(en)
-        block = BlockLatch(
-            idx=idx, ctx=self.blocks_ctx,
-            set=set_ref, reset=reset_ref, en=en,
-            latch_type=latch_type,
-        )
-        return self._register_block(block, alias=alias)
+        return self._add_block(BlockLatch, alias=alias, idx=idx,
+                               resolve=('set', 'reset', 'en'),
+                               set=set, reset=reset, en=en,
+                               latch_type=latch_type)
 
-    def add_q_selector(self,
-                       selector=None,
-                       output_count=1,
-                       en=None,
+    def add_q_selector(self, selector=None, output_count=1, en=None,
                        idx: Optional[int] = None,
                        alias: Optional[str] = None) -> 'BlockQSelector':
-        """
-        Add a Q_SELECTOR / Demultiplexer block.
-
-        Produces N boolean outputs where only the selected one is true::
-
-            code.add_q_selector(selector="mode", output_count=3, en="enable", alias="switch")
-            # switch.out[0], switch.out[1], switch.out[2] are bool outputs
-        """
         from BlockQSelector import BlockQSelector
-        if idx is None:
-            idx = self._idx()
-        selector = self._resolve_ref(selector)
-        en = self._resolve_ref(en)
-        block = BlockQSelector(
-            idx=idx, ctx=self.blocks_ctx,
-            selector=selector, output_count=output_count, en=en,
-        )
-        return self._register_block(block, alias=alias)
+        return self._add_block(BlockQSelector, alias=alias, idx=idx,
+                               resolve=('selector', 'en'),
+                               selector=selector, output_count=output_count,
+                               en=en)
 
     # ====================================================================
     # Block management
@@ -747,9 +544,6 @@ class Code:
 
         self.blocks[block.idx] = block
         return block
-
-    # Backward compat alias
-    add_block = _register_block
 
     def create_block(self, idx: int, block_type) -> Block:
         """Create a bare Block with correct context (advanced)."""

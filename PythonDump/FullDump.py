@@ -12,10 +12,9 @@ Outputs hex packets in correct order for C parser:
 """
 
 import struct
-from typing import TextIO, List, Optional
+from typing import TextIO, List
 
 from Enums import emu_order_t, packet_header_t
-from Mem import mem_context_t
 from Code import Code
 
 # =============================================================================
@@ -24,410 +23,161 @@ from Code import Code
 class FullDump:
     def __init__(self, code: Code):
         self.code = code
-    
-    def _write_line(self, writer: TextIO, content: str):
-        """Write a line with newline."""
-        writer.write(content + "\n")
-    
-    def _write_order(self, writer: TextIO, order: emu_order_t, comment: str = ""):
-        """Write an order as hex with optional comment."""
-        ord_bytes = struct.pack("<H", order.value)
-        hex_str = ord_bytes.hex().upper()
-        if comment:
-            self._write_line(writer, f"#{comment}# {hex_str}")
-        else:
-            self._write_line(writer, f"#ORDER {order.name}# {hex_str}")
-    
-    def _write_packet(self, writer: TextIO, packet: bytes, comment: str = ""):
-        """Write a single packet as hex with optional comment."""
-        hex_str = packet.hex().upper()
-        if comment:
-            self._write_line(writer, f"#{comment}# {hex_str}")
-        else:
-            self._write_line(writer, hex_str)
-    
-    def _write_packets(self, writer: TextIO, packets: List[bytes], context_name: str):
-        """Write a list of packets with context label."""
-        for i, pkt in enumerate(packets):
-            hex_str = pkt.hex().upper()
-            self._write_line(writer, f"#{context_name} [{i}]# {hex_str}")
-    
-    def _write_context(self, writer: TextIO, ctx: mem_context_t, ctx_name: str):
+
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _prefix(header: int, payload: bytes) -> bytes:
+        """Prepend a 1-byte packet header to *payload*."""
+        return struct.pack('<B', header) + payload
+
+    @staticmethod
+    def _order_hex(order: emu_order_t) -> str:
+        return struct.pack("<H", order.value).hex().upper()
+
+    # -------------------------------------------------------------------------
+    # Single source of truth: ordered section list
+    # -------------------------------------------------------------------------
+
+    def _collect_sections(self, include_loop_init=True, include_loop_start=True):
         """
-        Write complete context data:
-        1. Context config packet
-        2. Instance definition packets  
-        3. Scalar data packets
-        4. Array data packets
+        Build complete ordered list of sections.
+
+        Returns ``[(title, [(pkt_bytes, comment), ...], [order, ...])]``.
+        Every writer method consumes this list in its own format.
         """
-        # 1. Context Configuration
-        cfg_pkt = ctx.packet_generate_cfg()
-        self._write_packet(writer, 
-                          struct.pack('<B', packet_header_t.PACKET_H_CONTEXT_CFG) + cfg_pkt,
-                          f"{ctx_name} CFG")
-        self._write_order(writer, emu_order_t.ORD_PARSE_CONTEXT_CFG)
-        
-        # 2. Instance Definitions (headers + dims)
-        instance_pkts = ctx.generate_packets_instances()
-        if instance_pkts:
-            for i, pkt in enumerate(instance_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt,
-                                  f"{ctx_name} INST [{i}]")
-            self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES)
-        
-        # 3a. Scalar Data Packets
-        scalar_pkts = ctx.generate_packets_scalar_data()
-        if scalar_pkts:
-            for i, pkt in enumerate(scalar_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt,
-                                  f"{ctx_name} SDATA [{i}]")
-            self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_S_DATA)
-        
-        # 3b. Array Data Packets
-        array_pkts = ctx.generate_packets_array_data()
-        if array_pkts:
-            for i, pkt in enumerate(array_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt,
-                                  f"{ctx_name} ADATA [{i}]")
-            self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_ARR_DATA)
-    
-    def write(self, writer: TextIO, 
+        manager = self.code._manager
+        blocks_sorted = self.code.get_blocks_sorted()
+        ctxs = [("CTX0", self.code.user_ctx),
+                ("CTX1", self.code.blocks_ctx)]
+        sections = []
+
+        # Helper: collect packets from both contexts
+        def _both_ctx(gen_fn, header_byte, tag):
+            pkts = []
+            for name, ctx in ctxs:
+                for i, pkt in enumerate(gen_fn(ctx)):
+                    pkts.append((self._prefix(header_byte, pkt),
+                                 f"{name} {tag} [{i}]"))
+            return pkts
+
+        # 1. Context configs
+        cfg_pkts = [(self._prefix(packet_header_t.PACKET_H_CONTEXT_CFG,
+                                  ctx.packet_generate_cfg()), f"{n} CFG")
+                    for n, ctx in ctxs]
+        sections.append(("Context Configs", cfg_pkts,
+                         [emu_order_t.ORD_PARSE_CONTEXT_CFG]))
+
+        # 2. Instance definitions
+        sections.append(("Instance Defs",
+                         _both_ctx(lambda c: c.generate_packets_instances(),
+                                   packet_header_t.PACKET_H_INSTANCE, "INST"),
+                         [emu_order_t.ORD_PARSE_VARIABLES]))
+
+        # 3. Scalar data
+        sections.append(("Scalar Data",
+                         _both_ctx(lambda c: c.generate_packets_scalar_data(),
+                                   packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA, "SDATA"),
+                         [emu_order_t.ORD_PARSE_VARIABLES_S_DATA]))
+
+        # 4. Array data
+        sections.append(("Array Data",
+                         _both_ctx(lambda c: c.generate_packets_array_data(),
+                                   packet_header_t.PACKET_H_INSTANCE_ARR_DATA, "ADATA"),
+                         [emu_order_t.ORD_PARSE_VARIABLES_ARR_DATA]))
+
+        # 5. Code config
+        sections.append(("Code Config",
+                         [(self.code.generate_code_cfg_packet(), "CODE_CFG")],
+                         [emu_order_t.ORD_PARSE_CODE_CFG]))
+
+        # 6. Block headers
+        blk_hdrs = [(self._prefix(packet_header_t.PACKET_H_BLOCK_HEADER,
+                                  blk.pack_cfg()),
+                     f"BLK[{blk.idx}] {blk.block_type.name} HDR")
+                    for blk in blocks_sorted]
+        sections.append(("Block Hdrs", blk_hdrs,
+                         [emu_order_t.ORD_PARSE_BLOCK_HEADER]))
+
+        # 7. Block inputs
+        blk_in = [(pkt, f"BLK[{blk.idx}] INPUT[{i}]")
+                  for blk in blocks_sorted
+                  for i, pkt in enumerate(blk.pack_inputs(manager))]
+        sections.append(("Block Input", blk_in,
+                         [emu_order_t.ORD_PARSE_BLOCK_INPUTS]))
+
+        # 8. Block outputs
+        blk_out = [(pkt, f"BLK[{blk.idx}] OUTPUT[{i}]")
+                   for blk in blocks_sorted
+                   for i, pkt in enumerate(blk.pack_outputs(manager))]
+        sections.append(("Block Output", blk_out,
+                         [emu_order_t.ORD_PARSE_BLOCK_OUTPUTS]))
+
+        # 9. Block data
+        blk_data = []
+        for blk in blocks_sorted:
+            if hasattr(blk, 'pack_data'):
+                data_pkts = blk.pack_data()
+                if data_pkts:
+                    for pkt in data_pkts:
+                        pid = pkt[4] if len(pkt) > 4 else 0
+                        blk_data.append((pkt, f"BLK[{blk.idx}] DATA(0x{pid:02X})"))
+        sections.append(("Block Data", blk_data,
+                         [emu_order_t.ORD_PARSE_BLOCK_DATA] if blk_data else []))
+
+        # 10. Loop control
+        loop_orders = []
+        if include_loop_init:
+            loop_orders.append(emu_order_t.ORD_EMU_LOOP_INIT)
+        if include_loop_start:
+            loop_orders.append(emu_order_t.ORD_EMU_LOOP_START)
+        sections.append(("Loop Ctrl", [], loop_orders))
+
+        return sections
+
+    # -------------------------------------------------------------------------
+    # Writers
+    # -------------------------------------------------------------------------
+
+    def write(self, writer: TextIO,
               include_loop_init: bool = True,
               include_loop_start: bool = True):
-        """
-        Generate complete dump in correct order for C parser.
-        
-        :param writer: File-like object to write to
-        :param include_loop_init: Include loop init order at end
-        :param include_loop_start: Include loop start order at end
-        """
-        
-        self._write_line(writer, "#" + "="*58 + "#")
-        self._write_line(writer, "# FULL EMULATOR DUMP - Generated by PythonNew2XD #")
-        self._write_line(writer, "#" + "="*58 + "#")
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 1. CONTEXT CONFIGURATIONS
-        # ==========================================
-        self._write_line(writer, "#" + "-"*32 + "#")
-        self._write_line(writer, "# SECTION 1: Context Configs #")
-        self._write_line(writer, "#" + "-"*32 + "#")
-        
-        # Context 0 config
-        cfg_pkt = self.code.user_ctx.packet_generate_cfg()
-        self._write_packet(writer, 
-                          struct.pack('<B', packet_header_t.PACKET_H_CONTEXT_CFG) + cfg_pkt,
-                          "CTX0 CFG")
-        
-        # Context 1 config
-        cfg_pkt = self.code.blocks_ctx.packet_generate_cfg()
-        self._write_packet(writer,
-                          struct.pack('<B', packet_header_t.PACKET_H_CONTEXT_CFG) + cfg_pkt,
-                          "CTX1 CFG")
-        
-        self._write_order(writer, emu_order_t.ORD_PARSE_CONTEXT_CFG)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 2. INSTANCE DEFINITIONS
-        # ==========================================
-        self._write_line(writer, "#" + "-"*32 + "#")
-        self._write_line(writer, "# SECTION 2: Instance Defs   #")
-        self._write_line(writer, "#" + "-"*32 + "#")
-        
-        # Context 0 instances
-        instance_pkts = self.code.user_ctx.generate_packets_instances()
-        if instance_pkts:
-            for i, pkt in enumerate(instance_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt,
-                                  f"CTX0 INST [{i}]")
-        
-        # Context 1 instances
-        instance_pkts = self.code.blocks_ctx.generate_packets_instances()
-        if instance_pkts:
-            for i, pkt in enumerate(instance_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt,
-                                  f"CTX1 INST [{i}]")
-        
-        self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 3. INSTANCE DATA
-        # ==========================================
-        self._write_line(writer, "#" + "-"*32 + "#")
-        self._write_line(writer, "# SECTION 3: Instance Data   #")
-        self._write_line(writer, "#" + "-"*32 + "#")
-        
-        # Context 0 scalar data
-        scalar_pkts = self.code.user_ctx.generate_packets_scalar_data()
-        if scalar_pkts:
-            for i, pkt in enumerate(scalar_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt,
-                                  f"CTX0 SDATA [{i}]")
-        
-        # Context 1 scalar data
-        scalar_pkts = self.code.blocks_ctx.generate_packets_scalar_data()
-        if scalar_pkts:
-            for i, pkt in enumerate(scalar_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt,
-                                  f"CTX1 SDATA [{i}]")
-        
-        self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_S_DATA)
-        
-        # Context 0 array data
-        array_pkts = self.code.user_ctx.generate_packets_array_data()
-        if array_pkts:
-            for i, pkt in enumerate(array_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt,
-                                  f"CTX0 ADATA [{i}]")
-        
-        # Context 1 array data
-        array_pkts = self.code.blocks_ctx.generate_packets_array_data()
-        if array_pkts:
-            for i, pkt in enumerate(array_pkts):
-                self._write_packet(writer,
-                                  struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt,
-                                  f"CTX1 ADATA [{i}]")
-        
-        self._write_order(writer, emu_order_t.ORD_PARSE_VARIABLES_ARR_DATA)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 4. CODE CONFIGURATION
-        # ==========================================
-        self._write_line(writer, "#" + "-"*26 + "#")
-        self._write_line(writer, "# SECTION 4: Code Config #")
-        self._write_line(writer, "#" + "-"*26 + "#")
-        
-        code_cfg_pkt = self.code.generate_code_cfg_packet()
-        self._write_packet(writer, code_cfg_pkt, "CODE_CFG")
-        self._write_order(writer, emu_order_t.ORD_PARSE_CODE_CFG)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 5. BLOCK HEADERS
-        # ==========================================
-        self._write_line(writer, "#" + "-"*26 + "#")
-        self._write_line(writer, "# SECTION 5: Block Hdrs  #")
-        self._write_line(writer, "#" + "-"*26 + "#")
-        
-        blocks_sorted = self.code.get_blocks_sorted()
-        for block in blocks_sorted:
-            header = struct.pack('<B', packet_header_t.PACKET_H_BLOCK_HEADER)
-            pkt = header + block.pack_cfg()
-            self._write_packet(writer, pkt, f"BLK[{block.idx}] {block.block_type.name} HDR")
-        self._write_order(writer, emu_order_t.ORD_PARSE_BLOCK_HEADER)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 6. BLOCK INPUTS
-        # ==========================================
-        self._write_line(writer, "#" + "-"*26 + "#")
-        self._write_line(writer, "# SECTION 6: Block Input #")
-        self._write_line(writer, "#" + "-"*26 + "#")
-        
-        manager = self.code._manager
-        for block in blocks_sorted:
-            in_pkts = block.pack_inputs(manager)
-            if in_pkts:
-                for i, pkt in enumerate(in_pkts):
-                    self._write_packet(writer, pkt, f"BLK[{block.idx}] INPUT[{i}]")
-        self._write_order(writer, emu_order_t.ORD_PARSE_BLOCK_INPUTS)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 7. BLOCK OUTPUTS
-        # ==========================================
-        self._write_line(writer, "#" + "-"*27 + "#")
-        self._write_line(writer, "# SECTION 7: Block Output #")
-        self._write_line(writer, "#" + "-"*27 + "#")
-        
-        for block in blocks_sorted:
-            out_pkts = block.pack_outputs(manager)
-            if out_pkts:
-                for i, pkt in enumerate(out_pkts):
-                    self._write_packet(writer, pkt, f"BLK[{block.idx}] OUTPUT[{i}]")
-        self._write_order(writer, emu_order_t.ORD_PARSE_BLOCK_OUTPUTS)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 8. BLOCK DATA
-        # ==========================================
-        self._write_line(writer, "#" + "-"*25 + "#")
-        self._write_line(writer, "# SECTION 8: Block Data #")
-        self._write_line(writer, "#" + "-"*25 + "#")
-        
-        has_data = False
-        for block in blocks_sorted:
-            if hasattr(block, 'pack_data'):
-                data_pkts = block.pack_data()
-                if data_pkts:
-                    has_data = True
-                    for pkt in data_pkts:
-                        packet_id = pkt[4] if len(pkt) > 4 else 0
-                        self._write_packet(writer, pkt, f"BLK[{block.idx}] DATA(0x{packet_id:02X})")
-        if has_data:
-            self._write_order(writer, emu_order_t.ORD_PARSE_BLOCK_DATA)
-        self._write_line(writer, "")
-        
-        # ==========================================
-        # 9. LOOP CONTROL
-        # ==========================================
-        self._write_line(writer, "#" + "-"*26 + "#")
-        self._write_line(writer, "# SECTION 9: Loop Ctrl   #")
-        self._write_line(writer, "#" + "-"*26 + "#")
-        
-        if include_loop_init:
-            self._write_order(writer, emu_order_t.ORD_EMU_LOOP_INIT)
-        if include_loop_start:
-            self._write_order(writer, emu_order_t.ORD_EMU_LOOP_START)
-        
-        self._write_line(writer, "")
-        self._write_line(writer, "#" + "="*14 + "#")
-        self._write_line(writer, "# END OF DUMP #")
-        self._write_line(writer, "#" + "="*14 + "#")
-    
+        """Generate commented dump for human inspection."""
+
+        sections = self._collect_sections(include_loop_init, include_loop_start)
+        for num, (title, pkts, orders) in enumerate(sections, 1):
+            label = f"# SECTION {num}: {title:<14s} #"
+            bar = "#" + "-" * (len(label) - 2) + "#"
+            writer.write(bar + "\n")
+            writer.write(label + "\n")
+            writer.write(bar + "\n")
+
+            for pkt, comment in pkts:
+                writer.write(f"#{comment}# {pkt.hex().upper()}\n")
+            for order in orders:
+                writer.write(f"#ORDER {order.name}# {self._order_hex(order)}\n")
+            writer.write("\n")
+
+        writer.write("#" + "=" * 14 + "#\n")
+        writer.write("# END OF DUMP #\n")
+        writer.write("#" + "=" * 14 + "#\n")
+
     def write_raw(self, writer: TextIO,
                   include_loop_init: bool = True,
                   include_loop_start: bool = True):
-        """
-        Generate minimal dump with just hex values (no comments).
-        For direct transmission to device.
-        """
-        manager = self.code._manager
-        blocks_sorted = self.code.get_blocks_sorted()
-        
-        # Context configs (both contexts, then order)
-        cfg0 = struct.pack('<B', packet_header_t.PACKET_H_CONTEXT_CFG) + self.code.user_ctx.packet_generate_cfg()
-        writer.write(cfg0.hex().upper() + "\n")
-        cfg1 = struct.pack('<B', packet_header_t.PACKET_H_CONTEXT_CFG) + self.code.blocks_ctx.packet_generate_cfg()
-        writer.write(cfg1.hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_CONTEXT_CFG).hex().upper() + "\n")
-        
-        # Instances (both contexts, then order)
-        for pkt in self.code.user_ctx.generate_packets_instances():
-            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt).hex().upper() + "\n")
-        for pkt in self.code.blocks_ctx.generate_packets_instances():
-            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt).hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_VARIABLES).hex().upper() + "\n")
-        
-        # Scalar data (both contexts, then order)
-        for pkt in self.code.user_ctx.generate_packets_scalar_data():
-            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt).hex().upper() + "\n")
-        for pkt in self.code.blocks_ctx.generate_packets_scalar_data():
-            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt).hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_VARIABLES_S_DATA).hex().upper() + "\n")
-        
-        # Array data (both contexts, then order)
-        for pkt in self.code.user_ctx.generate_packets_array_data():
-            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt).hex().upper() + "\n")
-        for pkt in self.code.blocks_ctx.generate_packets_array_data():
-            writer.write((struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt).hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_VARIABLES_ARR_DATA).hex().upper() + "\n")
-        
-        # Code config
-        writer.write(self.code.generate_code_cfg_packet().hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_CODE_CFG).hex().upper() + "\n")
-        
-        # Block headers (all blocks, then order)
-        for block in blocks_sorted:
-            header = struct.pack('<B', packet_header_t.PACKET_H_BLOCK_HEADER)
-            pkt = header + block.pack_cfg()
-            writer.write(pkt.hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_BLOCK_HEADER).hex().upper() + "\n")
-        
-        # Block inputs (all blocks, then order)
-        for block in blocks_sorted:
-            for pkt in block.pack_inputs(manager):
+        """Generate minimal hex-only dump for device transmission."""
+        for _, pkts, orders in self._collect_sections(include_loop_init,
+                                                      include_loop_start):
+            for pkt, _ in pkts:
                 writer.write(pkt.hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_BLOCK_INPUTS).hex().upper() + "\n")
-        
-        # Block outputs (all blocks, then order)
-        for block in blocks_sorted:
-            for pkt in block.pack_outputs(manager):
-                writer.write(pkt.hex().upper() + "\n")
-        writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_BLOCK_OUTPUTS).hex().upper() + "\n")
-        
-        # Block data (all blocks, then order)
-        has_data = False
-        for block in blocks_sorted:
-            if hasattr(block, 'pack_data'):
-                data_pkts = block.pack_data()
-                if data_pkts:
-                    has_data = True
-                    for pkt in data_pkts:
-                        writer.write(pkt.hex().upper() + "\n")
-        if has_data:
-            writer.write(struct.pack("<H", emu_order_t.ORD_PARSE_BLOCK_DATA).hex().upper() + "\n")
-        
-        # Loop control
-        if include_loop_init:
-            writer.write(struct.pack("<H", emu_order_t.ORD_EMU_LOOP_INIT).hex().upper() + "\n")
-        if include_loop_start:
-            writer.write(struct.pack("<H", emu_order_t.ORD_EMU_LOOP_START).hex().upper() + "\n")
-    
+            for order in orders:
+                writer.write(self._order_hex(order) + "\n")
+
     def get_packets_list(self) -> List[bytes]:
-        """
-        Get all packets as a list of bytes for programmatic use.
-        Returns packets in order without orders (for custom transmission).
-        """
-        manager = self.code._manager
-        blocks_sorted = self.code.get_blocks_sorted()
-        packets = []
-        
-        # Context configs
-        packets.append(struct.pack('<B', packet_header_t.PACKET_H_CONTEXT_CFG) + 
-                      self.code.user_ctx.packet_generate_cfg())
-        packets.append(struct.pack('<B', packet_header_t.PACKET_H_CONTEXT_CFG) + 
-                      self.code.blocks_ctx.packet_generate_cfg())
-        
-        # Instances
-        for pkt in self.code.user_ctx.generate_packets_instances():
-            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt)
-        for pkt in self.code.blocks_ctx.generate_packets_instances():
-            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE) + pkt)
-        
-        # Scalar Data
-        for pkt in self.code.user_ctx.generate_packets_scalar_data():
-            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt)
-        for pkt in self.code.blocks_ctx.generate_packets_scalar_data():
-            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA) + pkt)
-        
-        # Array Data
-        for pkt in self.code.user_ctx.generate_packets_array_data():
-            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt)
-        for pkt in self.code.blocks_ctx.generate_packets_array_data():
-            packets.append(struct.pack('<B', packet_header_t.PACKET_H_INSTANCE_ARR_DATA) + pkt)
-        
-        # Code config
-        packets.append(self.code.generate_code_cfg_packet())
-        
-        # Block packets
-        for block in blocks_sorted:
-            header = struct.pack('<BH', packet_header_t.PACKET_H_BLOCK_HEADER, block.idx)
-            packets.append(header + block.pack_cfg())
-        
-        for block in blocks_sorted:
-            packets.extend(block.pack_inputs(manager))
-        
-        for block in blocks_sorted:
-            packets.extend(block.pack_outputs(manager))
-        
-        for block in blocks_sorted:
-            if hasattr(block, 'pack_data'):
-                data_pkts = block.pack_data()
-                if data_pkts:
-                    packets.extend(data_pkts)
-        
-        return packets
+        """Get all data packets (no orders) for programmatic use."""
+        return [pkt for _, pkts, _ in self._collect_sections(
+                    include_loop_init=False, include_loop_start=False)
+                for pkt, _ in pkts]
 

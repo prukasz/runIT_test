@@ -13,7 +13,9 @@ code.var(mem_types_t.MEM_B, "enable", True)
 
 # User-created array: 10-element float array
 code.var(mem_types_t.MEM_F, "gains", data=[1,2,3,4,5,6,7,8,9,10], dims=[10])
-
+code.var(mem_types_t.MEM_U8, "gains2", data=[1,2,3,4,5,6,7,8,9,10], dims=[10])
+code.var(mem_types_t.MEM_U8, "gains3", data=[1,2,3,4,5,6,7,8,9,10], dims=[10,10])
+code.var(mem_types_t.MEM_U8, "gains4", data=[1,2,3,4,5,6,7,8,9,10], dims=[10,10,10])
 # ── Blocks ─────────────────────────────────────────────────
 ton = code.add_timer(pt = 20000, alias="ton", en = "enable")
 
