@@ -199,17 +199,15 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
             break;
 
         case ORD_PARSE_SUBSCRIPTION_INIT:
-            EMU_GUARD_ORDER(STATUS_CREATED_LOOP);
             res = parse_dispatch(source, PACKET_H_SUBSCRIPTION_INIT, code_handle);
             parse_status |= STATUS_CREATED_LOOP;
             break;
 
         case ORD_PARSE_SUBSCRIPTION_ADD:
-            EMU_GUARD_ORDER(STATUS_CREATED_LOOP);
             res = parse_dispatch(source, PACKET_H_SUBSCRIPTION_ADD, code_handle);
             parse_status |= STATUS_CREATED_LOOP;
             break;
-        
+
         case ORD_PARSE_RESET_STATUS:
             parse_status = 0;
             break;

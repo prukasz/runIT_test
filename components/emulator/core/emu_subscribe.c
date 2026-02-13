@@ -35,6 +35,7 @@ struct
 #undef OWNER
 #define OWNER EMU_OWNER_emu_subscribe_parse_init
 emu_result_t emu_subscribe_parse_init(const uint8_t *packet_data, const uint16_t packet_len, void* custom){
+    LOG_I(TAG, "Initializing subscription system with packet size: %d", packet_len);
     uint16_t sub_list_size = parse_get_u16(packet_data, 0);
     config.sub_list_max_size = sub_list_size;
     config.sub_list = (pub_instance_t *)calloc(sub_list_size, sizeof(pub_instance_t));
@@ -51,6 +52,7 @@ emu_result_t emu_subscribe_parse_init(const uint8_t *packet_data, const uint16_t
 #define OWNER EMU_OWNER_emu_subscribe_parse_register
 emu_result_t emu_subscribe_parse_register(const uint8_t *packet_data, const uint16_t packet_len, void* custom){
 
+    LOG_I(TAG, "Parsing subscription registration packet, size: %d", packet_len);
     uint8_t ctx = packet_data[0];
     uint8_t count = packet_data[1];
     if(packet_len < 2 + count * 3) RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet too short");
@@ -88,16 +90,17 @@ emu_result_t emu_subscribe_parse_register(const uint8_t *packet_data, const uint
 #define OWNER EMU_OWNER_emu_subscribe_process
 emu_result_t emu_subscribe_process()
 {
-    int i = 0;
+    LOG_I(TAG, "Processing subscriptions, total: %d", config.next_free_sub_idx);
     int packet = 0;
-    for(i = 0; i < config.next_free_sub_idx; i++){
+    memset(config.pub_pack, 0, config.pub_pack_max_size);
+    for(int i = 0; i < config.next_free_sub_idx; i++){
 
         size_t total_size = 0;
-        while(total_size < 511)
+        while(total_size < 511 && i < config.next_free_sub_idx)
         {
             size_t next_size  = sizeof(((pub_instance_t *)0)->head) + config.sub_list[i].el_cnt * MEM_TYPE_SIZES[config.sub_list[i].head.type];
-            if(next_size){
-                REP_W(EMU_LOG_to_large_to_sub, "Instance data to large %"PRIu16"", config.sub_list[i].el_cnt);
+            if(next_size>511){
+                REP_W(EMU_LOG_to_large_to_sub, "Instance data to large for single packet %"PRIu16"", config.sub_list[i].el_cnt);
             }
             total_size += next_size;
             if (total_size < 511){
@@ -109,7 +112,6 @@ emu_result_t emu_subscribe_process()
                 break;
             }
         }
-        i++;
     }
     config.pub_pack_size = packet+1;
     return EMU_RESULT_OK();
@@ -118,18 +120,19 @@ emu_result_t emu_subscribe_process()
 #undef OWNER
 #define OWNER EMU_OWNER_emu_subscribe_send
 emu_result_t emu_subscribe_send(){
-
+    
+    LOG_I(TAG, "Sending subscription data, total packets: %d", config.pub_pack_size);
     uint16_t offset = 1;
     uint16_t instance = 0;
 
     for(int packet = 0; packet < config.pub_pack_size; packet++){
         config.buff[0] = PACKET_H_PUBLISH;
         while(instance < config.pub_pack[packet]){ //config.pub_pack[0] - ilosc pakietow do wyslania
+            LOG_I(TAG, "HUJ");
             memcpy(config.buff+offset, &config.sub_list[instance].head, sizeof(((pub_instance_t *)0)->head));
             offset+= sizeof(((pub_instance_t *)0)->head);
             memcpy(config.buff+offset, config.sub_list[instance].data, config.sub_list[instance].el_cnt * MEM_TYPE_SIZES[config.sub_list[instance].head.type]);
             offset+= config.sub_list[instance].el_cnt * MEM_TYPE_SIZES[config.sub_list[instance].head.type];
-
             instance++;
         }
         //send buff with offset length
