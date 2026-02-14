@@ -83,7 +83,7 @@ emu_result_t mem_context_allocate(uint8_t ctx_id, const mem_ctx_config_t* config
             ctx->types[i].dims_cap = config->max_dims[i];
             if(!ctx->types[i].dims_pool){goto ERROR;}
         }
-        LOG_I(TAG, "Created: ctx: %d, type: %s, instances: %d, total elements: %ld, total dims: %d", ctx_id, EMU_DATATYPE_TO_STR[i], config->max_instances[i], config->heap_elements[i], config->max_dims[i]);
+        LOG_I(TAG, "Created: ctx: %d, type: %s, instances: %d, total elements: %ld, total dims: %d", ctx_id, MEM_TYPES_TO_STR[i], config->max_instances[i], config->heap_elements[i], config->max_dims[i]);
     }
     //mark that context is created
     is_ctx_allocated[ctx_id] = 1;
@@ -189,7 +189,7 @@ emu_result_t emu_mem_parse_instance_packet(const uint8_t *data,const uint16_t el
             dim_sizes, 
             head.can_clear
         );
-        LOG_I(TAG, "Created instance in ctx %d, type %s, dims cnt %d", head.context, EMU_DATATYPE_TO_STR[head.type], head.dims_cnt);
+        LOG_I(TAG, "Created instance in ctx %d, type %s, dims cnt %d", head.context, MEM_TYPES_TO_STR[head.type], head.dims_cnt);
         if(err != EMU_OK){RET_ED(err, 0, 1, "While creating instance error: %s", EMU_ERR_TO_STR(err));}
         idx = next_offset + dims_bytes;
     }
@@ -248,7 +248,7 @@ emu_result_t emu_mem_fill_instance_scalar(const uint8_t* data, const uint16_t el
         memcpy(instance->data.raw, data + idx, el_size);
         idx += el_size;
         instance->updated = 1;
-        LOG_I(TAG, "Filled scalar instance %d in ctx %d of type %s", inst_idx, ctx_id, EMU_DATATYPE_TO_STR[type]);
+        LOG_I(TAG, "Filled scalar instance %d in ctx %d of type %s", inst_idx, ctx_id, MEM_TYPES_TO_STR[type]);
     }
     return EMU_RESULT_OK();
 }
@@ -283,7 +283,7 @@ emu_result_t emu_mem_fill_instance_array(const uint8_t* data, const uint16_t el_
         memcpy(instance->data.u8 + start_idx*el_size, data + idx, items*el_size);
         idx += items*el_size;
         instance->updated = 1; 
-        LOG_I(TAG, "Filled array instance %d in ctx %d of type %s, items %d from index %d", inst_idx, ctx_id, EMU_DATATYPE_TO_STR[type], items, start_idx);
+        LOG_I(TAG, "Filled array instance %d in ctx %d of type %s, items %d from index %d", inst_idx, ctx_id, MEM_TYPES_TO_STR[type], items, start_idx);
     }
     return EMU_RESULT_OK();
 }

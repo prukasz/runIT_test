@@ -11,7 +11,7 @@ const uint8_t MEM_TYPE_SIZES[DATA_TYPES_CNT] = {
     sizeof(bool)      // B
 };
 
-const char *EMU_DATATYPE_TO_STR[7] = {
+const char *MEM_TYPES_TO_STR[7] = {
     "MEM_U8",
     "MEM_U16",
     "MEM_U32",

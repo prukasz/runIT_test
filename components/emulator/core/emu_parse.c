@@ -72,7 +72,7 @@ static emu_result_t emu_block_parse_data(const uint8_t *data, const uint16_t el_
     return EMU_RESULT_OK();
 }
 
-emu_parse_func parse_dispatch_table[255] = {
+static emu_parse_func parse_dispatch_table[255] = {
     [PACKET_H_CONTEXT_CFG]           = emu_mem_parse_create_context,
     [PACKET_H_INSTANCE]              = emu_mem_parse_instance_packet,
     [PACKET_H_INSTANCE_SCALAR_DATA]  = emu_mem_fill_instance_scalar, 
@@ -89,12 +89,11 @@ emu_parse_func parse_dispatch_table[255] = {
     [PACKET_H_SUBSCRIPTION_ADD]      = emu_subscribe_parse_register,
  };
 
-emu_result_t parse_dispatch(chr_msg_buffer_t *source, packet_header_t header_to_parse, void* extra_arg){
+static emu_result_t parse_dispatch(chr_msg_buffer_t *source, packet_header_t header_to_parse, void* extra_arg){
     uint16_t buff_len = chr_msg_buffer_size(source);
     size_t packet_len = 0; 
     uint8_t *packet_data;
     emu_result_t res = EMU_RESULT_OK();
-    LOG_I(TAG, "Dispatching parse for header 0x%02X over %d packets", header_to_parse, buff_len);
     for(uint16_t current_packet_idx = 0; current_packet_idx < buff_len; current_packet_idx++){
         chr_msg_buffer_get(source, current_packet_idx, &packet_data, &packet_len);
         if(!parse_check_header(packet_data, packet_len, header_to_parse) || packet_len <=2){continue;}
@@ -133,26 +132,26 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
     
     // Default result
     emu_result_t res = EMU_RESULT_OK();
-
+    uint8_t header = (uint8_t)(order & 0x00FF); // Extract header from order (lower 8 bits)
     switch (order) {
         // --- STEP 1: CREATE CONTEXT ---
         case ORD_PARSE_CONTEXT_CFG:
             // Don't guard - allow multiple contexts
-            res = parse_dispatch(source, PACKET_H_CONTEXT_CFG, NULL);
+            res = parse_dispatch(source, header, NULL);
             parse_status |= STATUS_CREATED_CONTEXT;
             break;
         case ORD_PARSE_VARIABLES:
             // Don't guard - variables can be created for each context
-            res = parse_dispatch(source, PACKET_H_INSTANCE, NULL);
+            res = parse_dispatch(source, header, NULL);
             parse_status |= STATUS_PARSED_VARS;
             break;
         case ORD_PARSE_VARIABLES_S_DATA:
             // Don't guard - data can be filled for each context
-            res = parse_dispatch(source, PACKET_H_INSTANCE_SCALAR_DATA, NULL);
+            res = parse_dispatch(source, header, NULL);
             parse_status |= STATUS_FILLED_VARS;
             break;
         case ORD_PARSE_VARIABLES_ARR_DATA:
-            res = parse_dispatch(source, PACKET_H_INSTANCE_ARR_DATA, NULL);
+            res = parse_dispatch(source, header, NULL);
             parse_status |= STATUS_FILLED_VARS;
             break;
 
@@ -160,51 +159,51 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
         case ORD_PARSE_CODE_CFG:
             EMU_GUARD_ORDER(STATUS_CREATED_BLOCKS);
             LOG_I(TAG, "Parsing code configuration (blocks list)");
-            res = parse_dispatch(source, PACKET_H_CODE_CFG, code_handle);
+            res = parse_dispatch(source, header, code_handle);
             parse_status |= STATUS_CREATED_BLOCKS;
             break;
 
         case ORD_PARSE_BLOCK_HEADER:
             EMU_GUARD_ORDER(STATUS_CONFIG_BLOCKS);
             LOG_I(TAG, "Parsing block headers");
-            res = parse_dispatch(source, PACKET_H_BLOCK_HEADER, code_handle);
+            res = parse_dispatch(source, header, code_handle);
             parse_status |= STATUS_CONFIG_BLOCKS;
             break;
         
         case ORD_PARSE_BLOCK_INPUTS:
             //EMU_GUARD_ORDER(STATUS_CONFIG_BLOCKS);
             LOG_I(TAG, "Parsing block inputs");
-            res = parse_dispatch(source, PACKET_H_BLOCK_INPUTS, code_handle);
+            res = parse_dispatch(source, header, code_handle);
             parse_status |= STATUS_CONFIG_BLOCKS;
             break;
     
         case ORD_PARSE_BLOCK_OUTPUTS:
             //EMU_GUARD_ORDER(STATUS_CONFIG_BLOCKS);
             LOG_I(TAG, "Parsing block outputs");
-            res = parse_dispatch(source, PACKET_H_BLOCK_OUTPUTS, code_handle);
+            res = parse_dispatch(source, header, code_handle);
             parse_status |= STATUS_CONFIG_BLOCKS;
             break;
         
         case ORD_PARSE_BLOCK_DATA:
             EMU_GUARD_ORDER(STATUS_FILLED_BLOCKS);
             LOG_I(TAG, "Parsing block data");
-            res = parse_dispatch(source, PACKET_H_BLOCK_DATA, code_handle);
+            res = parse_dispatch(source, header, code_handle);
             parse_status |= STATUS_FILLED_BLOCKS;
             break;
 
         case ORD_PARSE_LOOP_CFG:
             EMU_GUARD_ORDER(STATUS_CREATED_LOOP);
-            res = parse_dispatch(source, PACKET_H_LOOP_CFG, code_handle);
+            res = parse_dispatch(source, header, code_handle);
             parse_status |= STATUS_CREATED_LOOP;
             break;
 
         case ORD_PARSE_SUBSCRIPTION_INIT:
-            res = parse_dispatch(source, PACKET_H_SUBSCRIPTION_INIT, code_handle);
+            res = parse_dispatch(source, header, NULL);
             parse_status |= STATUS_CREATED_LOOP;
             break;
 
         case ORD_PARSE_SUBSCRIPTION_ADD:
-            res = parse_dispatch(source, PACKET_H_SUBSCRIPTION_ADD, code_handle);
+            res = parse_dispatch(source, header, NULL);
             parse_status |= STATUS_CREATED_LOOP;
             break;
 
@@ -223,13 +222,13 @@ emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_
 emu_result_t emu_parse_verify_code(emu_code_handle_t code){
 
     if (!code) {
-        RET_ED(EMU_ERR_NULL_PTR, 0, 0, "Code handle is NULL");
+        RET_E(EMU_ERR_NULL_PTR,"Code handle is NULL");
     }
     if (!code->blocks_list) {
-        RET_ED(EMU_ERR_NULL_PTR, 0, 0, "blocks_list is NULL");
+        RET_ED(EMU_ERR_NULL_PTR,"blocks_list is NULL");
     }
     if (code->total_blocks == 0) {
-        RET_WD(EMU_ERR_BLOCK_INVALID_PARAM, 0, 0, "total_blocks is 0 — nothing to verify");
+        RET_W(EMU_ERR_BLOCK_INVALID_PARAM,"total_blocks is 0 — nothing to verify");
     }
 
     for (uint16_t i = 0; i < code->total_blocks; i++) {

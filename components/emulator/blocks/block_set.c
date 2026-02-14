@@ -159,7 +159,7 @@ emu_result_t block_set_parse(const uint8_t *packet_data, const uint16_t packet_l
         memcpy(&config_value->data.val, &payload[1], MEM_TYPE_SIZES[config_value->type]);
 
         LOG_I(TAG, "Parsed CONFIG: BlockId=%"PRIu16" Type of given Value=%s", 
-              block->cfg.block_idx, EMU_DATATYPE_TO_STR[config_value->type]);
+              block->cfg.block_idx, MEM_TYPES_TO_STR[config_value->type]);
     }
     
     return EMU_RESULT_OK();    

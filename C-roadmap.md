@@ -13,9 +13,9 @@ Refactor and check:
 - 🏗️ Block counter
 -----------------------------------
 Block to do asap
-- 🏗️ Block selector (select  variable to output)
-- 🏗️ Block Switch   (switch block flow, also this block will be "if/else" for value 0 , 1 )
-- 🏗️ Block Flip/Flop/toggle (SR/RS)
+- [x] Block selector (select  variable to output) {Q and IN sel done}
+- [x] Block Switch   {renamed to Q sel}
+- [x] Block Flip/Flop/toggle (SR/RS) {done with selctable modes}
 - 🏗️ Block Rising/faling egde
  
 Blocks to do also
