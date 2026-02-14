@@ -1,10 +1,9 @@
 import ctypes as ct
-from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import Any, List, Dict, Optional, Tuple, Union
 import struct
 
-from Enums import mem_types_t, mem_types_map, mem_types_pack_map, mem_types_size, packet_header_t
+from Enums import mem_types_t, mem_types_map, mem_types_size, packet_header_t
 
 class instance_head_t(ct.LittleEndianStructure):
     """Bitfield structure for memory instance header, for packet creation"""
@@ -51,7 +50,7 @@ class mem_instance_t:
         dims_bytes = b''
         if self.head.dims_cnt > 0:
             ArrayType = ct.c_uint16 * self.head.dims_cnt
-            raw_values = [int(d) for d in self.dims]
+            raw_values = [d.value if hasattr(d, 'value') else int(d) for d in self.dims]
             c_array = ArrayType(*raw_values)
             dims_bytes = bytes(c_array)
         return header_bytes + dims_bytes
@@ -61,11 +60,11 @@ class mem_instance_t:
         if self.data is None: return b''
         
         try:
-            m_type = mem_types_t(self.head.type)
+            m_type = mem_types_t(self.head.mem_type)
             c_type = mem_types_map.get(m_type)
         except ValueError:
             c_type = None
-        if not c_type: raise ValueError(f"Unknown Type: {self.head.type}")
+        if not c_type: raise ValueError(f"Unknown Type: {self.head.mem_type}")
 
         values = self.data if isinstance(self.data, list) else [self.data]
         ArrayType = c_type * len(values)
@@ -136,7 +135,7 @@ class mem_context_t:
 
     #refactor required?
     def packet_generate_cfg(self) -> bytes:
-        packet = struct.pack('<B', self.ctx_id)
+        packet = struct.pack('<BB', packet_header_t.PACKET_H_CONTEXT_CFG, self.ctx_id)
         for m_type in mem_types_t:
             instances = self.storage.get(m_type, [])
 
@@ -163,20 +162,24 @@ class mem_context_t:
 
     #refactor required? 
     def generate_packets_instances(self) -> List[bytes]:
+        """Generate packets containing instance headers/dims for this context"""
         packets = []
+        header_byte = struct.pack('<B', packet_header_t.PACKET_H_INSTANCE.value)
         for m_type in sorted(self.storage.keys()):
             current_buffer = bytearray()
             for inst in self.storage[m_type]:
                 instance_bytes = inst.pack_instance()
                 inst_len = len(instance_bytes)
-                if inst_len > self.pkt_size: raise ValueError("Instance too big")
-                
+                if inst_len > self.pkt_size:
+                    raise ValueError("Instance too big")
+
                 if len(current_buffer) + inst_len > self.pkt_size:
-                    packets.append(bytes(current_buffer))
+                    packets.append(header_byte + bytes(current_buffer))
                     current_buffer = bytearray()
                 current_buffer.extend(instance_bytes)
-            
-            if len(current_buffer) > 0: packets.append(bytes(current_buffer))
+
+            if len(current_buffer) > 0:
+                packets.append(header_byte + bytes(current_buffer))
         return packets
     
     
@@ -187,7 +190,8 @@ class mem_context_t:
         for m_type in sorted(self.storage.keys()):
             if not self.storage[m_type]: continue
 
-            pkt_header = struct.pack('<BBB', self.ctx_id, m_type.value, 0)
+            #0 is placeholder for count
+            pkt_header = struct.pack('<BBBB', packet_header_t.PACKET_H_INSTANCE_SCALAR_DATA.value, self.ctx_id, m_type.value, 0) 
             current_buffer = bytearray(pkt_header)
             count_in_pkt = 0
             for idx, inst in enumerate(self.storage[m_type]):
@@ -203,7 +207,7 @@ class mem_context_t:
                 current_buffer.extend(data_bytes)
                 count_in_pkt += 1
             if count_in_pkt > 0:
-                current_buffer[2] = count_in_pkt
+                current_buffer[3] = count_in_pkt #update created 0
                 packets.append(bytes(current_buffer))
         return packets
     
@@ -214,8 +218,8 @@ class mem_context_t:
         for m_type in sorted(self.storage.keys()):
             if not self.storage[m_type]: continue
             item_size = mem_types_size.get(m_type, 1)
-
-            pkt_header = struct.pack('<BBB', self.ctx_id, m_type.value, 0)
+            # is cnt placeholder
+            pkt_header = struct.pack('<BBBB', packet_header_t.PACKET_H_INSTANCE_ARR_DATA, self.ctx_id, m_type.value, 0)
             current_buffer = bytearray(pkt_header)
             count_in_pkt = 0
             for idx, inst in enumerate(self.storage[m_type]):
@@ -243,7 +247,7 @@ class mem_context_t:
                     count_in_pkt += 1
                     items_processed += items_to_take
             if count_in_pkt > 0:
-                current_buffer[2] = count_in_pkt
+                current_buffer[3] = count_in_pkt # update created 0 placeholder
                 packets.append(bytes(current_buffer))
         return packets
     
@@ -283,6 +287,32 @@ class Mem:
                 c.remove_by_alias(alias)
                 return
         raise ValueError(f"Alias '{alias}' not found in any context")
+    
+    def generate_cfg_packets(self) -> List[bytes]:
+        """Generate configuration packets for all contexts."""
+        packets = []
+        for ctx in self.contexts:
+            packets.append(ctx.packet_generate_cfg())
+        return packets
+    
+    def generate_instance_packets(self) -> List[bytes]:
+        """Generate packets for all instances in all contexts."""
+        packets = []
+        for ctx in self.contexts:
+            packets.extend(ctx.generate_packets_instances())
+        return packets
+    def generate_scalar_data_packets(self) -> List[bytes]:
+        """Generate packets for scalar data of all instances in all contexts."""
+        packets = []
+        for ctx in self.contexts:
+            packets.extend(ctx.generate_packets_scalar_data())
+        return packets
+    def generate_array_data_packets(self) -> List[bytes]:
+        """Generate packets for array data of all instances in all contexts."""
+        packets = []
+        for ctx in self.contexts:
+            packets.extend(ctx.generate_packets_array_data())
+        return packets
 
 class access_packet_t(ct.LittleEndianStructure):
     """Bitfield structure for instance access packet
@@ -380,79 +410,61 @@ class Ref:
 
  # vibecoding   
 def ref_from_str(string: str, mem: Mem) -> Ref:
-    """Parse a string into a Ref with nested index support.
+    """Parse a string like "alias[0][other[1]]" into a `Ref`.
 
-    Syntax:
-        "alias"                     -> Ref("alias")
-        "alias[0][1]"               -> Ref("alias")[0, 1]
-        "alias[other]"              -> Ref("alias")[Ref("other")]
-        "alias[arr[0]][i[j]]"       -> Ref("alias")[Ref("arr")[0], Ref("i")[Ref("j")]]
-
-    Each index inside [] is either:
-      - a decimal integer  -> static index
-      - another alias[...] -> dynamic Ref (recursive)
+    This is a compact recursive-descent parser that accepts nested
+    indices and integer literals. It preserves the original behavior
+    (static indices as ints, dynamic indices as `Ref`).
     """
     s = string.strip()
-    ref, pos = _parse_ref(s, 0)
+    pos = 0
+
+    def parse_ref() -> Ref:
+        nonlocal pos
+        start = pos
+        while pos < len(s) and s[pos] not in '[]':
+            pos += 1
+        alias = s[start:pos].strip()
+        if not alias:
+            raise ValueError(f"Empty alias at position {start}")
+        r = Ref(alias)
+
+        # parse zero or more [ ... ] groups
+        while pos < len(s) and s[pos] == '[':
+            pos += 1  # skip '['
+            # skip whitespace
+            while pos < len(s) and s[pos].isspace():
+                pos += 1
+
+            if pos >= len(s):
+                raise ValueError("Unexpected end of string inside index")
+
+            # integer literal (optional leading '-')
+            if s[pos] == '-' or s[pos].isdigit():
+                start_idx = pos
+                if s[pos] == '-':
+                    pos += 1
+                while pos < len(s) and s[pos].isdigit():
+                    pos += 1
+                r.indices.append((True, int(s[start_idx:pos])))
+            else:
+                # nested alias (may itself have indices)
+                nested = parse_ref()
+                r.indices.append((False, nested))
+
+            # skip trailing whitespace and expect ']'
+            while pos < len(s) and s[pos].isspace():
+                pos += 1
+            if pos >= len(s) or s[pos] != ']':
+                raise ValueError(f"Expected ']' at position {pos}")
+            pos += 1  # skip ']'
+
+        return r
+
+    ref = parse_ref()
     if pos != len(s):
         raise ValueError(f"Unexpected trailing characters at position {pos}: '{s[pos:]}'")
     return ref
-
-
-def _parse_ref(s: str, pos: int) -> Tuple[Ref, int]:
-    """Parse 'alias' optionally followed by [idx][idx]... starting at *pos*.
-    Returns (Ref, next_pos).
-    """
-    # 1. Read the alias name (everything up to '[' or end)
-    start = pos
-    while pos < len(s) and s[pos] not in '[]':
-        pos += 1
-    alias = s[start:pos].strip()
-    if not alias:
-        raise ValueError(f"Empty alias at position {start}")
-
-    ref = Ref(alias)
-
-    # 2. Consume zero or more [index] groups
-    while pos < len(s) and s[pos] == '[':
-        pos += 1  # skip '['
-        idx, pos = _parse_index_content(s, pos)
-        # Append index to ref
-        if isinstance(idx, int):
-            ref.indices.append((True, idx))
-        else:
-            ref.indices.append((False, idx))
-        if pos >= len(s) or s[pos] != ']':
-            raise ValueError(f"Expected ']' at position {pos}")
-        pos += 1  # skip ']'
-
-    return ref, pos
-
-
-def _parse_index_content(s: str, pos: int) -> Tuple[Union[int, Ref], int]:
-    """Parse the content inside [...].
-    Can be an integer literal or a nested alias (possibly with its own indices).
-    Returns (int_or_Ref, position_after_content_before_closing_bracket).
-    """
-    # skip whitespace
-    while pos < len(s) and s[pos] == ' ':
-        pos += 1
-
-    if pos >= len(s):
-        raise ValueError("Unexpected end of string inside index")
-
-    # Try integer
-    if s[pos].isdigit() or (s[pos] == '-' and pos + 1 < len(s) and s[pos + 1].isdigit()):
-        start = pos
-        if s[pos] == '-':
-            pos += 1
-        while pos < len(s) and s[pos].isdigit():
-            pos += 1
-        return int(s[start:pos]), pos
-
-    # Otherwise it's a nested alias[...]
-    ref, pos = _parse_ref(s, pos)
-    return ref, pos
 
 
 

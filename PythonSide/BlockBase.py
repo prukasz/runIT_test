@@ -113,87 +113,50 @@ class Block:
                 mask |= (1 << i)
         return mask
     
+
     def pack_cfg(self) -> bytes:
-        return bytes(self.cfg)
 
-    def pack_inputs(self) -> List[bytes]:
+        return struct.pack("<B", packet_header_t.PACKET_H_BLOCK_HEADER.value ) + bytes(self.cfg)
+
+
+    def pack_connections(self) -> List[bytes]:
         """
-        Pack each connected input reference as separate packet.
-        Format per packet: [header:u8][block_idx:u16][in_num:u8][access_node]
-        Returns list of packets, one per connected input.
+        Pack each connected input or output reference
+        NEW!!!! one packet type for connectiont, distinct by byte after block_idx
+        input 0x00, output 0x01
         """
-        packets = []
-        for in_num, inp in enumerate(self.in_conn):
-            if inp is not None:
-                header = struct.pack('<BHB', 
-                    packet_header_t.PACKET_H_BLOCK_INPUTS,
-                    self.cfg.block_idx,
-                    in_num
-                )
-                packets.append(header + inp.to_bytes(self.mem))
+        packets: List[bytes] = []
+
+        def _append_conn(conn_list: List[Optional[Ref]], kind_flag: int, pkt_type) -> None:
+            for idx, node in enumerate(conn_list):
+                if node is None:
+                    continue
+                header = struct.pack('<BHBB', pkt_type, self.cfg.block_idx, kind_flag, idx)
+                packets.append(header + node.to_bytes(self.mem))
+
+        # inputs: kind_flag=0, outputs: kind_flag=1
+        _append_conn(self.in_conn, 0x00, packet_header_t.PACKET_H_BLOCK_INPUTS)
+        _append_conn(self.q_conn, 0x01, packet_header_t.PACKET_H_BLOCK_OUTPUTS)
+
         return packets
 
-    def pack_outputs(self) -> List[bytes]:
-        """
-        Pack each output reference as separate packet.
-        Format per packet: [header:u8][block_idx:u16][q_num:u8][access_node]
-        Returns list of packets, one per output.
-        """
-        packets = []
-        for q_num, out in enumerate(self.q_conn):
-            header = struct.pack('<BHB',
-                packet_header_t.PACKET_H_BLOCK_OUTPUTS,
-                self.cfg.block_idx,
-                q_num
-            )
-            packets.append(header + out.to_bytes(self.mem))
-        return packets
 
-    def __repr__(self) -> str:
-        return (f"Block(idx={self.cfg.block_idx}, type={self.cfg.block_type}, "
-                f"in={len(self.in_conn)}, q={len(self.q_conn)})")
-
-
-# ============================================================================
-# Quick smoke test
-# ============================================================================
-if __name__ == "__main__":
-    import sys, os
-    sys.path.insert(0, os.path.dirname(__file__))
-
-    mem = Mem()
-
-    # --- create a block ---
-    b = Block(idx=0, alias="test_blk", block_type=block_types_t.BLOCK_MATH, ctx_id=0, mem=mem)
-
-    # add two scalar outputs
-    b.add_outputs([(mem_types_t.MEM_U16,), (mem_types_t.MEM_U16,)])
-    assert len(b._q_instances) == 2, "Expected 2 output instances"
-    assert b.cfg.q_cnt == 2
-
-    # add inputs: one connected, one disconnected
-    ref0 = Ref(b._q_instances[0].alias)
-    b.add_inputs([ref0, None])
-    assert b.cfg.in_cnt == 2
-    assert b.get_connected_mask() == 0b01  # only input 0 connected
-
-    # pack cfg
-    cfg_bytes = b.pack_cfg()
-    assert len(cfg_bytes) == ct.sizeof(block_cfg_t), f"cfg size mismatch: {len(cfg_bytes)}"
-
-    # proxy access
-    out_ref = b.out[0]
-    assert isinstance(out_ref, Ref)
-    assert out_ref.alias == b._q_instances[0].alias
-
-    # repr
-    print(repr(b))
-    print(f"cfg bytes  : {cfg_bytes.hex()}")
-    print(f"pack_inputs: {len(b.pack_inputs())} packets")
-    print(f"pack_outputs: {len(b.pack_outputs())} packets")
-    print("ALL TESTS PASSED") 
+    #helper
+    def get_my_instance(self, out_num: int) -> mem_instance_t:
+        """Helper - get instance of selected block output"""
+        if out_num < 0 or out_num >= len(self._q_instances):
+            raise IndexError(f"Output number {out_num} out of range for block with {len(self._q_instances)} outputs")
+        inst = self._q_instances[out_num]
+        if inst is None:
+            raise ValueError(f"Output {out_num} of block has no instance connected")
+        return inst
     
-
-    
-    
-
+    #helper
+    def get_my_output_ref(self, out_num: int) -> Ref:
+        """Get Ref of selected block output"""
+        if out_num < 0 or out_num >= len(self._q_instances):
+            raise IndexError(f"Output number {out_num} out of range for block with {len(self._q_instances)} outputs")
+        ref = self.q_conn[out_num]
+        if ref is None:
+            raise ValueError(f"Output {out_num} of block has no instance connected")
+        return ref
