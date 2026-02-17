@@ -26,8 +26,6 @@ typedef enum{
 
 typedef emu_result_t (*emu_parse_func)(const uint8_t *packet_data, const uint16_t packet_len, void* custom);
 
-extern emu_parse_func parse_dispatch_table[255];
-
 /**
  * @brief Dispatch parser for given packet header
  * @param source message buffer with packets

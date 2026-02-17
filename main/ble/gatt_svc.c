@@ -46,7 +46,7 @@ static const struct ble_gatt_svc_def svc_1 ={
             {
                 .uuid = &uuid_chr_emu_out.u, //uuid of characteristic
                 .access_cb = chr_access_cb, //callback to be used if accesed by peer
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_INDICATE, //what characterisitc can do(permision)
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE, //what characterisitc can do(permision)
                 .val_handle = &chr_val_handle_emu_out,  //will store handle assigned by stack
                 .descriptors = (struct ble_gatt_dsc_def[]) {
                     {
@@ -180,7 +180,7 @@ void gatt_svr_subscribe_cb(struct ble_gap_event *event) {
     if (event->subscribe.attr_handle == chr_val_handle_emu_out) {
         chr_conn_handle_emu_out = event->subscribe.conn_handle;
         indicate_status_emu_out.chr_conn_handle_status = true;
-        indicate_status_emu_out.ind_status = event->subscribe.cur_indicate; // true if indication enabled
+        indicate_status_emu_out.ind_status = event->subscribe.cur_indicate || event->subscribe.cur_notify; // true if indication enabled
     }
 
     if (event->subscribe.attr_handle == chr_val_handle_emu_in) {
@@ -202,6 +202,12 @@ int gatt_svc_init(chr_msg_buffer_t *emu_in_buff, chr_msg_buffer_t *emu_out_buff)
 
 void send_indication(void){
     chr_send_indication(&indicate_status_emu_out, chr_conn_handle_emu_out, chr_val_handle_emu_out);
+}
+
+int gatt_send_notify(const uint8_t *data, size_t len) {
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
+    if (!om) return -1;
+    return ble_gatts_notify_custom(chr_conn_handle_emu_out, chr_val_handle_emu_out, om);
 }
 
 

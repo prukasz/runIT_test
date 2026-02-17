@@ -13,61 +13,12 @@ UUID_READ  = "00000000-0000-0000-0000-000000000002"
 
 CMD_FILE = "test_dump.txt" # Zmieniono na plik generowany przez FullDump
 
-current_message_chunks = []  # Only current message
-current_message_expected_len = 0
-current_message_received_len = 0
-new_message_flag = True
-
-def indication_handler(sender: int, data: bytearray):
-    global current_message_chunks, current_message_expected_len, current_message_received_len, new_message_flag
-
-    data_bytes = bytes(data)
-    # ---------------------------------------------------------
-    # Nowa wiadomość (Pierwszy Chunk)
-    # ---------------------------------------------------------
-    if new_message_flag:
-        current_message_chunks.clear()
-        current_message_expected_len = 0
-        current_message_received_len = 0
-
-        # Sprawdź nagłówek długości (2 bajty)
-        if len(data_bytes) < 2:
-            print("Error: First chunk too short to contain length header")
-            return
-            
-        # Parsuj długość (Big-Endian: Bajt 0 to MSB, Bajt 1 to LSB)
-        current_message_expected_len = (data_bytes[0] << 8) | data_bytes[1]
-    
-        # Zapisz dane BEZ nagłówka (pomiń pierwsze 2 bajty)
-        chunk_payload = data_bytes[2:]
-        current_message_chunks.append(chunk_payload)
-        current_message_received_len = len(chunk_payload)
-        new_message_flag = False
-    
-        print(f"   NEW MESSAGE START - Header detected")
-        print(f"   Expected Payload: {current_message_expected_len} bytes")
-        
-    # ---------------------------------------------------------
-    # Kolejne fragmenty (Continuation Chunks)
-    # ---------------------------------------------------------
-    else:
-        current_message_chunks.append(data_bytes)
-        current_message_received_len += len(data_bytes)
-        print(f"   Chunk received: {len(data_bytes)} bytes")
-    # ---------------------------------------------------------
-    # Sprawdzenie czy odebrano całość
-    # ---------------------------------------------------------
-    if current_message_received_len >= current_message_expected_len:
-        print(f"   MESSAGE COMPLETE: {current_message_received_len}/{current_message_expected_len} bytes")
-        
-        # 1. Złóż wszystkie kawałki w jeden ciąg bajtów
-        full_message_bytes = b''.join(current_message_chunks)
-        
-        # 2. Konwersja na czytelny HEX (np. "AA 0B 1F ...")
-        # .hex() tworzy ciąg, .upper() powiększa litery, a logika join dzieli je spacjami
-        hex_string = " ".join(f"{b:02X}" for b in full_message_bytes)
-        
-        print(f"   FULL HEX: {hex_string}")
+def notification_handler(sender, data: bytearray):
+    """Raw notification display — print incoming data as hex."""
+    hex_str = " ".join(f"{b:02X}" for b in data)
+    print(f"\n[NOTIFY] {len(data)} bytes: {hex_str}")
+    if len(data) > 0 and data[0] == 0xD0:
+        print(f"  → PUBLISH packet, payload: {len(data)-1} bytes")
         
         # Opcjonalnie: Wyświetl jako tekst (jeśli to ASCII)
         # try:
@@ -166,9 +117,7 @@ async def main():
         write_char = await get_characteristic_or_fail(client, UUID_WRITE)
         read_char = await get_characteristic_or_fail(client, UUID_READ)
 
-        await client.start_notify(read_char.uuid, indication_handler)
-
-        global current_message_chunks, current_message_expected_len, current_message_received_len, new_message_flag
+        await client.start_notify(read_char.uuid, notification_handler)
 
         # Initial send
         await send_file(client, write_char.uuid)
@@ -185,29 +134,6 @@ async def main():
 
             if user_input.lower() == "r":
                 await send_file(client, write_char.uuid)
-                continue
-
-            if user_input.lower() == "show":             
-                if current_message_chunks != []:
-                    combined = b''.join(current_message_chunks)
-                    print(f"Expected length: {current_message_expected_len} bytes")
-                    print(f"Received length: {len(combined)} bytes")
-                    
-                    if len(combined) == current_message_expected_len:
-                        print("Message is COMPLETE")
-                    else:
-                        print(f"Message is INCOMPLETE ({len(combined)}/{current_message_expected_len})")
-                    
-                    print(f"\nCombined data ({len(combined)} bytes):")
-                    print(combined.hex().upper())
-                    
-                    print("\nFormatted view:")
-                    for i in range(0, len(combined), 16):
-                        chunk = combined[i:i+16]
-                        hex_str = ' '.join(f'{b:02X}' for b in chunk)
-                        print(f"{i:04d}: {hex_str}")
-                else:
-                    print("No message received yet.")
                 continue
 
             if user_input.lower() == "read":

@@ -3,6 +3,7 @@
 #include "emu_helpers.h"
 #include "mem_types.h"
 #include "emu_types_info.h"
+#include "gatt_svc.h"
 
 #define TAG __FILE_NAME__
 #define PKT_BUFF_SIZE 512
@@ -161,8 +162,10 @@ emu_result_t emu_subscribe_send(){
             instance++;
         }
         //send buff with offset length
-        ESP_LOG_BUFFER_HEX(TAG, sub_manager_t.packet_buff, offset);
+        // ESP_LOG_BUFFER_HEX(TAG, sub_manager_t.packet_buff, offset);
+        gatt_send_notify(sub_manager_t.packet_buff, offset);
         //
+
         offset = 0;
         instance = 0;
     }   

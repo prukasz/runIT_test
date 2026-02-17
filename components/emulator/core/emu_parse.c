@@ -225,7 +225,7 @@ emu_result_t emu_parse_verify_code(emu_code_handle_t code){
         RET_E(EMU_ERR_NULL_PTR,"Code handle is NULL");
     }
     if (!code->blocks_list) {
-        RET_ED(EMU_ERR_NULL_PTR,"blocks_list is NULL");
+        RET_E(EMU_ERR_NULL_PTR,"blocks_list is NULL");
     }
     if (code->total_blocks == 0) {
         RET_W(EMU_ERR_BLOCK_INVALID_PARAM,"total_blocks is 0 — nothing to verify");
