@@ -11,6 +11,14 @@ SemaphoreHandle_t logger_request_sem = NULL;
 SemaphoreHandle_t logger_done_sem = NULL;
 TaskHandle_t logger_task_handle = NULL;
 
+log_ble_buff_t log_ble_err_buff = {
+    .buf = {0},
+    .offset = 0
+};
+log_ble_buff_t log_ble_status_buff = {
+    .buf = {0},
+    .offset = 0
+};
 
 //todo implement proper logger task
 static const char *TAG = "emu_logger";
@@ -52,7 +60,14 @@ static void vLoggerTask(void *pvParameters){
                                  error_item.depth, error_item.abort, error_item.warning, error_item.notice);
                     }
                 }
+                logger_add_to_packet(&error_item, sizeof(emu_result_t), &log_ble_err_buff);
                 vRingbufferReturnItem(error_logs_buff_t, item);
+            }
+
+            // Send any remaining logs in BLE buffer
+            if(log_ble_err_buff.offset > 0){
+                gatt_send_notify(log_ble_err_buff.buf, log_ble_err_buff.offset);
+                log_ble_err_buff.offset = 0;
             }
 
             #ifdef ENABLE_STATUS_BUFF
@@ -67,8 +82,15 @@ static void vLoggerTask(void *pvParameters){
                              EMU_LOG_TO_STR(report_item.log), EMU_OWNER_TO_STR(report_item.owner), report_item.owner_idx,
                              report_item.time, report_item.cycle);
                 }
+                logger_add_to_packet(&report_item, sizeof(emu_report_t), &log_ble_status_buff);
                 vRingbufferReturnItem(status_logs_buff_t, item);
             }
+
+            if(log_ble_status_buff.offset > 0){
+                gatt_send_notify(log_ble_status_buff.buf, log_ble_status_buff.offset);
+                log_ble_status_buff.offset = 0;
+            }
+            
             #endif
             // Signal done via semaphore (kept for completion signaling)
             if (logger_done_sem) {
@@ -101,3 +123,19 @@ BaseType_t logger_task_init(void) {
     return pdPASS;
 }
 
+
+void logger_add_to_packet(const void *data, size_t size, log_ble_buff_t *buff){
+    if (buff->offset + size < sizeof(buff->buf)){
+        memcpy(buff->buf + buff->offset, data, size);
+        buff->offset += size;
+    }
+    else
+    {
+        //send buff via BLE
+        gatt_send_notify(buff->buf, buff->offset);
+        //reset offset and add new log
+        buff->offset = 0;
+        memcpy(buff->buf + buff->offset, data, size);
+        buff->offset += size;
+    }
+}

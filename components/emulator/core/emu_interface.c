@@ -59,7 +59,7 @@ void emu_interface_task(void* params){
             switch (current_order){     
                 
                 case ORD_EMU_LOOP_INIT:
-                    res = emu_loop_init(1000000);
+                    res = emu_loop_init(10000);
                     break;
 
                 case ORD_EMU_LOOP_START:

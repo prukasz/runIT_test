@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 #include "inttypes.h"
+#include "gatt_svc.h"
 
 /*********************************************************************************************** *
 IDEA: we have 2 structs for logging: emu_result_t for errors and emu_report_t for reports / success logs
@@ -20,8 +21,10 @@ We can also read reports if ENABLE_STATUS_BUFF is defined then we can send repor
 LIVEDEBUGGING: We can enable ENABLE_LOG_X_FROM_ERROR_MACROS and ENABLE_LOG_X_FROM_STATUS_MACROS to have extra logs in serial console for debugging purposes
 
 *****************************************************************************************************/
-
-
+typedef struct{
+        uint8_t buf[512];
+        uint16_t offset;
+}log_ble_buff_t;
 
 extern RingbufHandle_t error_logs_buff_t; 
 extern RingbufHandle_t status_logs_buff_t;
@@ -31,4 +34,5 @@ extern TaskHandle_t logger_task_handle;
 
 // Logger Task Initialization
 BaseType_t logger_task_init(void);
+void logger_add_to_packet(const void *data, size_t size, log_ble_buff_t *buff);
 

@@ -79,6 +79,9 @@ void app_main(void) {
     ret = nimble_port_init();
     ESP_ERROR_CHECK(ret);
 
+    // Suppress noisy NimBLE notify/indicate logs
+    esp_log_level_set("NimBLE", ESP_LOG_WARN);
+
     // Initialize GAP and GATT services
     ble_gap_configure();
     gatt_svc_init(&emu_in_buffer, &emu_out_buffer);
