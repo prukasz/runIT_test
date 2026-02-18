@@ -12,12 +12,12 @@ SemaphoreHandle_t logger_done_sem = NULL;
 TaskHandle_t logger_task_handle = NULL;
 
 log_ble_buff_t log_ble_err_buff = {
-    .buf = {0},
-    .offset = 0
+    .buf = {PACKET_H_ERROR_LOG},
+    .offset = 1
 };
 log_ble_buff_t log_ble_status_buff = {
-    .buf = {0},
-    .offset = 0
+    .buf = {PACKET_H_STATUS_LOG},
+    .offset = 1
 };
 
 //todo implement proper logger task
@@ -134,7 +134,7 @@ void logger_add_to_packet(const void *data, size_t size, log_ble_buff_t *buff){
         //send buff via BLE
         gatt_send_notify(buff->buf, buff->offset);
         //reset offset and add new log
-        buff->offset = 0;
+        buff->offset = 1;
         memcpy(buff->buf + buff->offset, data, size);
         buff->offset += size;
     }

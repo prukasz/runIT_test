@@ -21,7 +21,10 @@ typedef enum{
     PACKET_H_SUBSCRIPTION_INIT    = 0xC0,
     PACKET_H_SUBSCRIPTION_ADD     = 0xC1,
 
-    PACKET_H_PUBLISH       = 0xD0,
+    PACKET_H_PUBLISH              = 0xD0,
+    
+    PACKET_H_STATUS_LOG           = 0xE0,
+    PACKET_H_ERROR_LOG            = 0xE1,
 }packet_header_t;
 
 typedef emu_result_t (*emu_parse_func)(const uint8_t *packet_data, const uint16_t packet_len, void* custom);

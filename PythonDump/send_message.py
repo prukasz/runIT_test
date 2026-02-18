@@ -3,6 +3,7 @@ import sys
 import os
 import re  # Dodano do obsługi regex
 from bleak import BleakScanner, BleakClient, BleakError
+from MessageDispatch import dispatch_message, notification_handler as _dispatch_handler
 
 DEVICE_NAME = "SKIBIDI"
 
@@ -14,19 +15,8 @@ UUID_READ  = "00000000-0000-0000-0000-000000000002"
 CMD_FILE = "test_dump.txt" # Zmieniono na plik generowany przez FullDump
 
 def notification_handler(sender, data: bytearray):
-    """Raw notification display — print incoming data as hex."""
-    hex_str = " ".join(f"{b:02X}" for b in data)
-    print(f"\n[NOTIFY] {len(data)} bytes: {hex_str}")
-    if len(data) > 0 and data[0] == 0xD0:
-        print(f"  → PUBLISH packet, payload: {len(data)-1} bytes")
-        
-        # Opcjonalnie: Wyświetl jako tekst (jeśli to ASCII)
-        # try:
-        #     print(f"   ASCII: {full_message_bytes.decode('utf-8')}")
-        # except:
-        #     pass
-
-        new_message_flag = True  # Reset flagi, gotowość na nową wiadomość
+    """Dispatch incoming BLE notification through the message parser."""
+    dispatch_message(data)
     
 
 async def get_characteristic_or_fail(client, uuid):
