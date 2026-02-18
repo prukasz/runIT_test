@@ -17,7 +17,7 @@ code.var(mem_types_t.MEM_U8, "gains2", data=[1,2,3,4,5,6,7,8,9,10], dims=[10])
 code.var(mem_types_t.MEM_U8, "gains3", data=[1,2,3,4,5,6,7,8,9,10], dims=[10,10])
 code.var(mem_types_t.MEM_U8, "gains4", data=[1,2,3,4,5,6,7,8,9,10], dims=[10,10,10])
 # ── Blocks ─────────────────────────────────────────────────
-ton = code.add_timer(pt = 20000, alias="ton", en = "enable")
+ton = code.add_timer(pt = 10000, alias="ton", en = "enable")
 
 clk  = code.add_clock(period_ms=5000, width_ms=1000, en=ton.out[0], alias="clk")
 
@@ -44,7 +44,6 @@ m3 = code.add_math(expression=' "gains[2]" +0 ', en=sel_q.out[2])
 
 # ── Subscriptions ──────────────────────────────────────────
 sub = code.subscribe("selector", "enable", "gains", ton.out[0])
+forr = code.add_for(expr="i=0; i<99999; i+=1", en=ton.out[0])
 
 code.generate("test_dump.txt", subscriptions=sub)
-
-code.add_for(expr="i=0; i<10; i+=1", en=clk.out[0])
