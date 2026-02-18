@@ -65,9 +65,9 @@ static void vLoggerTask(void *pvParameters){
             }
 
             // Send any remaining logs in BLE buffer
-            if(log_ble_err_buff.offset > 0){
+            if(log_ble_err_buff.offset > 1){
                 gatt_send_notify(log_ble_err_buff.buf, log_ble_err_buff.offset);
-                log_ble_err_buff.offset = 0;
+                log_ble_err_buff.offset = 1;
             }
 
             #ifdef ENABLE_STATUS_BUFF
@@ -86,9 +86,9 @@ static void vLoggerTask(void *pvParameters){
                 vRingbufferReturnItem(status_logs_buff_t, item);
             }
 
-            if(log_ble_status_buff.offset > 0){
+            if(log_ble_status_buff.offset > 1){
                 gatt_send_notify(log_ble_status_buff.buf, log_ble_status_buff.offset);
-                log_ble_status_buff.offset = 0;
+                log_ble_status_buff.offset = 1;
             }
             
             #endif

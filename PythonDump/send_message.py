@@ -3,7 +3,9 @@ import sys
 import os
 import re  # Dodano do obsługi regex
 from bleak import BleakScanner, BleakClient, BleakError
-from MessageDispatch import dispatch_message, notification_handler as _dispatch_handler
+from MessageDispatch import dispatch_message, notification_handler as _dispatch_handler, set_display_mode, DisplayMode
+
+set_display_mode(DisplayMode.PRETTY)
 
 DEVICE_NAME = "SKIBIDI"
 

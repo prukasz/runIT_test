@@ -126,7 +126,7 @@ emu_result_t emu_subscribe_process()
         size_t total_size = 0;
         while(total_size < PKT_BUFF_SIZE-1 && i < sub_manager_t.next_free_sub_idx)
         {
-            size_t next_size  = sizeof(((pub_instance_t *)0)->head) + sub_manager_t.sub_list[i].el_cnt * MEM_TYPE_SIZES[sub_manager_t.sub_list[i].head.type];
+            size_t next_size  = sizeof(((pub_instance_t *)0)->head) + sizeof(uint16_t) + sub_manager_t.sub_list[i].el_cnt * MEM_TYPE_SIZES[sub_manager_t.sub_list[i].head.type];
             if(next_size> PKT_BUFF_SIZE-1) {
                 REP_W(EMU_LOG_to_large_to_sub, "Instance data to large for single packet %"PRIu16"", sub_manager_t.sub_list[i].el_cnt);
             }
@@ -157,6 +157,8 @@ emu_result_t emu_subscribe_send(){
         while(instance < sub_manager_t.pub_pack[packet]){ //config.pub_pack[0] - ilosc pakietow do wyslania
             memcpy(sub_manager_t.packet_buff+offset, &sub_manager_t.sub_list[instance].head, sizeof(((pub_instance_t *)0)->head));
             offset+= sizeof(((pub_instance_t *)0)->head);
+            memcpy(sub_manager_t.packet_buff+offset, &sub_manager_t.sub_list[instance].el_cnt, sizeof(uint16_t));
+            offset+= sizeof(uint16_t);
             memcpy(sub_manager_t.packet_buff+offset, sub_manager_t.sub_list[instance].data, sub_manager_t.sub_list[instance].el_cnt * MEM_TYPE_SIZES[sub_manager_t.sub_list[instance].head.type]);
             offset+= sub_manager_t.sub_list[instance].el_cnt * MEM_TYPE_SIZES[sub_manager_t.sub_list[instance].head.type];
             instance++;

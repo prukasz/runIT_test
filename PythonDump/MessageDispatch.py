@@ -7,7 +7,10 @@ Handles three packet types sent from the device:
     0xE1 — STATUS_LOG (status / info reports)
 
 Usage:
-    from MessageDispatch import dispatch_message
+    from MessageDispatch import dispatch_message, set_display_mode, DisplayMode
+
+    set_display_mode(DisplayMode.RAW)   # show raw hex packets
+    set_display_mode(DisplayMode.PRETTY) # show formatted output (default)
 
     def notification_handler(sender, data: bytearray):
         dispatch_message(data)
@@ -19,6 +22,29 @@ from typing import List, Optional, Callable
 from dataclasses import dataclass
 
 from Enums import mem_types_t, mem_types_pack_map, mem_types_size
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Display mode
+# ═══════════════════════════════════════════════════════════════════
+
+class DisplayMode(IntEnum):
+    """Controls how dispatch_message renders output."""
+    PRETTY = 0   # nicely formatted, coloured output (default)
+    RAW    = 1   # raw hex dump of the whole packet
+
+_display_mode: DisplayMode = DisplayMode.PRETTY
+
+
+def set_display_mode(mode: DisplayMode) -> None:
+    """Switch between PRETTY and RAW output for dispatch_message."""
+    global _display_mode
+    _display_mode = DisplayMode(mode)
+
+
+def get_display_mode() -> DisplayMode:
+    """Return the current display mode."""
+    return _display_mode
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -348,36 +374,38 @@ def _parse_publish(payload: bytes) -> List[PublishEntry]:
     """
     Parse PUBLISH payload (after 0xD0 header byte).
 
-    Each entry in the packet:
-        [inst_idx: u16 LE]
-        [context:3 | type:4 | updated:1]   — 1 byte bitfield
-        [data: el_cnt × sizeof(type)]
+    Each entry in the packet (matches C pub_instance_t send layout):
+        [inst_idx: u16 LE]                       — 2 bytes
+        [context:3 | type:4 | updated:1]         — 1 byte bitfield
+        [padding]                                — 1 byte  (struct alignment pad)
+        [el_cnt:  u16 LE]                        — 2 bytes  (element count)
+        [data:    el_cnt × sizeof(type)]          — N bytes
 
-    The el_cnt was pre-computed on the device during subscription registration,
-    but is not explicitly in the packet. We decode values until we hit the head
-    of the next entry or end of packet. Since we know the type from the head,
-    we read sizeof(type) bytes at a time.
-
-    Note: The device packs multiple instances per packet. The number of instances
-    per packet was pre-computed in emu_subscribe_process() and stored in pub_pack[].
-    We simply iterate until payload is consumed.
+    Total head = 4 bytes (sizeof(head) in C includes 1-byte padding after
+    the bitfield to align the struct size to a multiple of uint16_t alignment).
     """
     entries: List[PublishEntry] = []
     pos = 0
 
     while pos < len(payload):
-        if pos + 3 > len(payload):
-            break  # not enough for a header
+        # Need at least 6 bytes: head(4) + el_cnt(2)
+        if pos + 6 > len(payload):
+            break
 
-        # Parse head: inst_idx (u16) + bitfield (u8)
+        # Parse head: inst_idx (u16) + bitfield (u8) + pad (u8)  →  4 bytes
         inst_idx = struct.unpack_from('<H', payload, pos)[0]
         pos += 2
         bitfield = payload[pos]
         pos += 1
+        pos += 1  # skip struct padding byte
 
-        context = bitfield & 0x07           # bits [2:0]
-        mem_type = (bitfield >> 3) & 0x0F   # bits [6:3]
-        updated = bool((bitfield >> 7) & 1) # bit  [7]
+        context  = bitfield & 0x07           # bits [2:0]
+        mem_type = (bitfield >> 3) & 0x0F    # bits [6:3]
+        updated  = bool((bitfield >> 7) & 1) # bit  [7]
+
+        # Parse el_cnt (u16 LE)
+        el_cnt = struct.unpack_from('<H', payload, pos)[0]
+        pos += 2
 
         # Get type size
         try:
@@ -386,40 +414,13 @@ def _parse_publish(payload: bytes) -> List[PublishEntry]:
             fmt = _TYPE_FMT[t]
         except (ValueError, KeyError):
             # Unknown type — can't continue parsing reliably
-            entries.append(PublishEntry(inst_idx, context, mem_type, updated, 0, []))
+            entries.append(PublishEntry(inst_idx, context, mem_type, updated, el_cnt, []))
             break
 
-        # Read values until we either exhaust payload or see next head
-        # Since we don't have el_cnt in the packet, we read remaining bytes
-        # that are divisible by type_size. But if there are multiple entries,
-        # we need another way to know where one ends and next begins.
-        #
-        # Actually looking at the C code more carefully:
-        # emu_subscribe_send() copies head + data for each instance sequentially.
-        # el_cnt is known per subscription entry. Since we subscribed, we can track it.
-        # But without subscription context, we read one element at a time and rely on
-        # the fact that after data, the next head starts. This is ambiguous for arrays.
-        #
-        # Best approach: provide subscription context OR assume 1 element per entry
-        # (most subscriptions are scalars). For arrays, the user should set up
-        # a subscription registry.
-        #
-        # For now: use the subscription registry if available, otherwise
-        # try a heuristic: read all remaining bytes as values of this type.
-        # When subscription registry is set, we use el_cnt from there.
-        remaining = len(payload) - pos
-        
-        # If we have subscription registry info, use it
-        if _subscription_registry and len(entries) < len(_subscription_registry):
-            el_cnt = _subscription_registry[len(entries)]
-        else:
-            # Heuristic: for the last (or only) entry, consume all remaining
-            # For multiple entries without registry — this won't work well for arrays
-            el_cnt = 1  # Safe default for scalars
-
         data_size = el_cnt * type_size
+        remaining = len(payload) - pos
         if data_size > remaining:
-            # Fallback: read whatever is available
+            # Truncated packet — read what we can
             el_cnt = remaining // type_size
             data_size = el_cnt * type_size
 
@@ -441,7 +442,7 @@ def _format_publish(entries: List[PublishEntry]) -> str:
 
     for i, e in enumerate(entries):
         type_name = _TYPE_NAME.get(mem_types_t(e.mem_type), f"type({e.mem_type})") if e.mem_type in [t.value for t in mem_types_t] else f"type({e.mem_type})"
-        upd_str = f"{_C.GREEN}●{_C.RESET}" if e.updated else f"{_C.DIM}○{_C.RESET}"
+        upd_str = f"{_C.GREEN}● upd{_C.RESET}" if e.updated else f"{_C.DIM}○    {_C.RESET}"
 
         # Variable alias from registry
         alias = ""
@@ -769,6 +770,33 @@ def dispatch_message(data: bytearray, quiet: bool = False) -> None:
     header = data[0]
     payload = bytes(data[1:])
 
+    # ── RAW mode: just dump the whole packet as hex ──────────────
+    if _display_mode == DisplayMode.RAW:
+        hex_str = " ".join(f"{b:02X}" for b in data)
+        _HEADER_TAG = {
+            HEADER_PUBLISH:    "PUB",
+            HEADER_ERROR_LOG:  "ERR",
+            HEADER_STATUS_LOG: "STS",
+        }
+        tag = _HEADER_TAG.get(header, f"0x{header:02X}")
+        if not quiet:
+            print(f"[{tag}] ({len(data):>3}B) {hex_str}")
+        # still fire callbacks with parsed data
+        if header == HEADER_PUBLISH:
+            entries = _parse_publish(payload)
+            for cb in _user_callbacks[HEADER_PUBLISH]:
+                cb(entries)
+        elif header == HEADER_ERROR_LOG:
+            entries = _parse_error_log(payload)
+            for cb in _user_callbacks[HEADER_ERROR_LOG]:
+                cb(entries)
+        elif header == HEADER_STATUS_LOG:
+            entries = _parse_status_log(payload)
+            for cb in _user_callbacks[HEADER_STATUS_LOG]:
+                cb(entries)
+        return
+
+    # ── PRETTY mode (default) ───────────────────────────────────
     if header == HEADER_PUBLISH:
         entries = _parse_publish(payload)
         if not quiet:
@@ -791,7 +819,7 @@ def dispatch_message(data: bytearray, quiet: bool = False) -> None:
             cb(entries)
 
     else:
-        # Unknown header — print raw hex
+        # Unknown header — print raw hex regardless of mode
         hex_str = " ".join(f"{b:02X}" for b in data)
         if not quiet:
             print(f"{_C.DIM}[UNKNOWN 0x{header:02X}] {len(data)} bytes: {hex_str}{_C.RESET}")
