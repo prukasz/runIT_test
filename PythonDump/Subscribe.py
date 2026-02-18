@@ -35,7 +35,7 @@ Usage example:
 """
 
 import struct
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Union
 from dataclasses import dataclass, field
 
 from Enums import (
@@ -44,7 +44,7 @@ from Enums import (
     mem_types_t,
 )
 from Mem import mem_context_t
-from MemAcces import AccessManager
+from MemAcces import AccessManager, Ref
 
 
 # ============================================================================
@@ -88,11 +88,17 @@ class SubscriptionBuilder:
     # Public API – adding subscriptions
     # ------------------------------------------------------------------
 
-    def add(self, alias: str) -> 'SubscriptionBuilder':
+    def add(self, target: Union[str, Ref]) -> 'SubscriptionBuilder':
         """
-        Subscribe to an instance by its alias.
+        Subscribe to an instance by alias string or Ref object.
+
+        Accepts:
+          - ``str``  — plain alias (e.g. ``"temperature"``)
+          - ``Ref``  — reference object (e.g. ``ton.out[0]``, ``Ref("counter")``)
+
         Resolves through AccessManager to find context, type & index.
         """
+        alias = target.alias if isinstance(target, Ref) else target
         ctx_id, m_type, idx, _ = self._manager.resolve_alias(alias)
         self._entries.append(SubscriptionEntry(ctx_id, m_type, idx))
         return self

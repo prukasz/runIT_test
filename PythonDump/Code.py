@@ -660,16 +660,20 @@ class Code:
     # Subscription helpers
     # ====================================================================
 
-    def subscribe(self, *aliases: str) -> 'SubscriptionBuilder':
+    def subscribe(self, *targets: Union[str, Ref]) -> 'SubscriptionBuilder':
         """
-        Create a SubscriptionBuilder and subscribe to the given aliases.
+        Create a SubscriptionBuilder and subscribe to the given targets.
+
+        Each target can be:
+          - a string alias     (e.g. ``"temperature"``, ``"gains"``)
+          - a Ref object       (e.g. ``ton.out[0]``, ``Ref("counter")``)
 
         Usage:
             sub = code.subscribe("temperature", "counter", "gains")
-            # returns SubscriptionBuilder with those entries added
+            sub = code.subscribe("temp", ton.out[0], clk.out[0])
 
         You can also chain more calls:
-            sub = code.subscribe("temp").add("counter")
+            sub = code.subscribe("temp").add("counter").add(ton.out[0])
 
         To get raw packets:
             init_pkt, add_pkts = sub.build()
@@ -679,8 +683,8 @@ class Code:
         """
         from Subscribe import SubscriptionBuilder
         builder = SubscriptionBuilder(self)
-        for alias in aliases:
-            builder.add(alias)
+        for t in targets:
+            builder.add(t)
         return builder
 
     def generate_packets_hex(self, manager: Optional[AccessManager] = None) -> List[str]:
