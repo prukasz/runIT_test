@@ -250,7 +250,7 @@ def _format_error_log(entries: List[ErrorLogEntry]) -> str:
         lines.append(
             f"  {badge} {_C.RED}{err_str}{_C.RESET}"
             f"  ← {_C.YELLOW}{owner_str}{_C.RESET}"
-            f"{'[' + str(e.owner_idx) + ']' if e.owner_idx != 0xFFFF else ''}"
+            f"{'[' + str(e.owner_idx) + ']'}"
             f"  {_C.DIM}t={e.time_ms}ms cyc={e.cycle} d={e.depth}{_C.RESET}"
         )
 
@@ -264,15 +264,15 @@ def _format_error_log(entries: List[ErrorLogEntry]) -> str:
 
 # emu_report_t layout (no __packed), uint64_t aligned to 8:
 #   log:       u32 (enum)        offset 0   (4 bytes)
-#   owner:     u16               offset 4   (2 bytes)  — emu_owner_t on wire as u16
-#   owner_idx: u16               offset 6   (2 bytes)
-#   pad:       8 bytes           offset 8   (align to 8 for u64)
+#   owner:     u32 (enum)        offset 4   (4 bytes)  — emu_owner_t is an enum = u32
+#   owner_idx: u16               offset 8   (2 bytes)
+#   pad:       6 bytes           offset 10  (align to 8 for u64)
 #   time:      u64               offset 16  (8 bytes)
 #   cycle:     u64               offset 24  (8 bytes)
 # Total: 32 bytes
 
 EMU_REPORT_SIZE = 32
-EMU_REPORT_FMT = '<IHHxxxxxxxxQQ'  # I=log, H=owner, H=owner_idx, xxxxxxxx=pad, Q=time, Q=cycle
+EMU_REPORT_FMT = '<IIHxxxxxxQQ'  # I=log, I=owner, H=owner_idx, xxxxxx=pad, Q=time, Q=cycle
 
 
 @dataclass
@@ -297,7 +297,7 @@ def _parse_status_log(payload: bytes) -> List[StatusLogEntry]:
 
         entries.append(StatusLogEntry(
             log=log,
-            owner=owner & 0xFFFF,  # mask to u16 — upper bytes may be uninitialized
+            owner=owner,  # mask to u16 — upper bytes may be uninitialized
             owner_idx=owner_idx,
             time_ms=time_ms,
             cycle=cycle,
@@ -318,7 +318,7 @@ def _format_status_log(entries: List[StatusLogEntry]) -> str:
         lines.append(
             f"  {_C.GREEN}ℹ{_C.RESET} {_C.WHITE}{log_str}{_C.RESET}"
             f"  ← {_C.YELLOW}{owner_str}{_C.RESET}"
-            f"{'[' + str(e.owner_idx) + ']' if e.owner_idx != 0xFFFF else ''}"
+            f"{'[' + str(e.owner_idx) + ']'}"
             f"  {_C.DIM}t={e.time_ms}ms cyc={e.cycle}{_C.RESET}"
         )
 
