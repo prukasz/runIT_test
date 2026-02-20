@@ -52,8 +52,8 @@ def get_display_mode() -> DisplayMode:
 # ═══════════════════════════════════════════════════════════════════
 
 HEADER_PUBLISH    = 0xD0
-HEADER_ERROR_LOG  = 0xE0
-HEADER_STATUS_LOG = 0xE1
+HEADER_ERROR_LOG  = 0xE1
+HEADER_STATUS_LOG = 0xE0
 
 # Type sizes matching C mem_types.h (indexed by mem_types_t value)
 _TYPE_SIZE = {
@@ -488,19 +488,19 @@ def _format_publish(entries: List[PublishEntry]) -> str:
 # ERROR_LOG parser (0xE0)
 # ═══════════════════════════════════════════════════════════════════
 
-# ESP32-C6 is RISC-V 32-bit (ILP32): sizeof(enum)=4, uint64_t align=4
+# ESP32-C6 is RISC-V 32-bit (ILP32), uint64_t aligned to 8
 # emu_result_t layout (no __packed):
 #   code:      u32 (enum)        offset 0   (4 bytes)
 #   owner:     u16               offset 4   (2 bytes)
 #   owner_idx: u16               offset 6   (2 bytes)
 #   flags:     u8 bitfield       offset 8   (1 byte)
-#   pad:       3 bytes           offset 9   (align to 4 for u64)
-#   time:      u64               offset 12  (8 bytes)
-#   cycle:     u64               offset 20  (8 bytes)
-# Total: 28 bytes
+#   pad:       7 bytes           offset 9   (align to 8 for u64)
+#   time:      u64               offset 16  (8 bytes)
+#   cycle:     u64               offset 24  (8 bytes)
+# Total: 32 bytes
 
-EMU_RESULT_SIZE = 28
-EMU_RESULT_FMT = '<IHHBxxxQQ'  # I=code, H=owner, H=owner_idx, B=flags, xxx=pad, Q=time, Q=cycle
+EMU_RESULT_SIZE = 32
+EMU_RESULT_FMT = '<IHHBxxxxxxxQQ'  # I=code, H=owner, H=owner_idx, B=flags, xxxxxxx=pad, Q=time, Q=cycle
 
 
 @dataclass
@@ -576,17 +576,17 @@ def _format_error_log(entries: List[ErrorLogEntry]) -> str:
 # STATUS_LOG parser (0xE1)
 # ═══════════════════════════════════════════════════════════════════
 
-# emu_report_t layout (no __packed):
-#   log:       u32 (enum)        offset 0  (4 bytes)
-#   owner:     u32 (enum)        offset 4  (4 bytes)
-#   owner_idx: u16               offset 8  (2 bytes)
-#   pad:       2 bytes           offset 10 (align to 4)
-#   time:      u64               offset 12 (8 bytes)
-#   cycle:     u64               offset 20 (8 bytes)
-# Total: 28 bytes
+# emu_report_t layout (no __packed), uint64_t aligned to 8:
+#   log:       u32 (enum)        offset 0   (4 bytes)
+#   owner:     u16               offset 4   (2 bytes)  — emu_owner_t on wire as u16
+#   owner_idx: u16               offset 6   (2 bytes)
+#   pad:       8 bytes           offset 8   (align to 8 for u64)
+#   time:      u64               offset 16  (8 bytes)
+#   cycle:     u64               offset 24  (8 bytes)
+# Total: 32 bytes
 
-EMU_REPORT_SIZE = 28
-EMU_REPORT_FMT = '<IIHxxQQ'  # I=log, I=owner, H=owner_idx, xx=pad, Q=time, Q=cycle
+EMU_REPORT_SIZE = 32
+EMU_REPORT_FMT = '<IHHxxxxxxxxQQ'  # I=log, H=owner, H=owner_idx, xxxxxxxx=pad, Q=time, Q=cycle
 
 
 @dataclass
@@ -611,7 +611,7 @@ def _parse_status_log(payload: bytes) -> List[StatusLogEntry]:
 
         entries.append(StatusLogEntry(
             log=log,
-            owner=owner,
+            owner=owner & 0xFFFF,  # mask to u16 — upper bytes may be uninitialized
             owner_idx=owner_idx,
             time_ms=time_ms,
             cycle=cycle,
