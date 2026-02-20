@@ -21,6 +21,8 @@ const char *MEM_TYPES_TO_STR[7] = {
     "MEM_B"
 };
 
+// ;--; idk
+
 /**
  * @brief Return string representation of emu_err_t code
  */

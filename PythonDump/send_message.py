@@ -3,7 +3,7 @@ import sys
 import os
 import re  # Dodano do obsługi regex
 from bleak import BleakScanner, BleakClient, BleakError
-from MessageDispatch import dispatch_message, notification_handler as _dispatch_handler, set_display_mode, DisplayMode
+from MessageDispatch import notification_handler, set_display_mode, DisplayMode
 
 set_display_mode(DisplayMode.PRETTY)
 
@@ -15,12 +15,7 @@ UUID_NOTIFY  = "00000000-0000-0000-0000-000000000003"   # emu_out
 UUID_READ  = "00000000-0000-0000-0000-000000000002"
 
 CMD_FILE = "test_dump.txt" # Zmieniono na plik generowany przez FullDump
-
-def notification_handler(sender, data: bytearray):
-    """Dispatch incoming BLE notification through the message parser."""
-    dispatch_message(data)
     
-
 async def get_characteristic_or_fail(client, uuid):
     """Ensures the characteristic exists, otherwise prints all services."""
     print("Reading services...")
