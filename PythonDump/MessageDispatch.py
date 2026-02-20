@@ -3,7 +3,7 @@ from enum import IntEnum
 from typing import List, Optional, Callable
 from dataclasses import dataclass
 
-from Enums import mem_types_t, packet_header_t, mem_types_size, mem_types_pack_map, mem_types_map, emu_err_t, OWNER_NAMES, LOG_NAMES
+from Enums import mem_types_t, packet_header_t, mem_types_size, mem_types_pack_map, mem_types_map,  mem_types_to_str_map, emu_err_t, OWNER_NAMES, LOG_NAMES
 
 class DisplayMode(IntEnum):
     PRETTY = 0   # nicely formatted, coloured output (default)
@@ -71,11 +71,11 @@ class _C:
 @dataclass
 class PublishEntry:
     """Single published variable from a PUBLISH packet."""
-    inst_idx: mem_types_t.MEM_U16
-    context: mem_types_t.MEM_U8
-    mem_type: mem_types_t.MEM_U8
+    inst_idx: int
+    context: int
+    mem_type: int
     updated: bool
-    el_cnt: mem_types_t.MEM_U16          # element count (1 for scalars, >1 for arrays)
+    el_cnt: int          # element count (1 for scalars, >1 for arrays)
     values: list       # decoded values
 
 
@@ -127,7 +127,7 @@ def _format_publish(entries: list[PublishEntry]) -> str:
     lines.append(f"{_C.CYAN}{_C.BOLD}╔══ PUBLISH ═══════════════════════════════════════╗{_C.RESET}")
 
     for i, e in enumerate(entries):
-        type_name = _TYPE_NAME.get(mem_types_t(e.mem_type), f"type({e.mem_type})") if e.mem_type in [t.value for t in mem_types_t] else f"type({e.mem_type})"
+        type_name = mem_types_to_str_map.get(mem_types_t(e.mem_type), f"type({e.mem_type})") if e.mem_type in [t.value for t in mem_types_t] else f"type({e.mem_type})"
         upd_str = f"{_C.GREEN}● upd{_C.RESET}" if e.updated else f"{_C.DIM}○    {_C.RESET}"
 
         # Variable alias from registry
