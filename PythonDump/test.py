@@ -43,7 +43,7 @@ m2 = code.add_math(expression=' "gains[1]" +0 ', en=sel_q.out[1])
 m3 = code.add_math(expression=' "gains[2]" +0 ', en=sel_q.out[2])
 
 # ── Subscriptions ──────────────────────────────────────────
-sub = code.subscribe("selector", "enable", "gains", ton.out[0])
+sub = code.subscribe("selector", "enable", "gains", sel_q)
 forr = code.add_for(expr="i=0; i<99999; i+=1", en=ton.out[0])
 
 code.generate("test_dump.txt", subscriptions=sub)

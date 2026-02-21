@@ -1,49 +1,12 @@
-"""
-Subscribe module – builds PACKET_H_SUBSCRIPTION_INIT and PACKET_H_SUBSCRIPTION_ADD
-packets for the emulator subscription system.
-
-Protocol (from emu_subscribe.c):
-──────────────────────────────────────────────────────────────────────
-SUBSCRIPTION_INIT  (0xC0)
-    Packet layout:  [header 0xC0][sub_list_size: u16]
-    Order:          ORD_PARSE_SUBSCRIPTION_INIT (0xAAC0)
-    Purpose:        Allocates subscription list on device side.
-
-SUBSCRIPTION_ADD   (0xC1)
-    Packet layout:  [header 0xC1][ctx: u8][count: u8][ (type: u8, inst_idx: u16) × count ]
-    Order:          ORD_PARSE_SUBSCRIPTION_ADD  (0xAAC1)
-    Purpose:        Registers concrete instances to be published back.
-──────────────────────────────────────────────────────────────────────
-
-Usage example:
-    from Subscribe import SubscriptionBuilder
-    from Code import Code
-
-    code = Code()
-    code.var(MEM_F, "temperature", data=0.0)
-    code.var(MEM_U16, "counter", data=0)
-
-    sub = SubscriptionBuilder(code)
-    sub.add("temperature")
-    sub.add("counter")
-
-    # Get raw packet bytes (with headers)
-    init_pkt, add_pkts = sub.build()
-
-    # Or get full sections (packets + orders) for FullDump integration
-    sections = sub.collect_sections()
-"""
-
 import struct
-from typing import List, Tuple, Optional, Union
-from dataclasses import dataclass, field
+from typing import Union
+from dataclasses import dataclass
 
 from Enums import (
     packet_header_t,
     emu_order_t,
     mem_types_t,
 )
-from Mem import mem_context_t
 from MemAcces import AccessManager, Ref
 
 
@@ -81,7 +44,7 @@ class SubscriptionBuilder:
     def __init__(self, code, pkt_size: int = 512):
         self.code = code
         self.pkt_size = pkt_size
-        self._entries: List[SubscriptionEntry] = []
+        self._entries: list[SubscriptionEntry] = []
         self._manager: AccessManager = code._manager
 
     # ------------------------------------------------------------------
@@ -103,11 +66,6 @@ class SubscriptionBuilder:
         self._entries.append(SubscriptionEntry(ctx_id, m_type, idx))
         return self
 
-    def add_raw(self, ctx_id: int, mem_type: mem_types_t, inst_idx: int) -> 'SubscriptionBuilder':
-        """Subscribe to an instance by explicit context / type / index."""
-        self._entries.append(SubscriptionEntry(ctx_id, mem_type, inst_idx))
-        return self
-
     # ------------------------------------------------------------------
     # Packet generation
     # ------------------------------------------------------------------
@@ -121,7 +79,7 @@ class SubscriptionBuilder:
         payload = struct.pack('<H', len(self._entries))
         return header + payload
 
-    def _pack_add_packets(self) -> List[bytes]:
+    def _pack_add_packets(self) -> list[bytes]:
         """
         Build one or more SUBSCRIPTION_ADD packets.
         Layout per packet: [header 0xC1][ctx: u8][count: u8][ (type:u8, inst_idx:u16) × count ]
@@ -130,11 +88,11 @@ class SubscriptionBuilder:
         the payload would exceed *pkt_size*.
         """
         # Group entries by ctx_id (preserve insertion order)
-        groups: dict[int, List[SubscriptionEntry]] = {}
+        groups: dict[int, list[SubscriptionEntry]] = {}
         for entry in self._entries:
             groups.setdefault(entry.ctx_id, []).append(entry)
 
-        packets: List[bytes] = []
+        packets: list[bytes] = []
         header_byte = struct.pack('<B', packet_header_t.PACKET_H_SUBSCRIPTION_ADD)
 
         for ctx_id, entries in groups.items():
@@ -154,7 +112,7 @@ class SubscriptionBuilder:
 
         return packets
 
-    def build(self) -> Tuple[bytes, List[bytes]]:
+    def build(self) -> tuple[bytes, list[bytes]]:
         """
         Returns
         -------
@@ -171,7 +129,7 @@ class SubscriptionBuilder:
     # FullDump integration helpers
     # ------------------------------------------------------------------
 
-    def collect_sections(self) -> List[Tuple[str, List[Tuple[bytes, str]], List[emu_order_t]]]:
+    def collect_sections(self) -> list[tuple[str, list[tuple[bytes, str]], list[emu_order_t]]]:
         """
         Return sections compatible with FullDump._collect_sections() format:
         ``[(title, [(pkt_bytes, comment), ...], [order, ...])]``
@@ -206,16 +164,3 @@ class SubscriptionBuilder:
 
         return sections
 
-    # ------------------------------------------------------------------
-    # Debug / display
-    # ------------------------------------------------------------------
-
-    def summary(self) -> str:
-        """Human-readable summary of current subscriptions."""
-        lines = [f"Subscriptions ({len(self._entries)} total):"]
-        for i, e in enumerate(self._entries):
-            lines.append(f"  [{i}] ctx={e.ctx_id}  type={e.mem_type.name:<6s}  idx={e.inst_idx}")
-        return "\n".join(lines)
-
-    def __repr__(self) -> str:
-        return f"SubscriptionBuilder(entries={len(self._entries)})"

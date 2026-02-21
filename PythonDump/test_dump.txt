@@ -124,14 +124,14 @@
 #----------------------------#
 # SECTION 10: Sub Init       #
 #----------------------------#
-#SUB_INIT (max 4 entries)# C00400
+#SUB_INIT (max 6 entries)# C00600
 #ORDER ORD_PARSE_SUBSCRIPTION_INIT# C0AA
 
 #----------------------------#
 # SECTION 11: Sub Add        #
 #----------------------------#
 #SUB_ADD [0] ctx=0 cnt=3# C10003060000050000060200
-#SUB_ADD [1] ctx=1 cnt=1# C10101050000
+#SUB_ADD [1] ctx=1 cnt=3# C10103050400050500050600
 #ORDER ORD_PARSE_SUBSCRIPTION_ADD# C1AA
 
 #----------------------------#
