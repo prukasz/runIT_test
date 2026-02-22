@@ -1,4 +1,5 @@
 #include "emu_loop.h"
+#include "loop_types.h"
 #include "emu_logging.h"
 #include "emu_interface.h"
 #include "emu_body.h"
@@ -247,7 +248,7 @@ emu_result_t emu_loop_set_period(uint64_t period_us) {
         was_clamped = true;
     }
 
-    uint64_t old_period = loop_handle->timer.loop_period;
+    (void)loop_handle->timer.loop_period; /* old_period unused */
     loop_handle->timer.loop_period = period_us;
 
     if (loop_handle->timer.loop_status == LOOP_RUNNING) {
@@ -259,9 +260,9 @@ emu_result_t emu_loop_set_period(uint64_t period_us) {
             RET_E(EMU_ERR_INVALID_STATE, "Failed to restart timer: %d", err);
         }
         
-        REP_N(EMU_LOG_loop_period_set, "Period updated live: %llu -> %llu us", old_period, loop_handle->timer.loop_period);
+        //REP_N(EMU_LOG_loop_period_set, "Period updated live: %llu -> %llu us", old_period, loop_handle->timer.loop_period);
     } else {
-        REP_N(EMU_LOG_loop_period_set, "Period config updated: %llu -> %llu us (Next start)", old_period, loop_handle->timer.loop_period);
+        //REP_N(EMU_LOG_loop_period_set, "Period config updated: %llu -> %llu us (Next start)", old_period, loop_handle->timer.loop_period);
     }
 
     if (was_clamped) {

@@ -1,6 +1,7 @@
 #pragma once
 #include "emu_variables_acces.h"
 #include "emu_logging.h"
+#include "block_types.h"
 #include <stdint.h>
 #include <stdbool.h>
 

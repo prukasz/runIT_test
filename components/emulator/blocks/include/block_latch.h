@@ -1,5 +1,6 @@
 #pragma once
 #include "emu_variables_acces.h"
+#include "block_types.h"
 
 /****************************************************************************
                     LATCH BLOCK

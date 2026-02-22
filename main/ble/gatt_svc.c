@@ -2,8 +2,8 @@
 #include "gatt_svc.h"
 #include "gatt_uuids.h"
 #include "order_types.h"
+#include "emu_interface.h"
 
-extern QueueHandle_t emu_interface_orders_queue;
 
 static chr_msg_buffer_t *emu_in_buffer = NULL;  // internal, not global outside this file
 static chr_msg_buffer_t *emu_out_buffer = NULL; // internal, not global outside this file 
@@ -38,6 +38,9 @@ static const char chr_desc_emu_in[]  = "emulator data in channel";
 Indication is like notification that requires confirmation of being receivied by peer*/
 static indicate_status_t indicate_status_emu_out = {.ind_status = 0, .chr_conn_handle_status = 0};
 static notify_status_t notify_status_emu_in  = {.notify_status = 0, .chr_conn_handle_status = 0};
+
+/* Mutex protecting mbuf alloc + notify + free-on-error sequences from concurrent tasks */
+static SemaphoreHandle_t notify_mutex = NULL;
 
 static const struct ble_gatt_svc_def svc_1 ={
     .type = BLE_GATT_SVC_TYPE_PRIMARY, //type od service, secondary is like subsection(rarely used?)
@@ -112,27 +115,21 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     else if (attr_handle == chr_val_handle_emu_in) {
         //write only
         if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-            
-        size_t len = OS_MBUF_PKTLEN(ctxt->om);
-        if(len > 512){
-            ESP_LOGW(TAG, "Received data length %d exceeds buffer limit", len);
-        }
-        uint8_t *temp = malloc(len);
-        os_mbuf_copydata(ctxt->om, 0, len, temp);
-        emu_order_t order_code = (emu_order_t)(temp[1] << 8) | temp[0];
-        if (len == 2){
-            xQueueSend(emu_interface_orders_queue,&order_code, pdMS_TO_TICKS(1000));
-            chr_msg_buffer_add(emu_in_buffer, temp, len); 
-        }else{chr_msg_buffer_add(emu_in_buffer, temp, len);}// do not fill buff with commands(add to queue)
-        free(temp);
-        // if (notify_status_emu_in.chr_conn_handle_status && notify_status_emu_in.notify_status) {
-        //     ble_gatts_notify(chr_conn_handle_emu_in, chr_val_handle_emu_in);
-        //     ESP_LOGI(TAG, "sent confirmation");
-        //     }
-        }//end if op    
-        
-        return 0;
-    }// end if attr andle 
+            size_t len = OS_MBUF_PKTLEN(ctxt->om);
+            msg_packet_t *in_packet = emu_get_in_msg_packet();
+
+            if (!in_packet || !in_packet->data || len > mtu_size) {
+                ESP_LOGW(TAG, "in_packet not ready or len %d exceeds mtu %d", len, mtu_size);
+                return BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+
+            in_packet->len = len;
+            os_mbuf_copydata(ctxt->om, 0, len, in_packet->data);
+            emu_interface_process_packet();
+            return 0;
+        } // end if op WRITE
+        return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+    } // end if attr_handle emu_in
     return BLE_ATT_ERR_UNLIKELY;
 }
 
@@ -194,6 +191,7 @@ int gatt_svc_init(chr_msg_buffer_t *emu_in_buff, chr_msg_buffer_t *emu_out_buff)
     ESP_LOGI(TAG, "gap_svc_init");
     emu_in_buffer = emu_in_buff;
     emu_out_buffer = emu_out_buff;
+    if (!notify_mutex) notify_mutex = xSemaphoreCreateMutex();
     ble_svc_gatt_init();
     RETURN_ON_ERROR(ble_gatts_count_cfg(gatt_svr_svcs));
     RETURN_ON_ERROR(ble_gatts_add_svcs(gatt_svr_svcs));
@@ -204,10 +202,27 @@ void send_indication(void){
     chr_send_indication(&indicate_status_emu_out, chr_conn_handle_emu_out, chr_val_handle_emu_out);
 }
 
+/* Send a 1-byte 0x00 notification on emu_in to signal the peer it may send the next packet */
+void gatt_notify_ready(void) {
+    if (!notify_status_emu_in.notify_status || !notify_status_emu_in.chr_conn_handle_status) return;
+    static const uint8_t ready_byte = 0x00;
+
+    xSemaphoreTake(notify_mutex, portMAX_DELAY);
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(&ready_byte, sizeof(ready_byte));
+    if (!om) { xSemaphoreGive(notify_mutex); return; }
+    int rc = ble_gatts_notify_custom(chr_conn_handle_emu_in, chr_val_handle_emu_in, om);
+    if (rc != 0) os_mbuf_free_chain(om);
+    xSemaphoreGive(notify_mutex);
+}
+
 int gatt_send_notify(const uint8_t *data, size_t len) {
+    xSemaphoreTake(notify_mutex, portMAX_DELAY);
     struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
-    if (!om) return -1;
-    return ble_gatts_notify_custom(chr_conn_handle_emu_out, chr_val_handle_emu_out, om);
+    if (!om) { xSemaphoreGive(notify_mutex); return -1; }
+    int rc = ble_gatts_notify_custom(chr_conn_handle_emu_out, chr_val_handle_emu_out, om);
+    if (rc != 0) os_mbuf_free_chain(om);
+    xSemaphoreGive(notify_mutex);
+    return rc;
 }
 
 

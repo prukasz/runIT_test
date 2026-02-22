@@ -23,4 +23,6 @@ typedef struct{
 void send_indication();
 void chr_send_indication(indicate_status_t *indicate_status, int16_t chr_conn_handle, int16_t chr_val_handle);
 int gatt_send_notify(const uint8_t *data, size_t len);
+void gatt_notify_ready(void);
+
 

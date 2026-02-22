@@ -66,7 +66,6 @@ typedef enum {
     EMU_ERR_SUBSCRIPTION_FULL,
 
 
-
 } emu_err_t;
 
 

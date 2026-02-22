@@ -14,7 +14,14 @@ UUID_WRITE   = "00000000-0000-0000-0000-000000000003"   # emu_in
 UUID_NOTIFY  = "00000000-0000-0000-0000-000000000003"   # emu_out
 UUID_READ  = "00000000-0000-0000-0000-000000000002"
 
-CMD_FILE = "test_dump.txt" # Zmieniono na plik generowany przez FullDump
+CMD_FILE = "test_dump.txt"
+
+# Created inside main() so it's bound to the running event loop
+_ready_event: asyncio.Event = None  # type: ignore
+
+async def _ready_ack_handler(sender, data: bytearray):
+    """Called when device sends the 0x00 ACK on emu_in characteristic."""
+    _ready_event.set()
     
 async def get_characteristic_or_fail(client, uuid):
     """Ensures the characteristic exists, otherwise prints all services."""
@@ -25,7 +32,6 @@ async def get_characteristic_or_fail(client, uuid):
 
     if services is None:
         # VERY rare Windows bug, force refresh by accessing services
-        await asyncio.sleep(1)
         services = client.services
 
     for service in services:
@@ -44,6 +50,7 @@ async def get_characteristic_or_fail(client, uuid):
 
 
 async def send_file(client, write_char):
+    global _ready_event
     if not os.path.exists(CMD_FILE):
         print(f"File {CMD_FILE} not found.")
         return
@@ -52,6 +59,9 @@ async def send_file(client, write_char):
 
     with open(CMD_FILE, "r") as f:
         lines = f.readlines()
+
+    # Prime the event so the first packet is sent immediately
+    _ready_event.set()
 
     for i, line in enumerate(lines, start=1):
         # Strip whitespace first
@@ -77,14 +87,20 @@ async def send_file(client, write_char):
             continue
 
         try:
-            await client.write_gatt_char(write_char, data, response=True)
-            await asyncio.sleep(0.2)
+            try:
+                await asyncio.wait_for(_ready_event.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                print(f"Warning: ACK timeout for message {i}, sending anyway")
+            _ready_event.clear()
+            await client.write_gatt_char(write_char, data, response=False)
             print(f"Message {i} sent: {data.hex().upper()}")
         except Exception as e:
             print(f"Failed to send message {i}: {e}")
 
 
 async def main():
+    global _ready_event
+    _ready_event = asyncio.Event()
     print("Scanning...")
     device = await BleakScanner.find_device_by_filter(
         lambda d, ad: d.name == DEVICE_NAME or ad.local_name == DEVICE_NAME,
@@ -105,9 +121,11 @@ async def main():
         read_char = await get_characteristic_or_fail(client, UUID_READ)
 
         await client.start_notify(read_char.uuid, notification_handler)
+        # Subscribe to emu_in for ready-ACK from device
+        await client.start_notify(write_char.uuid, _ready_ack_handler)
 
         # Initial send
-        await send_file(client, write_char.uuid)
+        await send_file(client, write_char)
 
         print("\nManual mode:")
         msg_num = 1
@@ -143,7 +161,12 @@ async def main():
                 continue
 
             try:
-                await client.write_gatt_char(write_char.uuid, data, response=False)
+                try:
+                    await asyncio.wait_for(_ready_event.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    print("Warning: ACK timeout, sending anyway")
+                _ready_event.clear()
+                await client.write_gatt_char(write_char, data, response=False)
                 print("Message sent")
             except BleakError as e:
                 print("Failed to send:", e)

@@ -9,9 +9,6 @@
 #include "esc_manager.h"
 #include "emu_loop.h"
 #include "emu_interface.h"
-#include "emu_types.h"
-
-
 
 TaskHandle_t main_task;
 
@@ -90,9 +87,9 @@ void app_main(void) {
     nimble_host_config_init();  
     xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 3, NULL);
     xTaskCreate(emu_interface_task, "emu_interface_task", 4*1024, NULL, 2, NULL);
+    emu_interface_set_packet_done_cb(gatt_notify_ready);
     main_task = xTaskGetCurrentTaskHandle();
-    
-    emu_parse_source_add(&emu_in_buffer);
+
     //emu_debug_output_add(&emu_out_buffer);
 
     while(1){

@@ -1,5 +1,4 @@
 #pragma once
-#include "emu_types.h"
 #include "emu_interface.h"
 #include "emu_variables.h"
 #include "emu_logging.h"
@@ -63,38 +62,38 @@ typedef emu_result_t (*emu_block_verify_func)(block_handle_t block);
 /**
  * @brief Parse and create list for all blocks
  * @param data packet buff (skip header)
- * @param el_cnt packet buff len (-header len)
+ * @param packet_length packet buff len (-header len)
  * @param emu_code_handle code handle where space will be created 
  * @note Packet [uint16_t blocks_count]
  */
-emu_result_t emu_block_parse_create_list(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle);
+emu_result_t emu_block_parse_create_list(const uint8_t *data, const uint16_t packet_length, void * emu_code_handle);
 
 /**
  * @brief Parse and create block with config
  * @param data packet buff (skip header)
- * @param el_cnt packet buff len (-header len)
+ * @param packet_length packet buff len (-header len)
  * @param emu_code_handle code handle where block will be created
  * @note Packet block_data_t.cfg structure (packed)
  */ 
-emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle);
+emu_result_t emu_block_parse_cfg(const uint8_t *data, const uint16_t packet_length, void * emu_code_handle);
 
 /**
  * @brief Parse and assign block input
  * @param data packet buff (skip header)
- * @param el_cnt packet buff len (-header len)
+ * @param packet_length packet buff len (-header len)
  * @param emu_code_handle code handle where block input will be assinged
  * @note Packet [uint16_t block_idx] + [uint8_t in_idx] + mem_access_t parse packet 
  */
-emu_result_t emu_block_parse_input(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle);
+emu_result_t emu_block_parse_input(const uint8_t *data, const uint16_t packet_length, void * emu_code_handle);
 
 /**
  * @brief Parse and assign block output 
  * @param data packet buff (skip header)
- * @param el_cnt packet buff len (-header len)
+ * @param packet_length packet buff len (-header len)
  * @param emu_code_handle code handle where block output will be assinged
  * @note Packet [uint16_t block_idx] + [uint8_t q_idx] + mem_access_t parse packet 
  */
-emu_result_t emu_block_parse_output(const uint8_t *data, const uint16_t el_cnt, void * emu_code_handle);
+emu_result_t emu_block_parse_output(const uint8_t *data, const uint16_t packet_length, void * emu_code_handle);
 
 /**
  * @brief Free all blocks in code handle

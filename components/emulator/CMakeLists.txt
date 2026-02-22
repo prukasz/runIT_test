@@ -22,6 +22,7 @@ idf_component_register(
         "blocks/block_latch.c"
         "core/emu_helpers.c"
         "core/emu_subscribe.c"
+        "core/emu_buffs.c"
 
     INCLUDE_DIRS 
         "blocks/include"

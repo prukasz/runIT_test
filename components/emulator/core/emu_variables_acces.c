@@ -56,8 +56,8 @@ mem_access_t* mem_access_new(uint8_t extra_indices){
 
 #undef OWNER
 #define OWNER EMU_OWNER_emu_mem_parse_access_create
-emu_result_t emu_mem_parse_access_create(const uint8_t*data, const uint16_t el_cnt, void* nothing){
-    if(el_cnt!=PKT_ACCES_DATA_SIZE){RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet for mem access storage space incomplete");}
+emu_result_t emu_mem_parse_access_create(const uint8_t*data, const uint16_t packet_length, void* nothing){
+    if(packet_length!=PKT_ACCES_DATA_SIZE){RET_E(EMU_ERR_PACKET_INCOMPLETE, "Packet for mem access storage space incomplete");}
     uint16_t ref_cnt = parse_get_u16(data, 0);
     uint16_t total_indices = parse_get_u16(data, 2);
     return mem_access_allocate_space(ref_cnt, total_indices);
@@ -77,8 +77,8 @@ typedef struct __packed{
  * @brief Parse access struct;
  * @note packet looks like access_packet + if dims cnt > 0, idx1[access_packet or uin16_t (check idx_type), recursive....][idx2...]
  */
-emu_err_t emu_mem_parse_access(const uint8_t *data, const uint16_t el_cnt, uint16_t* idx, mem_access_t **out_ptr) {
-    if (*idx + sizeof(access_packet) > el_cnt) return EMU_ERR_INVALID_PACKET_SIZE;
+emu_err_t emu_mem_parse_access(const uint8_t *data, const uint16_t packet_length, uint16_t* idx, mem_access_t **out_ptr) {
+    if (*idx + sizeof(access_packet) > packet_length) return EMU_ERR_INVALID_PACKET_SIZE;
     access_packet head;
     memcpy(&head, data + *idx, sizeof(access_packet));
     *idx += sizeof(access_packet);
@@ -109,13 +109,13 @@ emu_err_t emu_mem_parse_access(const uint8_t *data, const uint16_t el_cnt, uint1
         bool is_static = (head.idx_type >> i) & 0x01;
 
         if (is_static) {
-            if (*idx + 2 > el_cnt) return EMU_ERR_INVALID_PACKET_SIZE;
+            if (*idx + 2 > packet_length) return EMU_ERR_INVALID_PACKET_SIZE;
             me->indices_values[i].static_index = parse_get_u16(data, *idx); // Use your helper
             *idx += 2;
         } 
         else {
             all_static = false;
-            emu_err_t err = emu_mem_parse_access(data, el_cnt, idx, &me->indices_values[i].dynamic_index);
+            emu_err_t err = emu_mem_parse_access(data, packet_length, idx, &me->indices_values[i].dynamic_index);
             if (err != EMU_OK) return err;
         }
     }

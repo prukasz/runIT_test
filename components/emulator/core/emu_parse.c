@@ -1,7 +1,6 @@
 #include "emu_parse.h"
 #include "emu_blocks.h"
 #include "emu_body.h"
-#include "emu_types.h"
 #include "emu_logging.h"
 #include "emu_variables.h" 
 #include "emu_variables_acces.h"
@@ -9,6 +8,7 @@
 #include "blocks_functions_list.h"
 #include <string.h>
 #include "emu_subscribe.h"
+#include "emu_buffs.h"
 
 static const char *TAG = __FILE_NAME__;
 
@@ -19,17 +19,17 @@ static const char *TAG = __FILE_NAME__;
  * Parser receives: [packet_id:u8][data...]
  * 
  * @param data Packet data after header byte (starts with block_idx)
- * @param el_cnt Length of data
+ * @param packet_length Length of data
  * @param emu_code_handle Code handle containing block list
  */
 #undef OWNER
 #define OWNER EMU_OWNER_parse_block_data
-static emu_result_t emu_block_parse_data(const uint8_t *data, const uint16_t el_cnt, void *emu_code_handle) {
+static emu_result_t emu_block_parse_data(const uint8_t *data, const uint16_t packet_length, void *emu_code_handle) {
     emu_code_handle_t code = (emu_code_handle_t)emu_code_handle;
     
     // Minimum packet: [block_idx:u16][block_type:u8][packet_id:u8] = 4 bytes
-    if (el_cnt < 4) {
-        RET_E(EMU_ERR_PACKET_INCOMPLETE, "Block data packet too short: %d bytes", el_cnt);
+    if (packet_length < 4) {
+        RET_E(EMU_ERR_PACKET_INCOMPLETE, "Block data packet too short: %d bytes", packet_length);
     }
     
     // Extract block_idx, block_type
@@ -62,7 +62,7 @@ static emu_result_t emu_block_parse_data(const uint8_t *data, const uint16_t el_
     
     // Call parser with stripped packet: [packet_id:u8][data...]
     const uint8_t *parser_payload = &data[3];  // Skip block_idx(2) + block_type(1)
-    uint16_t parser_payload_len = el_cnt - 3;
+    uint16_t parser_payload_len = packet_length - 3;
     
     emu_result_t res = parser(parser_payload, parser_payload_len, block);
     if (res.code != EMU_OK) {
@@ -89,132 +89,14 @@ static emu_parse_func parse_dispatch_table[255] = {
     [PACKET_H_SUBSCRIPTION_ADD]      = emu_subscribe_parse_register,
  };
 
-static emu_result_t parse_dispatch(chr_msg_buffer_t *source, packet_header_t header_to_parse, void* extra_arg){
-    uint16_t buff_len = chr_msg_buffer_size(source);
-    size_t packet_len = 0; 
-    uint8_t *packet_data;
-    emu_result_t res = EMU_RESULT_OK();
-    for(uint16_t current_packet_idx = 0; current_packet_idx < buff_len; current_packet_idx++){
-        chr_msg_buffer_get(source, current_packet_idx, &packet_data, &packet_len);
-        if(!parse_check_header(packet_data, packet_len, header_to_parse) || packet_len <=2){continue;}
-        //we provide extra_arg to parsers that require them 
-        parse_dispatch_table[header_to_parse](&packet_data[1], packet_len-1, extra_arg);
-    }
-    return res;
-}
 
-// Define bit masks for each parsing step
 
-#define STATUS_CREATED_CONTEXT   BIT(31) // Step 1
-#define STATUS_PARSED_VARS       BIT(30) // Step 2
-#define STATUS_FILLED_VARS       BIT(29) // Step 3
-#define STATUS_CREATED_BLOCKS    BIT(28) // Step 4
-#define STATUS_CONFIG_BLOCKS     BIT(27) // Step 5
-#define STATUS_FILLED_BLOCKS     BIT(26) // Step 6
-#define STATUS_CREATED_LOOP      BIT(25) // Step 7
 
-/**
- * @brief Guard macro to ensure correct order of parsing steps
- */
-#define EMU_GUARD_ORDER(_bit) ({ \
-    __typeof__(_bit) _b = (_bit); \
-    uint32_t _required = ~((uint32_t)_b | ((uint32_t)_b - 1)); \
-    if (parse_status != _required) { \
-        emu_result_t res; \
-        res.code = EMU_ERR_SEQUENCE_VIOLATION; \
-        return res;\
-    } \
-})
+emu_result_t emu_parse_manager(msg_packet_t *source, emu_order_t order, emu_code_handle_t code_handle, void* extra_arg){
+    uint16_t packet_len = source->len-1; /*skip header*/
+    uint8_t *packet_data = &source->data[1]; /*skip header*/
 
-emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_code_handle_t code_handle, void* extra_arg){
-    // Static state variable preserves status between function calls
-    static uint32_t parse_status = 0;
-    
-    // Default result
-    emu_result_t res = EMU_RESULT_OK();
-    uint8_t header = (uint8_t)(order & 0x00FF); // Extract header from order (lower 8 bits)
-    switch (order) {
-        // --- STEP 1: CREATE CONTEXT ---
-        case ORD_PARSE_CONTEXT_CFG:
-            // Don't guard - allow multiple contexts
-            res = parse_dispatch(source, header, NULL);
-            parse_status |= STATUS_CREATED_CONTEXT;
-            break;
-        case ORD_PARSE_VARIABLES:
-            // Don't guard - variables can be created for each context
-            res = parse_dispatch(source, header, NULL);
-            parse_status |= STATUS_PARSED_VARS;
-            break;
-        case ORD_PARSE_VARIABLES_S_DATA:
-            // Don't guard - data can be filled for each context
-            res = parse_dispatch(source, header, NULL);
-            parse_status |= STATUS_FILLED_VARS;
-            break;
-        case ORD_PARSE_VARIABLES_ARR_DATA:
-            res = parse_dispatch(source, header, NULL);
-            parse_status |= STATUS_FILLED_VARS;
-            break;
-
-        
-        case ORD_PARSE_CODE_CFG:
-            EMU_GUARD_ORDER(STATUS_CREATED_BLOCKS);
-            LOG_I(TAG, "Parsing code configuration (blocks list)");
-            res = parse_dispatch(source, header, code_handle);
-            parse_status |= STATUS_CREATED_BLOCKS;
-            break;
-
-        case ORD_PARSE_BLOCK_HEADER:
-            EMU_GUARD_ORDER(STATUS_CONFIG_BLOCKS);
-            LOG_I(TAG, "Parsing block headers");
-            res = parse_dispatch(source, header, code_handle);
-            parse_status |= STATUS_CONFIG_BLOCKS;
-            break;
-        
-        case ORD_PARSE_BLOCK_INPUTS:
-            //EMU_GUARD_ORDER(STATUS_CONFIG_BLOCKS);
-            LOG_I(TAG, "Parsing block inputs");
-            res = parse_dispatch(source, header, code_handle);
-            parse_status |= STATUS_CONFIG_BLOCKS;
-            break;
-    
-        case ORD_PARSE_BLOCK_OUTPUTS:
-            //EMU_GUARD_ORDER(STATUS_CONFIG_BLOCKS);
-            LOG_I(TAG, "Parsing block outputs");
-            res = parse_dispatch(source, header, code_handle);
-            parse_status |= STATUS_CONFIG_BLOCKS;
-            break;
-        
-        case ORD_PARSE_BLOCK_DATA:
-            EMU_GUARD_ORDER(STATUS_FILLED_BLOCKS);
-            LOG_I(TAG, "Parsing block data");
-            res = parse_dispatch(source, header, code_handle);
-            parse_status |= STATUS_FILLED_BLOCKS;
-            break;
-
-        case ORD_PARSE_LOOP_CFG:
-            EMU_GUARD_ORDER(STATUS_CREATED_LOOP);
-            res = parse_dispatch(source, header, code_handle);
-            parse_status |= STATUS_CREATED_LOOP;
-            break;
-
-        case ORD_PARSE_SUBSCRIPTION_INIT:
-            res = parse_dispatch(source, header, NULL);
-            parse_status |= STATUS_CREATED_LOOP;
-            break;
-
-        case ORD_PARSE_SUBSCRIPTION_ADD:
-            res = parse_dispatch(source, header, NULL);
-            parse_status |= STATUS_CREATED_LOOP;
-            break;
-
-        case ORD_PARSE_RESET_STATUS:
-            parse_status = 0;
-            break;
-        default:
-        break;
-    }
-
-    return res;
+    return parse_dispatch_table[source->data[0]](packet_data, packet_len, code_handle);
 }
 
 #undef OWNER

@@ -1,6 +1,7 @@
 #include "gap.h"
 #include "common.h"
 #include "gatt_svc.h"
+#include "emu_interface.h"
 
 static int ble_gap_advertising_start(void);  
 static int ble_gap_configure_advertising(void);                          // Starts BLE advertising
@@ -72,10 +73,10 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         if (event->connect.status == 0) {//aka success
             RETURN_ON_ERROR(ble_gap_conn_find(event->connect.conn_handle, &desc));//retrieve details of conncetion into descriptor
             struct ble_gap_upd_params params = { //update paremeters
-                .itvl_min = desc.conn_itvl,
-                .itvl_max = desc.conn_itvl,
-                .latency = 3, //3 skipped conncetions max
-                .supervision_timeout = desc.supervision_timeout
+                .itvl_min = 6,   // 7.5 ms  (units of 1.25 ms, BLE minimum)
+                .itvl_max = 12,  // 15 ms   (fast enough for bulk transfer)
+                .latency = 0,    // 0 skipped events — respond every interval
+                .supervision_timeout = 200  // 2 s  (units of 10 ms)
             };
             return ble_gap_update_params(event->connect.conn_handle, &params);
         } 
@@ -95,6 +96,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
     case BLE_GAP_EVENT_MTU:
          ESP_LOGI(TAG, "Negotiated MTU: conn_handle=%d mtu=%d",
                  event->mtu.conn_handle, event->mtu.value);
+            emu_msg_buffs_init(event->mtu.value);
             return 0;
     }
     return 0;

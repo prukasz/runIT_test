@@ -1,8 +1,11 @@
 #pragma once
+#include <stdbool.h>
+#include "emu_buffs.h"
 #include "error_types.h"
 #include "gatt_buff.h"
 #include "order_types.h"
 #include "emu_body.h"
+
 
 typedef enum{
     PACKET_H_CONTEXT_CFG          = 0xF0,
@@ -27,8 +30,31 @@ typedef enum{
     PACKET_H_ERROR_LOG            = 0xE1,
 }packet_header_t;
 
-typedef emu_result_t (*emu_parse_func)(const uint8_t *packet_data, const uint16_t packet_len, void* custom);
+/** Returns true if byte b is a recognised packet_header_t value (parse-path packet). */
+static inline bool emu_is_parse_header(uint8_t b) {
+    switch ((packet_header_t)b) {
+        case PACKET_H_CONTEXT_CFG:
+        case PACKET_H_INSTANCE:
+        case PACKET_H_INSTANCE_SCALAR_DATA:
+        case PACKET_H_INSTANCE_ARR_DATA:
+        case PACKET_H_LOOP_CFG:
+        case PACKET_H_CODE_CFG:
+        case PACKET_H_BLOCK_HEADER:
+        case PACKET_H_BLOCK_INPUTS:
+        case PACKET_H_BLOCK_OUTPUTS:
+        case PACKET_H_BLOCK_DATA:
+        case PACKET_H_SUBSCRIPTION_INIT:
+        case PACKET_H_SUBSCRIPTION_ADD:
+        case PACKET_H_PUBLISH:
+        case PACKET_H_STATUS_LOG:
+        case PACKET_H_ERROR_LOG:
+            return true;
+        default:
+            return false;
+    }
+}
 
+typedef emu_result_t (*emu_parse_func)(const uint8_t *packet_data, const uint16_t packet_len, void* custom);
 /**
  * @brief Dispatch parser for given packet header
  * @param source message buffer with packets
@@ -36,7 +62,8 @@ typedef emu_result_t (*emu_parse_func)(const uint8_t *packet_data, const uint16_
  * @param emu_code_handle_t code handle to provide to parsers that need it
  * @param extra_arg extra argument to provide to parser
  */
-emu_result_t emu_parse_manager(chr_msg_buffer_t *source, emu_order_t order, emu_code_handle_t code_handle, void* extra_arg);
+
+emu_result_t emu_parse_manager(msg_packet_t *source, emu_order_t order, emu_code_handle_t code_handle, void* extra_arg);
 
 
 

@@ -68,8 +68,8 @@ void emu_body_loop_task(void* params){
 
             emu_execute_code(global_code_ctx);
 
-            int64_t end_time = esp_timer_get_time();
-            ESP_LOGI(TAG, "Loop completed in %lld us", (end_time - start_time));
+            //int64_t end_time = esp_timer_get_time();
+            //ESP_LOGI(TAG, "Loop completed in %lld us", (end_time - start_time));
             emu_subscribe_send();
             // Request logger to dump accumulated logs/reports and wait until it's done
             if (logger_task_handle) {
@@ -89,7 +89,8 @@ void emu_body_loop_task(void* params){
                         "After full loop pass, watchdog triggered, total running time %lld ms, wtd is set to %lld ms",
                         emu_loop_get_time(), (uint64_t)(emu_loop_get_wtd_max_skipped() * emu_loop_get_period()) / 1000);
             }
-
+            int64_t total_time = esp_timer_get_time();
+            ESP_LOGI(TAG, "Loop completed in %lld us", (total_time- start_time));
             emu_loop_notify_cycle_end();
             taskYIELD();
         }

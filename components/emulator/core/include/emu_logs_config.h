@@ -18,7 +18,7 @@
 #define ENABLE_LOG_X_FROM_ERROR_MACROS //enable LOG_X from error macros
 #define ENABLE_LOG_X_FROM_STATUS_MACROS //enable LOG_X from log macros
 
-
+#define ENABLE_SENDING_LOGS
 
 #define LOG_QUEUE_SIZE 128
 #define REPORT_QUEUE_SIZE 128

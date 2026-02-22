@@ -1,4 +1,6 @@
+#pragma once
 #include "emu_variables_acces.h"
+#include "block_types.h"
 
 emu_result_t block_math_parse(const uint8_t *packet_data, const uint16_t packet_len, void *block);
 void block_math_free(block_handle_t block);

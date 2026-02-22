@@ -8,16 +8,24 @@
 #include "emu_loop.h"
 #include "emu_variables.h"
 #include "emu_variables_acces.h"
-#include "emu_types.h"
 #include "emu_parse.h"
 #include "emu_logging.h"
+#include "emu_buffs.h"
+
+/* Definitions for globals declared extern in emu_buffs.h */
 
 static const char * TAG = __FILE_NAME__;
 
 chr_msg_buffer_t *source = NULL; // Source buffer pointer
 
-/* ORDERS QUEUE */
-QueueHandle_t emu_interface_orders_queue;
+/* Callback invoked after each packet is processed (signals BLE peer to send next) */
+static void (*packet_done_cb)(void) = NULL;
+
+void emu_interface_set_packet_done_cb(void (*cb)(void)) { packet_done_cb = cb; }
+static inline void _notify_done(void) { if (packet_done_cb) packet_done_cb(); }
+
+/* Interface task handle (used for notifications) */
+static TaskHandle_t emu_interface_task_handle = NULL;
 
 
 /* ============================================================================
@@ -25,7 +33,7 @@ QueueHandle_t emu_interface_orders_queue;
    ============================================================================ */
 
 void emu_interface_task(void* params){
-    emu_result_t res = {.code = EMU_OK};
+    emu_result_t res = EMU_RESULT_OK();
     
     ESP_LOGI(TAG, "Emulator interface task started");
     
@@ -35,28 +43,38 @@ void emu_interface_task(void* params){
         vTaskDelete(NULL);
     }
     
-    // Create Queue
-    emu_interface_orders_queue = xQueueCreate(10, sizeof(emu_order_t));
-    if (!emu_interface_orders_queue) {
-        ESP_LOGE(TAG, "Failed to create orders queue");
-        vTaskDelete(NULL);
-    }
+    /* store our task handle so other modules can notify us */
+    emu_interface_task_handle = xTaskGetCurrentTaskHandle();
 
-    static emu_order_t current_order;
     mem_access_allocate_space(1000, 500);
 
-    while(true){
-        if (pdTRUE == xQueueReceive(emu_interface_orders_queue, &current_order, portMAX_DELAY)){
-            
-            ESP_LOGI(TAG, "Processing order: 0x%04X", current_order);
-            
-            if ((current_order & 0xFF00) == 0xAA00){
-                LOG_I(TAG, "Parser order detected: 0x%04X", current_order);
-                res = emu_parse_manager(source, current_order, emu_get_current_code_ctx(), NULL);
-                continue;
-            }    
+    static uint16_t header;
+    static msg_packet_t* in_packet;
 
-            switch (current_order){     
+
+    while(true){
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+            in_packet = emu_get_in_msg_packet();
+
+            if (in_packet->len < 2) {
+                ESP_LOGW(TAG, "Received packet too short to contain anything usefull");
+                _notify_done();
+                continue;
+            }
+
+            /*Detect parse-path packet by checking data[0] against known packet headers*/
+            if (emu_is_parse_header(in_packet->data[0])) {
+                LOG_I(TAG, "Detected parser packet header: 0x%02X", in_packet->data[0]);
+                res = emu_parse_manager(in_packet, 0, emu_get_current_code_ctx(), NULL);
+                _notify_done();
+                continue;
+            }
+
+            memcpy(&header, in_packet->data, sizeof(header));
+            ESP_LOGI(TAG, "Processing order: 0x%04X", header);
+
+            switch (header){     
                 
                 case ORD_EMU_LOOP_INIT:
                     res = emu_loop_init(10000);
@@ -76,39 +94,32 @@ void emu_interface_task(void* params){
                     ESP_LOGI(TAG, "RESET ALL ORDER");
                     res = emu_loop_stop();
                     emu_loop_deinit();
-                    chr_msg_buffer_clear(source);
                     emu_reset_code_ctx();
                     break;
 
                 case ORD_RESET_BLOCKS:
                     res = emu_loop_stop();
                     emu_reset_code_ctx();
-                    // Also restart parser block stage?
                     break;
 
-                case ORD_RESET_MGS_BUF:
-                    ESP_LOGI(TAG, "Clearing Msg buffer");   
-                    chr_msg_buffer_clear(source);
-                    break;
 
                 default:
-                    ESP_LOGW(TAG, "Unknown order: 0x%04X", current_order);
+                    //ESP_LOGW(TAG, "Unknown order: 0x%04X", current_order);
                     break;
             }
 
             if (res.code != EMU_OK && res.abort) {
-                ESP_LOGE(TAG, "Order 0x%04X failed: %s", current_order, EMU_ERR_TO_STR(res.code));
+                ESP_LOGE(TAG, "Packet with header 0x%02X failed: %s", in_packet->data[0], EMU_ERR_TO_STR(res.code));
             }
-        }
+            _notify_done();
+        
     }
 }
 
-
-
-#undef OWNER
-#define OWNER EMU_OWNER_emu_parse_source_add
-emu_result_t emu_parse_source_add(chr_msg_buffer_t * msg){
-    if (!msg) {RET_E(EMU_ERR_NULL_PTR, "Source is NULL");}
-    source = msg;
-    RET_OK("Source for parser added");
+/**
+ * @brief Notify the interface task that a new packet is ready for processing
+ */
+BaseType_t emu_interface_process_packet(){
+    if (emu_interface_task_handle == NULL) return pdFAIL;
+    return xTaskNotifyGive(emu_interface_task_handle);
 }
