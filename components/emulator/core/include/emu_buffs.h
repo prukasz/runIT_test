@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "error_types.h"
+#include "esp_err.h"
 
 extern size_t mtu_size;
 
@@ -34,7 +35,7 @@ void pool_reset(data_pool_t* pool);
 emu_err_t pool_destroy(data_pool_t* pool);
 
 /* msg_packet buffer management */
-#include "esp_err.h"
+
 esp_err_t emu_msg_buffs_init(size_t mtu);
 msg_packet_t* emu_get_in_msg_packet(void);
 msg_packet_t* emu_get_out_msg_packet(void);

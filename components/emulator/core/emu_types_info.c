@@ -32,42 +32,59 @@ const char* EMU_ERR_TO_STR(emu_err_t err_code) {
         case EMU_OK:                        return "EMU_OK";
 
         // --- EXECUTION / ORDER / PARSING (0xE...) ---
-        case EMU_ERR_INVALID_STATE:         return "EMU_ERR_INVALID_STATE";
-        case EMU_ERR_INVALID_ARG:           return "EMU_ERR_INVALID_ARG";
-        case EMU_ERR_INVALID_DATA:          return "EMU_ERR_INVALID_DATA";
-        case EMU_ERR_ORD_CANNOT_EXECUTE:    return "EMU_ERR_ORD_CANNOT_EXECUTE";
-        case EMU_ERR_PARSE_INVALID_REQUEST: return "EMU_ERR_PARSE_INVALID_REQUEST";
-        case EMU_ERR_DENY:                  return "EMU_ERR_DENY";
-        case EMU_ERR_PACKET_NOT_FOUND:      return "EMU_ERR_PACKET_NOT_FOUND";
-        case EMU_ERR_PACKET_INCOMPLETE:     return "EMU_ERR_PACKET_INCOMPLETE";
-        case EMU_ERR_UNLIKELY:              return "EMU_ERR_UNLIKELY";
+        case EMU_ERR_INVALID_STATE:           return "INVALID_STATE";
+        case EMU_ERR_INVALID_ARG:             return "INVALID_ARG";
+        case EMU_ERR_INVALID_DATA:            return "INVALID_DATA";
+        case EMU_ERR_PACKET_EMPTY:            return "PACKET_EMPTY";
+        case EMU_ERR_PACKET_INCOMPLETE:       return "PACKET_INCOMPLETE";
+        case EMU_ERR_PACKET_NOT_FOUND:        return "PACKET_NOT_FOUND";
+        case EMU_ERR_PARSE_INVALID_REQUEST:   return "PARSE_INVALID_REQUEST";
+        case EMU_ERR_DENY:                    return "DENY";
+        case EMU_ERR_ORD_FAILED:              return "ORD_FAILED";
+        case EMU_ERR_ORD_DENY:                return "ORD_DENY";
+        case EMU_ERR_ORD_CANNOT_EXECUTE:      return "ORD_CANNOT_EXECUTE";
+        case EMU_ERR_UNLIKELY:                return "UNLIKELY";
 
         // --- MEMORY (0xF...) ---
-        case EMU_ERR_NO_MEM:                return "EMU_ERR_NO_MEM";
-        case EMU_ERR_MEM_ALLOC:             return "EMU_ERR_MEM_ALLOC";
-        case EMU_ERR_MEM_INVALID_IDX:       return "EMU_ERR_MEM_INVALID_IDX";
-        case EMU_ERR_MEM_INVALID_ACCESS:    return "EMU_ERR_MEM_INVALID_ACCESS";
-        case EMU_ERR_MEM_OUT_OF_BOUNDS:     return "EMU_ERR_MEM_OUT_OF_BOUNDS";
-        case EMU_ERR_MEM_INVALID_DATATYPE:  return "EMU_ERR_MEM_INVALID_DATATYPE";
-        case EMU_ERR_NULL_PTR:              return "EMU_ERR_NULL_PTR";
-        case EMU_ERR_MEM_INVALID_REF_ID:    return "EMU_ERR_MEM_INVALID_REF_ID";
+        case EMU_ERR_NO_MEM:                  return "NO_MEM";
+        case EMU_ERR_MEM_ALLOC:               return "MEM_ALLOC";
+        case EMU_ERR_MEM_ACCESS_ALLOC:        return "MEM_ACCESS_ALLOC";
+        case EMU_ERR_MEM_INVALID_REF_ID:      return "MEM_INVALID_REF_ID";
+        case EMU_ERR_MEM_INVALID_IDX:         return "MEM_INVALID_IDX";
+        case EMU_ERR_MEM_OUT_OF_BOUNDS:       return "MEM_OUT_OF_BOUNDS";
+        case EMU_ERR_MEM_INVALID_DATATYPE:    return "MEM_INVALID_DATATYPE";
+        case EMU_ERR_NULL_PTR:                return "NULL_PTR";
+        case EMU_ERR_NULL_PTR_ACCESS:         return "NULL_PTR_ACCESS";
+        case EMU_ERR_NULL_PTR_INSTANCE:       return "NULL_PTR_INSTANCE";
+        case EMU_ERR_NULL_PTR_CONTEXT:        return "NULL_PTR_CONTEXT";
+        case EMU_ERR_MEM_ALREADY_CREATED:     return "MEM_ALREADY_CREATED";
 
         // --- BLOCK SPECIFIC (0xB...) ---
-        case EMU_ERR_BLOCK_DIV_BY_ZERO:     return "EMU_ERR_BLOCK_DIV_BY_ZERO";
-        case EMU_ERR_BLOCK_OUT_OF_RANGE:    return "EMU_ERR_BLOCK_OUT_OF_RANGE";
-        case EMU_ERR_BLOCK_INVALID_PARAM:   return "EMU_ERR_BLOCK_INVALID_PARAM";
-        case EMU_ERR_BLOCK_COMPUTE_IDX:     return "EMU_ERR_BLOCK_COMPUTE_IDX";
-        case EMU_ERR_BLOCK_FOR_TIMEOUT:     return "EMU_ERR_BLOCK_FOR_TIMEOUT";
-        case EMU_ERR_BLOCK_INVALID_CONN:    return "EMU_ERR_BLOCK_INVALID_CONN";
-        case EMU_ERR_BLOCK_ALREADY_FILLED:  return "EMU_ERR_BLOCK_ALREADY_FILLED";
-        case EMU_ERR_BLOCK_WTD_TRIGGERED:   return "EMU_ERR_BLOCK_WTD_TRIGGERED";
-        case EMU_ERR_BLOCK_USE_INTERNAL_VAR:return "EMU_ERR_BLOCK_USE_INTERNAL_VAR";
-        case EMU_ERR_BLOCK_INACTIVE:        return "EMU_ERR_BLOCK_INACTIVE";
+        case EMU_ERR_BLOCK_Generic:           return "BLOCK_GENERIC";
+        case EMU_ERR_BLOCK_DIV_BY_ZERO:       return "BLOCK_DIV_BY_ZERO";
+        case EMU_ERR_BLOCK_OUT_OF_RANGE:      return "BLOCK_OUT_OF_RANGE";
+        case EMU_ERR_BLOCK_INVALID_PARAM:     return "BLOCK_INVALID_PARAM";
+        case EMU_ERR_BLOCK_COMPUTE_IDX:       return "BLOCK_COMPUTE_IDX";
+        case EMU_ERR_BLOCK_FOR_TIMEOUT:       return "BLOCK_FOR_TIMEOUT";
+        case EMU_ERR_BLOCK_INVALID_CONN:      return "BLOCK_INVALID_CONN";
+        case EMU_ERR_BLOCK_ALREADY_FILLED:    return "BLOCK_ALREADY_FILLED";
+        case EMU_ERR_BLOCK_WTD_TRIGGERED:     return "BLOCK_WTD_TRIGGERED";
+        case EMU_ERR_BLOCK_USE_INTERNAL_VAR:  return "BLOCK_USE_INTERNAL_VAR";
+        case EMU_ERR_BLOCK_INACTIVE:          return "BLOCK_INACTIVE";
+        case EMU_ERR_BLOCK_FAILED:            return "BLOCK_FAILED";
 
-        
-        case EMU_ERR_WTD_TRIGGERED:         return "EMU_ERR_WTD_TRIGGERED";
+        // --- SYSTEM / WATCHDOG (0xA...) ---
+        case EMU_ERR_WTD_TRIGGERED:           return "WTD_TRIGGERED";
+        case EMU_ERR_MEM_INVALID_ACCESS:      return "MEM_INVALID_ACCESS";
+        case EMU_ERR_LOOP_NOT_INITIALIZED:    return "LOOP_NOT_INITIALIZED";
+        case EMU_ERR_BLOCK_SELECTOR_OOB:      return "BLOCK_SELECTOR_OOB";
+        case EMU_ERR_CTX_INVALID_ID:          return "CTX_INVALID_ID";
+        case EMU_ERR_CTX_ALREADY_CREATED:     return "CTX_ALREADY_CREATED";
+        case EMU_ERR_INVALID_PACKET_SIZE:     return "INVALID_PACKET_SIZE";
+        case EMU_ERR_SEQUENCE_VIOLATION:      return "SEQUENCE_VIOLATION";
+        case EMU_ERR_SUBSCRIPTION_FULL:       return "SUBSCRIPTION_FULL";
 
-        default:                            return "UNKNOWN_ERR_CODE";
+        default:                              return "UNKNOWN_ERR_CODE";
     }
 }
 
@@ -104,6 +121,8 @@ const char* EMU_OWNER_TO_STR(emu_owner_t owner) {
         case EMU_OWNER_block_timer_parse: return "block_timer_parse";
         case EMU_OWNER_block_timer_verify: return "block_timer_verify";
         case EMU_OWNER_block_set: return "block_set";
+        case EMU_OWNER_block_set_parse: return "block_set_parse";
+        case EMU_OWNER_block_set_verify: return "block_set_verify";
         case EMU_OWNER_block_math_parse: return "block_math_parse";
         case EMU_OWNER_block_math: return "block_math";
         case EMU_OWNER_block_math_verify: return "block_math_verify";
@@ -119,6 +138,9 @@ const char* EMU_OWNER_TO_STR(emu_owner_t owner) {
         case EMU_OWNER_block_clock: return "block_clock";
         case EMU_OWNER_block_clock_parse: return "block_clock_parse";
         case EMU_OWNER_block_clock_verify: return "block_clock_verify";
+        case EMU_OWNER_block_latch: return "block_latch";
+        case EMU_OWNER_block_latch_parse: return "block_latch_parse";
+        case EMU_OWNER_block_latch_verify: return "block_latch_verify";
         case EMU_OWNER_block_set_output: return "block_set_output";
         case EMU_OWNER_emu_mem_register_context: return "emu_mem_register_context";
         case EMU_OWNER__parse_scalar_data: return "_parse_scalar_data";
@@ -129,6 +151,24 @@ const char* EMU_OWNER_TO_STR(emu_owner_t owner) {
         case EMU_OWNER__resolve_mem_offset: return "_resolve_mem_offset";
         case EMU_OWNER_mem_get: return "mem_get";
         case EMU_OWNER_block_check_in_true: return "block_check_in_true";
+        case EMU_OWNER_block_in_selector: return "block_in_selector";
+        case EMU_OWNER_block_q_selector: return "block_q_selector";
+        case EMU_OWNER_mem_context_delete: return "mem_context_delete";
+        case EMU_OWNER_mem_allocate_context: return "mem_allocate_context";
+        case EMU_OWNER_mem_access_allocate_space: return "mem_access_allocate_space";
+        case EMU_OWNER_mem_parse_instance_packet: return "mem_parse_instance_packet";
+        case EMU_OWNER_emu_mem_fill_instance_scalar: return "mem_fill_instance_scalar";
+        case EMU_OWNER_emu_mem_fill_instance_array: return "mem_fill_instance_array";
+        case EMU_OWNER_emu_mem_parse_access_create: return "mem_parse_access_create";
+        case EMU_OWNER_parse_cfg: return "parse_cfg";
+        case EMU_OWNER_emu_block_parse_input: return "block_parse_input";
+        case EMU_OWNER_emu_block_parse_output: return "block_parse_output";
+        case EMU_OWNER_parse_block_data: return "parse_block_data";
+        case EMU_OWNER_emu_subscribe_parse_init: return "subscribe_parse_init";
+        case EMU_OWNER_emu_subscribe_parse_register: return "subscribe_parse_register";
+        case EMU_OWNER_emu_subscribe_process: return "subscribe_process";
+        case EMU_OWNER_emu_subscribe_reset: return "subscribe_reset";
+        case EMU_OWNER_emu_subscribe_send: return "subscribe_send";
         default: return "UNKNOWN_OWNER";
     }
 }
@@ -195,8 +235,16 @@ const char* EMU_LOG_TO_STR(emu_log_t log) {
         case EMU_LOG_parsed_block_outputs: return "parsed_block_outputs";
         case EMU_LOG_block_inactive: return "block_inactive";
         case EMU_LOG_finished: return "finished";
+        case EMU_LOG_block_selector_executed: return "block_selector_executed";
+        case EMU_LOG_block_selector_verified: return "block_selector_verified";
+        case EMU_LOG_block_selector_freed: return "block_selector_freed";
+        case EMU_LOG_block_selector_parsed: return "block_selector_parsed";
+        case EMU_LOG_CTX_DESTROYED: return "CTX_DESTROYED";
+        case EMU_LOG_ctx_created: return "ctx_created";
+        case EMU_LOG_created_ctx: return "created_ctx";
         case EMU_LOG_clock_out_active: return "clock_out_active";
         case EMU_LOG_clock_out_inactive: return "clock_out_inactive";
+        case EMU_LOG_to_large_to_sub: return "to_large_to_sub";
         default: return "UNKNOWN_LOG";
     }
 }
