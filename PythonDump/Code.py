@@ -660,17 +660,22 @@ class Code:
     # Subscription helpers
     # ====================================================================
 
-    def subscribe(self, *targets: Union[str, Ref]) -> 'SubscriptionBuilder':
+    def subscribe(self, *targets: Union[str, Ref, Block]) -> 'SubscriptionBuilder':
         """
         Create a SubscriptionBuilder and subscribe to the given targets.
 
         Each target can be:
           - a string alias     (e.g. ``"temperature"``, ``"gains"``)
           - a Ref object       (e.g. ``ton.out[0]``, ``Ref("counter")``)
+          - a Block object     (e.g. ``ton`` — subscribes to ALL outputs)
+          - a block alias      (e.g. ``"ton"`` — subscribes to ALL outputs)
+          - ``"ton[0]"``       — subscribes to a single block output
 
         Usage:
             sub = code.subscribe("temperature", "counter", "gains")
             sub = code.subscribe("temp", ton.out[0], clk.out[0])
+            sub = code.subscribe("ton")   # block alias  → all outputs
+            sub = code.subscribe(ton)      # Block object → all outputs
 
         You can also chain more calls:
             sub = code.subscribe("temp").add("counter").add(ton.out[0])
@@ -684,7 +689,17 @@ class Code:
         from Subscribe import SubscriptionBuilder
         builder = SubscriptionBuilder(self)
         for t in targets:
-            builder.add(t)
+            # Block object → subscribe to all its outputs
+            if isinstance(t, Block):
+                for q_idx in range(len(t.q_conn)):
+                    builder.add(t.out[q_idx])
+            # Plain string matching a block alias → subscribe all outputs
+            elif isinstance(t, str) and t in self._block_aliases:
+                block = self._block_aliases[t]
+                for q_idx in range(len(block.q_conn)):
+                    builder.add(block.out[q_idx])
+            else:
+                builder.add(self._resolve_ref(t))
         return builder
 
     def generate_packets_hex(self, manager: Optional[AccessManager] = None) -> List[str]:
