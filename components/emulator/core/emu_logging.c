@@ -1,5 +1,6 @@
 #include "emu_logging.h"
 #include "emu_parse.h"
+#include "emu_loop.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -39,20 +40,20 @@ static void vLoggerTask(void *pvParameters){
                     const char *owner_s = EMU_OWNER_TO_STR(error_item.owner);
                     const char *code_s = EMU_ERR_TO_STR(error_item.code);
                     if (error_item.abort) {
-                        ESP_LOGE(TAG, "ERR owner:%s idx:%u code:%s time:%llu cycle:%llu depth:%u abort:%u warn:%u notice:%u",
-                                 owner_s, error_item.owner_idx, code_s, error_item.time, error_item.cycle,
+                        ESP_LOGE(TAG, "ERR owner:%s idx:%u code:%s depth:%u abort:%u warn:%u notice:%u",
+                                 owner_s, error_item.owner_idx, code_s,
                                  error_item.depth, error_item.abort, error_item.warning, error_item.notice);
                     } else if (error_item.warning) {
-                        ESP_LOGE(TAG, "ERR owner:%s idx:%u code:%s time:%llu cycle:%llu depth:%u abort:%u warn:%u notice:%u",
-                                 owner_s, error_item.owner_idx, code_s, error_item.time, error_item.cycle,
+                        ESP_LOGE(TAG, "ERR owner:%s idx:%u code:%s depth:%u abort:%u warn:%u notice:%u",
+                                 owner_s, error_item.owner_idx, code_s,
                                  error_item.depth, error_item.abort, error_item.warning, error_item.notice);
                     } else if (error_item.notice) {
-                        ESP_LOGI(TAG, "ERR owner:%s idx:%u code:%s time:%llu cycle:%llu depth:%u abort:%u warn:%u notice:%u",
-                                 owner_s, error_item.owner_idx, code_s, error_item.time, error_item.cycle,
+                        ESP_LOGI(TAG, "ERR owner:%s idx:%u code:%s depth:%u abort:%u warn:%u notice:%u",
+                                 owner_s, error_item.owner_idx, code_s,
                                  error_item.depth, error_item.abort, error_item.warning, error_item.notice);
                     } else {
-                        ESP_LOGW(TAG, "ERR owner:%s idx:%u code:%s time:%llu cycle:%llu depth:%u abort:%u warn:%u notice:%u",
-                                 owner_s, error_item.owner_idx, code_s, error_item.time, error_item.cycle,
+                        ESP_LOGW(TAG, "ERR owner:%s idx:%u code:%s depth:%u abort:%u warn:%u notice:%u",
+                                 owner_s, error_item.owner_idx, code_s,
                                  error_item.depth, error_item.abort, error_item.warning, error_item.notice);
                     }
                 }
@@ -69,9 +70,8 @@ static void vLoggerTask(void *pvParameters){
                     
                     if (item_size == sizeof(emu_report_t)) {
                         memcpy(&report_item, item, sizeof(report_item));
-                        ESP_LOGI(TAG, "RPT %s owner:%s idx:%u time:%llu cycle:%llu",
-                                EMU_LOG_TO_STR(report_item.log), EMU_OWNER_TO_STR(report_item.owner), report_item.owner_idx,
-                                report_item.time, report_item.cycle);
+                        ESP_LOGI(TAG, "RPT %s owner:%s idx:%u",
+                                EMU_LOG_TO_STR(report_item.log), EMU_OWNER_TO_STR(report_item.owner), report_item.owner_idx);
                     }
                 
                     logger_add_to_packet(&report_item, sizeof(emu_report_t), &log_ble_status_buff);
@@ -135,20 +135,24 @@ static void send_via_ble(uint8_t what){
     if (!rb) return;
 
     size_t mtu = emu_get_mtu_size();
-    /* floor to whole structs so ReceiveUpTo never splits an item */
-    size_t max_payload = ((mtu - 1) / el_size) * el_size;
+    /* packet layout: [header 1B][time 8B][cycle 8B][items...] = 17B overhead */
+    const size_t overhead = 1 + sizeof(uint64_t) + sizeof(uint64_t);
+    size_t max_payload = ((mtu - overhead) / el_size) * el_size;
     if (max_payload == 0) return;
+
     out_packet->data[0] = header;
+    /* snapshot time and cycle once for the whole send_via_ble call */
+    uint64_t t = emu_loop_get_time();
+    uint64_t c = emu_loop_get_iteration();
+    memcpy(out_packet->data + 1, &t, sizeof(t));
+    memcpy(out_packet->data + 1 + sizeof(t), &c, sizeof(c));
 
-
-    // we fill entire packet with as many items as possible and then send
+    // drain ring buffer: each iteration sends one BLE notification
     while (1) {
-        // receive up to the computed payload size; out_packet->len will be set
         void *chunk = xRingbufferReceiveUpTo(rb, &out_packet->len, 0, max_payload);
         if (!chunk || out_packet->len == 0) break;
-        memcpy(out_packet->data + 1, chunk, out_packet->len);
+        memcpy(out_packet->data + overhead, chunk, out_packet->len);
         vRingbufferReturnItem(rb, chunk);
-        //+heade byte
-        gatt_send_notify(out_packet->data, out_packet->len + 1);
+        gatt_send_notify(out_packet->data, out_packet->len + overhead);
     }
 }

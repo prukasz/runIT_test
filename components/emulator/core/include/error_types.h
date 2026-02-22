@@ -258,16 +258,6 @@ typedef struct{
      * @brief Owner index (usually index of block if possible, else 0/0xFFFF)
      */
     uint16_t owner_idx;
-    /**
-     * @brief Time in ms when log was created (loop time context)
-     * @note This is set automatically during logging
-     */
-    uint64_t time;
-    /**
-     * @brief Cycle count when log was created (loop iteration context)
-     * @note This is set automatically during logging
-     */
-    uint64_t cycle;
 } emu_report_t;
 
 /**
@@ -304,15 +294,5 @@ typedef struct {
      * @brief Depth of the error in call stack (0 for top level)
      */
     uint8_t     depth   : 5; 
-    /**
-     * @brief Time in ms when error was created (loop time context)
-     * @note This is set automatically during error reporting
-     */
-    uint64_t    time;
-    /**
-     * @brief Cycle count when error was created (loop iteration context)
-     * @note This is set automatically during error reporting
-     */
-    uint64_t    cycle;
 } emu_result_t;
 

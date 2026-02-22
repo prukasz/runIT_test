@@ -174,19 +174,25 @@ def _format_publish(entries: list[PublishEntry]) -> str:
 # ERROR_LOG parser (0xE0)
 # ═══════════════════════════════════════════════════════════════════
 
-# ESP32-C6 is RISC-V 32-bit (ILP32), uint64_t aligned to 8
+# Packet layout (after 0xE0 header byte):
+#   [time:  u64 LE  8B]  — snapshot time for the whole batch
+#   [cycle: u64 LE  8B]  — snapshot cycle for the whole batch
+#   [entry...]           — repeated emu_result_t (no time/cycle field)
+#
+# ESP32-C6 is RISC-V 32-bit (ILP32), struct alignment = 4
 # emu_result_t layout (no __packed):
 #   code:      u32 (enum)        offset 0   (4 bytes)
 #   owner:     u16               offset 4   (2 bytes)
 #   owner_idx: u16               offset 6   (2 bytes)
 #   flags:     u8 bitfield       offset 8   (1 byte)
-#   pad:       7 bytes           offset 9   (align to 8 for u64)
-#   time:      u64               offset 16  (8 bytes)
-#   cycle:     u64               offset 24  (8 bytes)
-# Total: 32 bytes
+#   pad:       3 bytes           offset 9   (align to 4)
+# Total: 12 bytes
 
-EMU_RESULT_SIZE = 32
-EMU_RESULT_FMT = '<IHHBxxxxxxxQQ'  # I=code, H=owner, H=owner_idx, B=flags, xxxxxxx=pad, Q=time, Q=cycle
+LOG_PREFIX_FMT  = '<QQ'   # time (u64), cycle (u64)
+LOG_PREFIX_SIZE = 16
+
+EMU_RESULT_SIZE = 12
+EMU_RESULT_FMT  = '<IHHBxxx'  # I=code, H=owner, H=owner_idx, B=flags, xxx=pad
 
 
 @dataclass
@@ -205,10 +211,15 @@ class ErrorLogEntry:
 def _parse_error_log(payload: bytes) -> List[ErrorLogEntry]:
     """Parse ERROR_LOG payload (after 0xE0 header byte)."""
     entries = []
-    pos = 0
+
+    if len(payload) < LOG_PREFIX_SIZE:
+        return entries
+
+    time_ms, cycle = struct.unpack_from(LOG_PREFIX_FMT, payload, 0)
+    pos = LOG_PREFIX_SIZE
 
     while pos + EMU_RESULT_SIZE <= len(payload):
-        code, owner, owner_idx, flags, time_ms, cycle = struct.unpack_from(
+        code, owner, owner_idx, flags = struct.unpack_from(
             EMU_RESULT_FMT, payload, pos
         )
         pos += EMU_RESULT_SIZE
@@ -262,17 +273,20 @@ def _format_error_log(entries: List[ErrorLogEntry]) -> str:
 # STATUS_LOG parser (0xE1)
 # ═══════════════════════════════════════════════════════════════════
 
-# emu_report_t layout (no __packed), uint64_t aligned to 8:
+# Packet layout (after 0xE1 header byte):
+#   [time:  u64 LE  8B]  — same LOG_PREFIX_FMT/LOG_PREFIX_SIZE as above
+#   [cycle: u64 LE  8B]
+#   [entry...]           — repeated emu_report_t (no time/cycle field)
+#
+# emu_report_t layout (no __packed), struct alignment = 4:
 #   log:       u32 (enum)        offset 0   (4 bytes)
-#   owner:     u32 (enum)        offset 4   (4 bytes)  — emu_owner_t is an enum = u32
+#   owner:     u32 (enum)        offset 4   (4 bytes)
 #   owner_idx: u16               offset 8   (2 bytes)
-#   pad:       6 bytes           offset 10  (align to 8 for u64)
-#   time:      u64               offset 16  (8 bytes)
-#   cycle:     u64               offset 24  (8 bytes)
-# Total: 32 bytes
+#   pad:       2 bytes           offset 10  (align to 4)
+# Total: 12 bytes
 
-EMU_REPORT_SIZE = 32
-EMU_REPORT_FMT = '<IIHxxxxxxQQ'  # I=log, I=owner, H=owner_idx, xxxxxx=pad, Q=time, Q=cycle
+EMU_REPORT_SIZE = 12
+EMU_REPORT_FMT  = '<IIHxx'  # I=log, I=owner, H=owner_idx, xx=pad
 
 
 @dataclass
@@ -287,17 +301,22 @@ class StatusLogEntry:
 def _parse_status_log(payload: bytes) -> List[StatusLogEntry]:
     """Parse STATUS_LOG payload (after 0xE1 header byte)."""
     entries = []
-    pos = 0
+
+    if len(payload) < LOG_PREFIX_SIZE:
+        return entries
+
+    time_ms, cycle = struct.unpack_from(LOG_PREFIX_FMT, payload, 0)
+    pos = LOG_PREFIX_SIZE
 
     while pos + EMU_REPORT_SIZE <= len(payload):
-        log, owner, owner_idx, time_ms, cycle = struct.unpack_from(
+        log, owner, owner_idx = struct.unpack_from(
             EMU_REPORT_FMT, payload, pos
         )
         pos += EMU_REPORT_SIZE
 
         entries.append(StatusLogEntry(
             log=log,
-            owner=owner,  # mask to u16 — upper bytes may be uninitialized
+            owner=owner,
             owner_idx=owner_idx,
             time_ms=time_ms,
             cycle=cycle,

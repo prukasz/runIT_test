@@ -103,8 +103,6 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
             .warning   = (_is_warn), \
             .abort     = (_is_abort), \
             .depth     = (_depth), \
-            .time      = emu_loop_get_time(), \
-            .cycle     = emu_loop_get_iteration() \
         }; \
         _TRY_ADD_ERROR(&_err); \
         return _err; \
@@ -120,8 +118,6 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
             .warning   = (_is_warn), \
             .abort     = (_is_abort), \
             .depth     = (_depth), \
-            .time      = emu_loop_get_time(), \
-            .cycle     = emu_loop_get_iteration() \
         }; \
         _TRY_ADD_ERROR(&_err); \
     })  
@@ -204,8 +200,6 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
                 .log = log_msg_enum, \
                 .owner = owner_name_enum, \
                 .owner_idx = owner_custom_idx, \
-                .time = emu_loop_get_time(), \
-                .cycle = emu_loop_get_iteration() \
             }; \
             _TRY_ADD_STATUS(&_rep); \
             return (emu_result_t){ .code = EMU_OK }; \
@@ -217,8 +211,6 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
                 .log = log_msg_enum, \
                 .owner = owner_name_enum, \
                 .owner_idx = owner_custom_idx, \
-                .time = emu_loop_get_time(), \
-                .cycle = emu_loop_get_iteration() \
             }; \
             _TRY_ADD_STATUS(&_rep); \
             return (emu_result_t){ .code = EMU_OK }; \
@@ -231,8 +223,6 @@ static __always_inline void _push_to_buf_overwrite(RingbufHandle_t rb, void *str
                 .log = log_msg_enum, \
                 .owner = owner_name_enum, \
                 .owner_idx = owner_custom_idx, \
-                .time = emu_loop_get_time(), \
-                .cycle = emu_loop_get_iteration() \
             }; \
             _TRY_ADD_STATUS(&_rep); \
         })
