@@ -136,6 +136,42 @@ typedef vm_obj_t* vm_obj_h;
 _Static_assert(offsetof(vm_obj_t, payload) == 4, "payload must follow the head with no padding");
 
 /**
+ * @brief Object creation and descriptor flags
+ */
+#define VM_OBJ_F_MUTABLE 0x01
+#define VM_OBJ_F_USR_MUTABLE 0x02
+#define VM_OBJ_F_UPD_RESETABLE 0x04
+#define VM_OBJ_F_RETENTIVE 0x08
+
+#define VM_LOAD_F_MUTABLE VM_OBJ_F_MUTABLE
+#define VM_LOAD_F_USR_MUTABLE VM_OBJ_F_USR_MUTABLE
+#define VM_LOAD_F_UPD_RESETABLE VM_OBJ_F_UPD_RESETABLE
+#define VM_LOAD_F_RETENTIVE VM_OBJ_F_RETENTIVE
+
+/**
+ * @brief Construct a vm_obj_head_t descriptor from parameters.
+ *
+ * Automatically computes payload_size from item_count and type width.
+ *
+ * @param type vm_obj_t_e element type (e.g. VM_OBJ_F, VM_OBJ_U32, VM_OBJ_PTR).
+ * @param item_count Number of elements (scalar is 1).
+ * @param flags Flag bits (VM_OBJ_F_MUTABLE, VM_OBJ_F_USR_MUTABLE, etc.).
+ * @param name_len Length of tag (0..15).
+ */
+static __always_inline vm_obj_head_t vm_obj_head(vm_obj_t_e type, uint16_t item_count, uint8_t flags,
+                                                 uint8_t name_len) {
+  vm_obj_head_t h = {0};
+  h.payload_size = (uint16_t)(item_count << vm_type_shift((uint8_t)type));
+  h.d.obj_t = (uint8_t)type;
+  h.d.name_size = (uint8_t)(name_len > VM_OBJ_NAME_MAX ? VM_OBJ_NAME_MAX : name_len);
+  h.f.mutable = (flags & VM_OBJ_F_MUTABLE) != 0;
+  h.f.usr_mutable = (flags & VM_OBJ_F_USR_MUTABLE) != 0;
+  h.f.upd_resetable = (flags & VM_OBJ_F_UPD_RESETABLE) != 0;
+  h.f.retentive = (flags & VM_OBJ_F_RETENTIVE) != 0;
+  return h;
+}
+
+/**
  * @brief Total size that is alocated, required to use as tag also count to total size
  */
 static __always_inline uint32_t vm_obj_total_size(vm_obj_h obj) {

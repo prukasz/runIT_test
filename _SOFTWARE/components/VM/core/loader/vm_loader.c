@@ -32,40 +32,18 @@ err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint3
   return NULL;
 }
 
-err_h vm_loader_add_obj(uint16_t id, uint16_t payload_size, uint8_t type, uint8_t flags, const char* name,
-                        uint8_t name_len) {
+err_h vm_loader_add_obj(uint16_t id, const vm_obj_head_t* head, const char* name) {
   SE_RET_IF_ERR(require_state(VM_LOAD_OPEN));
+  SE_CHECK_NOT_NULL(head);
 
-  if (name_len > VM_OBJ_NAME_MAX) {
-    SE_RET_ERR(ERR_VM_OBJ_NAME_TOO_LONG, .len = name_len);
+  /* Checked before the 4-bit obj_t field is used: an out-of-range type
+     would otherwise index the width table out of bounds. */
+  if (!vm_type_ok(head->d.obj_t)) {
+    SE_RET_ERR(ERR_VM_OBJ_BAD_TYPE, .type = head->d.obj_t);
   }
-
-  /* Checked before the 4-bit obj_t field is written: an out-of-range type
-     would otherwise truncate into a *valid* one and be silently
-     misinterpreted, and it would index the width table out of bounds on the
-     way there. */
-  if (!vm_type_ok(type)) {
-    SE_RET_ERR(ERR_VM_OBJ_BAD_TYPE, .type = type);
-  }
-
-  /* The name is copied straight out of the frame -- name_size in the head says
-     how many bytes, so the wire form needs no NUL and no staging buffer.
-
-     payload_size arrives already in bytes, so this layer does no arithmetic on
-     sizes at all: nothing to overflow, nothing to truncate. vm_obj_shape()
-     still rejects a zero payload and one that is not a whole number of
-     elements. */
-  vm_obj_head_t head = {0};
-  head.payload_size = payload_size;
-  head.d.obj_t = type;
-  head.d.name_size = name_len;
-  head.f.mutable = (flags & VM_LOAD_F_MUTABLE) != 0;
-  head.f.usr_mutable = (flags & VM_LOAD_F_USR_MUTABLE) != 0;
-  head.f.upd_resetable = (flags & VM_LOAD_F_UPD_RESETABLE) != 0;
-  head.f.retentive = (flags & VM_LOAD_F_RETENTIVE) != 0;
 
   vm_obj_h obj = NULL;
-  SE_RET_IF_ERR(vm_obj_create(&obj, id, &head, name_len ? name : NULL));
+  SE_RET_IF_ERR(vm_obj_create(&obj, id, head, head->d.name_size ? name : NULL));
   return NULL;
 }
 

@@ -260,6 +260,15 @@ err_h vm_obj_get_payload(vm_payload_t* target, const vm_accessor_t* source);
  *  object itself, PTR container included. */
 err_h vm_get_obj(vm_obj_h* target, const vm_accessor_t* source);
 
+/**
+ * @brief Find a child object by tag on a VM_OBJ_PTR container directly.
+ *
+ * @param parent A VM_OBJ_PTR container object.
+ * @param tag NUL-terminated tag string to look for.
+ * @return vm_obj_h The child object handle, or NULL if not found or parent is not VM_OBJ_PTR.
+ */
+vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag);
+
 /** @brief Copy value bytes from one object into another. Both must resolve to
  *  the same element type and count, else ERR_VM_OBJ_COPY_MISMATCH. Refuses
  *  non-mutable targets and VM_OBJ_PTR (link instead -- raw pointer bytes are

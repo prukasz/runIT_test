@@ -1161,11 +1161,16 @@ static err_h upload_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, u
    the wire that no element count could produce. */
 static void add_obj_record_raw(uint16_t id, uint16_t payload_size, uint8_t type, uint8_t flags, const char* name) {
   f_u16(id);
-  f_u16(payload_size);
-  f_u8(type);
-  f_u8(flags);
-  f_u8(name ? (uint8_t)strlen(name) : 0);
-  if (name) f_str(name);
+  vm_obj_head_t head = {0};
+  head.payload_size = payload_size;
+  head.d.obj_t = type & 0x0F;
+  head.d.name_size = name ? (uint8_t)strlen(name) : 0;
+  head.f.mutable = (flags & VM_LOAD_F_MUTABLE) != 0;
+  head.f.usr_mutable = (flags & VM_LOAD_F_USR_MUTABLE) != 0;
+  head.f.upd_resetable = (flags & VM_LOAD_F_UPD_RESETABLE) != 0;
+  head.f.retentive = (flags & VM_LOAD_F_RETENTIVE) != 0;
+  f_blob(&head, sizeof(head));
+  if (name && head.d.name_size) f_str(name);
 }
 
 static void add_obj_record(uint16_t id, uint16_t item_count, uint8_t type, uint8_t flags, const char* name) {
@@ -1258,6 +1263,9 @@ static void test_upload(void) {
   ck("msg[\"temp\"] alone yields PTR slot -> 0", VM_OBJ_GET_VAL(got, &acc_short) == NULL && got == 0.0f);
   vm_obj_h child = NULL;
   ck("vm_get_obj follows the trailing PTR", vm_get_obj(&child, &acc_short) == NULL && child == vm_obj_by_id(OBJ_TEMP));
+  ck("vm_obj_find_child finds tagged child", vm_obj_find_child(vm_obj_by_id(OBJ_MSG), "temp") == vm_obj_by_id(OBJ_TEMP));
+  ck("vm_obj_find_child returns NULL on missing tag", vm_obj_find_child(vm_obj_by_id(OBJ_MSG), "missing") == NULL);
+  ck("vm_obj_find_child returns NULL on non-PTR parent", vm_obj_find_child(vm_obj_by_id(OBJ_TEMP), "temp") == NULL);
 
   // accessors uploaded as frames
   f_begin(VM_LOADER_CLASS_HEADER, 0x44);
@@ -1300,10 +1308,8 @@ static void test_malformed(void) {
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
   f_u16(7);
-  f_u16(1);
-  f_u8(VM_OBJ_F);
-  f_u8(VM_LOAD_F_MUTABLE);
-  f_u8(12);
+  vm_obj_head_t head_short = {.payload_size = 1, .d = {.obj_t = VM_OBJ_F, .name_size = 12}, .f = {.mutable = 1}};
+  f_blob(&head_short, sizeof(head_short));
   ck("0x42 name_len past end -> SHORT_RECORD", f_send() != NULL);
 
   /* The wire carries bytes, so a payload that is not a whole number of elements
@@ -1320,17 +1326,10 @@ static void test_malformed(void) {
   add_obj_record_raw(7, 0, VM_OBJ_U32, VM_LOAD_F_MUTABLE, NULL);
   ck("0x42 zero payload -> OBJ_EMPTY", f_send() != NULL);
 
-  // a name_len past what the 4-bit name_size can describe
+  /* An out-of-range type must be caught before it is used to index tables. */
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
-  add_obj_record(7, 1, VM_OBJ_U8, VM_LOAD_F_MUTABLE, "0123456789abcdef");
-  ck("0x42 16-char name -> NAME_TOO_LONG", f_send() != NULL);
-
-  /* An out-of-range type must be caught before it is written into the 4-bit
-     obj_t field, where it would truncate into a different, valid type. */
-  f_begin(VM_LOADER_CLASS_HEADER, 0x42);
-  f_u8(1);
-  add_obj_record(7, 1, 200, VM_LOAD_F_MUTABLE, NULL);
+  add_obj_record(7, 1, 15, VM_LOAD_F_MUTABLE, NULL);
   ck("0x42 type past the table -> OBJ_BAD_TYPE, not a truncated type", f_send() != NULL && vm_obj_by_id(7) == NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
@@ -1379,6 +1378,13 @@ static void test_malformed(void) {
   ix_literal(0);
   acc_record(3, OBJ_MSG, 3);
   ck("0x44 idx_count past idx_len -> SHORT_RECORD", f_send() != NULL);
+
+  f_begin(VM_LOADER_CLASS_HEADER, 0x44);
+  f_u8(1);
+  ix_begin();
+  ix_name("0123456789abcdef");
+  acc_record(4, OBJ_MSG, 1);
+  ck("0x44 16-char name -> NAME_TOO_LONG", f_send() != NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x44);
   f_u8(1);

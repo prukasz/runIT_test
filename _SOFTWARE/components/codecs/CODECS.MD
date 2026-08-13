@@ -113,7 +113,7 @@ Program-upload table for [[VM.MD]]. **Structurally different from the tables abo
 | :--- | :--- | :--- | :--- |
 | Reset | `0x40` | — | `vm_loader_reset()` |
 | Open | `0x41` | `u16 obj_cnt`, `u16 acc_cnt`, `u32 total_size` | `vm_loader_open()` |
-| Add objects | `0x42` | `u8 n`, `n ×` `{u16 id, u16 payload_size, u8 type, u8 flags, u8 name_len, char name[name_len]}` | `vm_loader_add_obj()` per record |
+| Add objects | `0x42` | `u8 n`, `n ×` `{u16 id, vm_obj_head_t head, char name[head.d.name_size]}` | `vm_loader_add_obj()` per record |
 | Set data | `0x43` | `u8 n`, `n ×` `{u16 id, u16 start_idx, u16 byte_len, u8 data[byte_len]}` | `vm_loader_set_data()` per record |
 | Add accessors | `0x44` | `u8 n`, `n ×` `{u16 acc_id, u16 root_obj_id, u8 idx_count, u8 idx_len, u8 idx_data[idx_len]}` | `vm_loader_add_accessor()` per record |
 

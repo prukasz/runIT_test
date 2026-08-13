@@ -46,14 +46,7 @@ typedef enum vm_load_state_e {
   VM_LOAD_OPEN = 1,   // storage reserved, objects may be added and filled
 } vm_load_state_e;
 
-/* Flag bits as they travel on the wire, kept separate from vm_obj_head_t's
-   bitfield layout -- that layout is compiler-defined and a client has no way
-   to reproduce it reliably. `tagged` is derived from the name length and
-   `upd` always starts clear, so neither appears here. */
-#define VM_LOAD_F_MUTABLE 0x01
-#define VM_LOAD_F_USR_MUTABLE 0x02
-#define VM_LOAD_F_UPD_RESETABLE 0x04
-#define VM_LOAD_F_RETENTIVE 0x08
+/* Flag bits for loader objects are defined in vm_obj.h (VM_OBJ_F_* / VM_LOAD_F_*). */
 
 /** @brief Tear down whatever is loaded. Safe to call at any time, including
  *  on a failed or abandoned upload -- it leaves the VM in the fail-closed
@@ -76,14 +69,16 @@ err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint3
 /**
  * @brief Create one object and bind it to @p id.
  *
- * @param flags VM_LOAD_F_* bits.
- * @param name Tag bytes, not NUL-terminated on the wire; NULL when name_len is 0.
+ * Shape and flags are described directly by @p head.
+ *
+ * @param id Registry slot to claim (0..obj_cnt-1).
+ * @param head Descriptor specifying payload_size, obj_t, name_size, and flags.
+ * @param name Tag bytes, not NUL-terminated on the wire; NULL when head->d.name_size is 0.
  * @return err_h the validation chain from vm_obj_create()
- *         -- unknown type, oversize payload, over-long name, retentive
+ *         -- unknown type, empty payload, bad payload alignment, retentive
  *         pointer, duplicate or out-of-range id.
  */
-err_h vm_loader_add_obj(uint16_t id, uint16_t payload_size, uint8_t type, uint8_t flags, const char* name,
-                        uint8_t name_len);
+err_h vm_loader_add_obj(uint16_t id, const vm_obj_head_t* head, const char* name);
 
 /**
  * @brief Fill part of an object's payload.

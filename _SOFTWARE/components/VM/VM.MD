@@ -274,7 +274,7 @@ Scheduling granularity is therefore the **section, not the block**: an idle even
 ```
 0x40 reset    : -
 0x41 open     : u16 obj_cnt, u16 acc_cnt, u32 total_size
-0x42 add objs : u8 n, n x { u16 id, u16 payload_size, u8 type, u8 flags, u8 name_len, char name[name_len] }
+0x42 add objs : u8 n, n x { u16 id, vm_obj_head_t head, char name[head.d.name_size] }
 0x43 set data : u8 n, n x { u16 id, u16 start_idx, u16 byte_len, u8 data[byte_len] }
 0x44 add acc  : u8 n, n x { u16 acc_id, u16 root_obj_id, u8 idx_count, u8 idx_len, u8 idx_data[idx_len] }
                 idx_data = idx_count x { u8 kind, LITERAL u32 | REF u16 acc_id | NAME u8 len + bytes }
@@ -462,7 +462,7 @@ The class is bound once in `sys_interface_init()`:
 | :--- | :--- | :--- | :--- |
 | **0x40** | reset | — | `vm_loader_reset()` |
 | **0x41** | open | `u16 obj_cnt, u16 acc_cnt, u16 blk_cnt, u32 total_size` | reset, cap arena, build all three id tables |
-| **0x42** | add objects | `u8 n`, then `{u16 id, u16 payload_size, u8 type, u8 flags, u8 name_len, char name[]}` | create + bind each object |
+| **0x42** | add objects | `u8 n`, then `{u16 id, vm_obj_head_t head, char name[]}` | create + bind each object |
 | **0x43** | set data | `u8 n`, then `{u16 id, u16 start_idx, u16 byte_len, u8 data[]}` | fill a payload, **or link children** |
 | **0x44** | add accessors | `u8 n`, then `{u16 acc_id, u16 root_obj_id, u8 idx_count, u8 idx_len, u8 idx_data[]}` | create + pre-resolve each accessor |
 | **0x45** | add block | one block: header, in ids, out ids, en ids, private state | create + resolve all wiring |
@@ -496,14 +496,9 @@ The accessor is the one that expresses it differently: `indices` is a *pointer* 
 
 **0x41 — open.** Resets first, so an upload that restarts mid-stream cannot mix two programs. `total_size` is checked against the pool (`ERR_VM_LOAD_TOO_BIG`, carrying requested-vs-available), then the arena is capped at the **declared** size rather than the whole pool — a program that under-declares fails on the object that overruns, which points at the bug, instead of quietly borrowing space it never asked for. Both id tables are bump-allocated and zeroed. State becomes `VM_LOAD_OPEN`.
 
-**0x42 — objects.** The loader builds a `vm_obj_head_t` directly from the frame and hands it to `vm_obj_create()`, which takes that head plus a name pointer — there is no separate config type. The name is copied straight out of the frame, because `name_size` in the head says how many bytes to take, so the wire form needs no NUL and no staging buffer.
+**0x42 — objects.** The loader passes the received `vm_obj_head_t` directly to `vm_obj_create()`, which takes that head plus a name pointer — there is no separate config type. The name is copied straight out of the frame, because `name_size` in the head says how many bytes to take, so the wire form needs no NUL and no staging buffer.
 
-`payload_size` arrives already in bytes, so this layer does no arithmetic on sizes — nothing to overflow, nothing to truncate. Two checks are still its own, both because the fields they land in are 4 bits wide:
-
-* **`name_len`** — `name_size` cannot hold more than `VM_OBJ_NAME_MAX`, so an over-long name is rejected before it is written (`ERR_VM_OBJ_NAME_TOO_LONG`).
-* **the type** — `obj_t` is 4 bits too, so an out-of-range type would truncate into a *different, valid* one and be silently misinterpreted, besides indexing the width table out of bounds on the way (`ERR_VM_OBJ_BAD_TYPE`).
-
-Wire flags (`VM_LOAD_F_*`) stay a separate encoding from the head's bitfield, because bitfield layout is compiler-defined and a client cannot reproduce it. `vm_obj_create()` then checks what it still can — type, zero payload, the retentive-PTR rule — and hands the size to `vm_store_alloc()`, which carves 4-aligned, **zeroes** it (the arena still holds the previous program's bytes) and binds the id, rejecting duplicates and out-of-range ids before spending any arena. The head is copied in, `upd`/`tagged`/`dynamic` are forced to the creator's values whatever the caller asked for, and the tag is appended.
+`payload_size` arrives already in bytes, so this layer does no arithmetic on sizes — nothing to overflow, nothing to truncate. The type is checked before use (`ERR_VM_OBJ_BAD_TYPE`). `vm_obj_create()` then checks what it still can — type, zero payload, the retentive-PTR rule — and hands the size to `vm_store_alloc()`, which carves 4-aligned, **zeroes** it (the arena still holds the previous program's bytes) and binds the id, rejecting duplicates and out-of-range ids before spending any arena. The head is copied in, `upd`/`tagged`/`dynamic` are forced to the creator's values whatever the caller asked for, and the tag is appended.
 
 Passing a wrong `payload_size` is therefore possible, and contained: `vm_obj_elem_ptr()` bounds every access against it, so an undersized object refuses reads past its end rather than reaching into its neighbour.
 

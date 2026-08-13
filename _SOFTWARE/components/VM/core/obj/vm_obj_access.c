@@ -143,6 +143,15 @@ static __always_inline int32_t find_child_by_name(vm_obj_h parent, const char* n
   return -1;
 }
 
+vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag) {
+  if (unlikely(!parent || !tag || (vm_obj_t_e)parent->head.d.obj_t != VM_OBJ_PTR)) return NULL;
+  size_t len = strlen(tag);
+  if (unlikely(len == 0 || len > VM_OBJ_NAME_MAX)) return NULL;
+  int32_t idx = find_child_by_name(parent, tag, (uint8_t)len);
+  if (idx < 0) return NULL;
+  return ((vm_obj_h*)parent->payload)[idx];
+}
+
 // ---------------------------------------------------------------------------
 // resolve_d's error arms, kept out of its body: eight inlined SE_ERR_NEW
 // sites gave the walk a 160-byte stack frame -- multiplied by

@@ -20,8 +20,8 @@
  * @code
  *   0x40 reset      : -
  *   0x41 open       : u16 obj_cnt, u16 acc_cnt, u16 blk_cnt, u32 total_size
- *   0x42 add objs   : u8 n, n x { u16 id, u16 payload_size, u8 type, u8 flags,
- *                                 u8 name_len, char name[name_len] }
+ *   0x42 add objs   : u8 n, n x { u16 id, vm_obj_head_t head,
+ *                                 char name[head.d.name_size] }
  *   0x43 set data   : u8 n, n x { u16 id, u16 start_idx, u16 byte_len,
  *                                 u8 data[byte_len] }
  *   0x44 add acc    : u8 n, n x { u16 acc_id, u16 root_obj_id, u8 idx_count,
@@ -234,19 +234,19 @@ static inline err_h decoder_packet_vm_add_objs(const uint8_t* body, size_t len) 
   size_t off = 1;
 
   for (uint8_t i = 0; i < n; i++) {
-    DEC_VM_NEED(HEADER_packet_vm_add_objs, off, len, 7);
+    DEC_VM_NEED(HEADER_packet_vm_add_objs, off, len, 2 + sizeof(vm_obj_head_t));
     uint16_t id = dec_vm_u16(body + off);
-    uint16_t payload_size = dec_vm_u16(body + off + 2);
-    uint8_t type = body[off + 4];
-    uint8_t flags = body[off + 5];
-    uint8_t name_len = body[off + 6];
-    off += 7;
 
+    vm_obj_head_t head;
+    memcpy(&head, body + off + 2, sizeof(head));
+    off += 2 + sizeof(head);
+
+    uint8_t name_len = head.d.name_size;
     DEC_VM_NEED(HEADER_packet_vm_add_objs, off, len, name_len);
     const char* name = name_len ? (const char*)(body + off) : NULL;
     off += name_len;
 
-    SE_RET_IF_ERR(vm_loader_add_obj(id, payload_size, type, flags, name, name_len));
+    SE_RET_IF_ERR(vm_loader_add_obj(id, &head, name));
   }
   return NULL;
 }
