@@ -39,13 +39,16 @@ static __always_inline vm_obj_h vm_obj_by_id(uint16_t id) {
   return (vm_obj_h)vm_store_get(VM_REG_OBJ, id);
 }
 
-/** @brief Where a value lives: type, address in the arena, element count
- *  (items, not bytes -- ready to use). */
+/** @brief Where a value lives: address in the arena, element count, type.
+ *  Packed into exactly 8 bytes (2 words / 64-bit register pair). */
 typedef struct vm_payload_t {
-  vm_obj_t_e type;
-  void* ptr;       // NULL when unresolved
-  uint16_t count;  // number of `type` elements available at ptr
+  void* ptr;       // NULL when unresolved (4 bytes)
+  uint16_t count;  // number of `type` elements available at ptr (2 bytes)
+  uint8_t type;    // vm_obj_t_e (1 byte)
+  uint8_t _pad;    // (1 byte)
 } vm_payload_t;
+
+_Static_assert(sizeof(vm_payload_t) == 8, "vm_payload_t must be 8 bytes");
 
 /** @brief Scratch value wide enough for any scalar vm_obj_t_e. Untagged on
  *  its own -- the payload's type travels alongside it. */
@@ -59,13 +62,25 @@ typedef union {
 
 /** @brief Element `i` of an already-resolved payload, bounds-checked. */
 static __always_inline vm_payload_t vm_payload_at(vm_payload_t p, uint16_t i) {
-  if (unlikely(!vm_type_ok((uint8_t)p.type) || i >= p.count)) return (vm_payload_t){VM_OBJ_NONE, NULL, 0};
-  return (vm_payload_t){p.type, (uint8_t*)p.ptr + ((size_t)i << vm_type_shift((uint8_t)p.type)), 1};
+  if (unlikely(!vm_type_ok((uint8_t)p.type) || i >= p.count)) {
+    return (vm_payload_t){.ptr = NULL, .count = 0, .type = VM_OBJ_NONE, ._pad = 0};
+  }
+  return (vm_payload_t){
+      .ptr = (uint8_t*)p.ptr + ((size_t)i << vm_type_shift((uint8_t)p.type)),
+      .count = 1,
+      .type = p.type,
+      ._pad = 0,
+  };
 }
 
 /** @brief A whole object as a payload. */
 static __always_inline vm_payload_t vm_obj_as_payload(vm_obj_h obj) {
-  return (vm_payload_t){(vm_obj_t_e)obj->head.d.obj_t, obj->payload, vm_obj_items_cnt(obj)};
+  return (vm_payload_t){
+      .ptr = obj->payload,
+      .count = vm_obj_items_cnt(obj),
+      .type = (uint8_t)obj->head.d.obj_t,
+      ._pad = 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +164,7 @@ struct vm_accessor_t {
   uint8_t flags;              // VM_ACC_F_*
   const vm_index_t* indices;  // `count` entries, allocated in the same chunk
   vm_obj_h c_owner;           // cache: object the value lives in
-  void* c_ptr;                // cache: resolved address
-  uint16_t c_count;           // cache: elements available at c_ptr
-  uint8_t c_type;             // cache: vm_obj_t_e of those elements
-  uint8_t c_pad;
+  vm_payload_t c_payload;     // cache: resolved payload (ptr, count, type, pad)
 };
 
 _Static_assert(sizeof(struct vm_accessor_t) == 20, "accessor header size feeds the RAM budget in VM.MD");
@@ -207,7 +219,7 @@ static __always_inline bool vm_resolve_fast(const vm_accessor_t* acc, bool for_w
   // can't be silently outlived by the cache.
   if (likely(acc->flags & VM_ACC_F_CACHED)) {
     if (unlikely(for_write && !acc->c_owner->head.f.mutable)) return false;
-    out->payload = (vm_payload_t){(vm_obj_t_e)acc->c_type, acc->c_ptr, acc->c_count};
+    out->payload = acc->c_payload;
     out->owner = acc->c_owner;
     return true;
   }
@@ -225,23 +237,23 @@ static __always_inline bool vm_resolve_fast(const vm_accessor_t* acc, bool for_w
     return true;
   }
 
-  if (unlikely(acc->indices[0].kind != VM_IDX_LITERAL)) return false;
+  const vm_index_t* idx = acc->indices;
+  if (unlikely(idx == NULL || idx[0].kind != VM_IDX_LITERAL)) return false;
 
   if (n == 2) {
-    if (unlikely(acc->indices[1].kind != VM_IDX_LITERAL)) return false;
-    if (unlikely((uint8_t)obj->head.d.obj_t != VM_OBJ_PTR)) return false;
-    uint8_t* slot = vm_obj_elem_ptr(obj, acc->indices[0].value);
-    if (unlikely(slot == NULL)) return false;
-    obj = *(vm_obj_h*)slot;
+    if (unlikely(idx[1].kind != VM_IDX_LITERAL || (uint8_t)obj->head.d.obj_t != VM_OBJ_PTR)) return false;
+    uint32_t off = idx[0].value << 2;
+    if (unlikely(off >= obj->head.payload_size)) return false;
+    obj = *(vm_obj_h*)(obj->payload + off);
     if (unlikely(obj == NULL)) return false;
   }
 
   if (unlikely(for_write && !obj->head.f.mutable)) return false;
 
-  uint8_t* p = vm_obj_elem_ptr(obj, acc->indices[n - 1].value);
+  uint8_t* p = vm_obj_elem_ptr(obj, idx[n - 1].value);
   if (unlikely(p == NULL)) return false;
 
-  out->payload = (vm_payload_t){(vm_obj_t_e)obj->head.d.obj_t, p, 1};
+  out->payload = (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0};
   out->owner = obj;
   return true;
 }
@@ -406,16 +418,31 @@ int64_t vm_read_as_i64(vm_obj_t_e type, const void* src);
 // Picks the converter from the destination's type, then narrows. <=32-bit
 // integer destinations all route through vm_read_as_i32 and cast -- exact in
 // two's complement. Not clamped to the destination, same as VM_VAL_CAST_TO.
-#define VM_LOAD_CAST_TO(dst_ptr, type, src)                    \
-  do {                                                         \
-    const void* __lc_s = (const void*)(src);                   \
-    vm_obj_t_e __lc_t = (type);                                \
-    *(dst_ptr) = (__typeof__(*(dst_ptr)))_Generic(*(dst_ptr),  \
-        float: vm_read_as_f32(__lc_t, __lc_s),                 \
-        double: vm_read_as_f32(__lc_t, __lc_s),                \
-        int64_t: vm_read_as_i64(__lc_t, __lc_s),                \
-        uint64_t: vm_read_as_i64(__lc_t, __lc_s),               \
-        default: vm_read_as_i32(__lc_t, __lc_s));               \
+// Fast-path: matching types read directly without an out-of-line call.
+#define VM_LOAD_CAST_TO(dst_ptr, type, src)                                                        \
+  do {                                                                                             \
+    const void* __lc_s = (const void*)(src);                                                       \
+    vm_obj_t_e __lc_t = (type);                                                                    \
+    *(dst_ptr) = (__typeof__(*(dst_ptr)))_Generic(*(dst_ptr),                                     \
+        float: (likely(__lc_t == VM_OBJ_F)                                                         \
+                   ? *(const float*)__lc_s                                                         \
+                   : vm_read_as_f32(__lc_t, __lc_s)),                                              \
+        double: (likely(__lc_t == VM_OBJ_F)                                                        \
+                    ? (double)*(const float*)__lc_s                                                \
+                    : (double)vm_read_as_f32(__lc_t, __lc_s)),                                     \
+        int64_t: (likely(__lc_t == VM_OBJ_U64)                                                     \
+                     ? *(const int64_t*)__lc_s                                                     \
+                     : vm_read_as_i64(__lc_t, __lc_s)),                                            \
+        uint64_t: (likely(__lc_t == VM_OBJ_U64)                                                    \
+                      ? *(const uint64_t*)__lc_s                                                   \
+                      : (uint64_t)vm_read_as_i64(__lc_t, __lc_s)),                                 \
+        int32_t: (likely(__lc_t == VM_OBJ_I32 || __lc_t == VM_OBJ_U32)                            \
+                     ? *(const int32_t*)__lc_s                                                     \
+                     : vm_read_as_i32(__lc_t, __lc_s)),                                            \
+        uint32_t: (likely(__lc_t == VM_OBJ_U32 || __lc_t == VM_OBJ_I32)                           \
+                      ? *(const uint32_t*)__lc_s                                                   \
+                      : (uint32_t)vm_read_as_i32(__lc_t, __lc_s)),                                 \
+        default: vm_read_as_i32(__lc_t, __lc_s));                                                  \
   } while (0)
 
 // Same conversion, inlined rather than called. VM_LOAD_CAST_TO trades ~10 cyc
@@ -465,6 +492,30 @@ int64_t vm_read_as_i64(vm_obj_t_e type, const void* src);
  * is the caller's to check, at the resolve site.
  */
 static __always_inline err_h vm_store_inline(vm_obj_h owner, vm_payload_t slot, vm_val_t v, vm_obj_t_e src_type, uint16_t err_id) {
+  if (likely(slot.type == src_type)) {
+    switch (src_type) {
+      case VM_OBJ_F:
+        *(float*)slot.ptr = v.f;
+        break;
+      case VM_OBJ_U8:
+      case VM_OBJ_B:
+      case VM_OBJ_STR:
+        *(uint8_t*)slot.ptr = v.u8;
+        break;
+      case VM_OBJ_U32:
+      case VM_OBJ_I32:
+        *(uint32_t*)slot.ptr = v.u32;
+        break;
+      case VM_OBJ_U64:
+        memcpy(slot.ptr, &v.u64, sizeof(v.u64));
+        break;
+      default:
+        return vm_obj_not_scalar_err(owner, slot.type, err_id);
+    }
+    owner->head.f.upd = 1;
+    return NULL;
+  }
+
   switch (slot.type) {
     case VM_OBJ_U8:
     case VM_OBJ_B:
@@ -498,7 +549,7 @@ static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t ind
   if (unlikely(!obj->head.f.mutable)) return vm_obj_not_mutable_err(obj);
   uint8_t* p = vm_obj_elem_ptr(obj, index);
   if (unlikely(p == NULL)) return vm_obj_oob_err(obj, index);
-  return vm_store_inline(obj, (vm_payload_t){(vm_obj_t_e)obj->head.d.obj_t, p, 1}, v, src_type, 0);
+  return vm_store_inline(obj, (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0}, v, src_type, 0);
 }
 
 // Types a caller's C value with the matching vm_obj_t_e, for the SET path.
@@ -542,12 +593,19 @@ static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t ind
     const vm_accessor_t* __gv_a = (source);                                   \
     vm_resolved_t __gv_r;                                                     \
     err_h __gv_e = NULL;                                                      \
+    const void* __gv_ptr;                                                     \
+    vm_obj_t_e __gv_t;                                                        \
     if (likely(vm_resolve_fast(__gv_a, false, &__gv_r))) {                    \
-      VM_LOAD_CAST_TO(&(output), __gv_r.payload.type, __gv_r.payload.ptr);    \
+      __gv_ptr = __gv_r.payload.ptr;                                          \
+      __gv_t = (vm_obj_t_e)__gv_r.payload.type;                               \
     } else {                                                                  \
       vm_payload_t __gv_p;                                                    \
       __gv_e = vm_obj_get_payload(&__gv_p, __gv_a);                           \
-      if (!__gv_e) VM_LOAD_CAST_TO(&(output), __gv_p.type, __gv_p.ptr);       \
+      __gv_ptr = __gv_p.ptr;                                                  \
+      __gv_t = (vm_obj_t_e)__gv_p.type;                                       \
+    }                                                                         \
+    if (likely(!__gv_e)) {                                                    \
+      VM_LOAD_CAST_TO(&(output), __gv_t, __gv_ptr);                           \
     }                                                                         \
     __gv_e;                                                                   \
   })

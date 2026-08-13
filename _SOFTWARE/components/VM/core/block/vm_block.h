@@ -141,6 +141,11 @@ static inline size_t vm_block_total_size(vm_block_h b) {
   return vm_block_size(b->cfg.in_cnt, b->cfg.q_cnt, b->cfg.en_cnt, b->cfg.custom_len);
 }
 
+// Out-of-line error helpers (vm_block_build.c)
+err_h vm_block_err_pin_missing(uint16_t block_idx, uint8_t pin_id, bool is_out);
+err_h vm_block_err_pin_unlinked(uint16_t block_idx, uint8_t pin_id, bool is_out);
+void vm_block_report_error(err_h cause, uint16_t block_idx, uint8_t block_type);
+
 /**
  * @brief Fetch input pin `id`'s accessor.
  * @return err_h NULL on success, ERR_VM_BLOCK_PIN_MISSING if the block has no
@@ -148,13 +153,9 @@ static inline size_t vm_block_total_size(vm_block_h b) {
  *         is wired to it.
  */
 static inline err_h vm_block_get_in(const vm_accessor_t** target, vm_block_h b, uint8_t id) {
-  if (id >= b->cfg.in_cnt) {
-    SE_RET_ERR_OWNED(OWNER_VM_BLOCK, ERR_VM_BLOCK_PIN_MISSING, .block_idx = b->cfg.block_idx, .pin_id = id, .is_out = 0);
-  }
+  if (unlikely(id >= b->cfg.in_cnt)) return vm_block_err_pin_missing(b->cfg.block_idx, id, false);
   const vm_accessor_t* acc = vm_block_inputs(b)[id];
-  if (!acc) {
-    SE_RET_ERR_OWNED(OWNER_VM_BLOCK, ERR_VM_BLOCK_PIN_UNLINKED, .block_idx = b->cfg.block_idx, .pin_id = id, .is_out = 0);
-  }
+  if (unlikely(!acc)) return vm_block_err_pin_unlinked(b->cfg.block_idx, id, false);
   *target = acc;
   return NULL;
 }
@@ -162,13 +163,9 @@ static inline err_h vm_block_get_in(const vm_accessor_t** target, vm_block_h b, 
 /** @brief Fetch output pin `id`'s object -- already bound, nothing to resolve.
  *  Same errors as vm_block_get_in(). */
 static inline err_h vm_block_get_out(vm_obj_h* target, vm_block_h b, uint8_t id) {
-  if (id >= b->cfg.q_cnt) {
-    SE_RET_ERR_OWNED(OWNER_VM_BLOCK, ERR_VM_BLOCK_PIN_MISSING, .block_idx = b->cfg.block_idx, .pin_id = id, .is_out = 1);
-  }
+  if (unlikely(id >= b->cfg.q_cnt)) return vm_block_err_pin_missing(b->cfg.block_idx, id, true);
   vm_obj_h obj = vm_block_outputs(b)[id];
-  if (!obj) {
-    SE_RET_ERR_OWNED(OWNER_VM_BLOCK, ERR_VM_BLOCK_PIN_UNLINKED, .block_idx = b->cfg.block_idx, .pin_id = id, .is_out = 1);
-  }
+  if (unlikely(!obj)) return vm_block_err_pin_unlinked(b->cfg.block_idx, id, true);
   *target = obj;
   return NULL;
 }
@@ -220,8 +217,8 @@ static inline bool vm_block_is_enabled(vm_block_h b) {
   for (uint8_t i = 0; i < n; i++) {
     bool v = false;
     err_h e = VM_OBJ_GET_VAL(v, en[i]);
-    if (e) {
-      SE_push_to_handler(SE_WRAP_ERR_OWNED(OWNER_VM_BLOCK, e, ERR_VM_BLOCK_FAILED, .block_idx = b->cfg.block_idx, .block_type = b->cfg.block_type));
+    if (unlikely(e)) {
+      vm_block_report_error(e, b->cfg.block_idx, b->cfg.block_type);
       v = false;  // fail closed, then let the mode decide what that means
     }
     if (all) {
@@ -241,8 +238,8 @@ static inline void vm_block_set_ENO(vm_block_h b, bool state) {
   if (!b->cfg.eno) return;
   uint8_t v = state ? 1 : 0;
   err_h e = VM_OBJ_SET_VAL_AT(v, b->cfg.eno, 0);
-  if (e) {
-    SE_push_to_handler(SE_WRAP_ERR_OWNED(OWNER_VM_BLOCK, e, ERR_VM_BLOCK_FAILED, .block_idx = b->cfg.block_idx, .block_type = b->cfg.block_type));
+  if (unlikely(e)) {
+    vm_block_report_error(e, b->cfg.block_idx, b->cfg.block_type);
   }
 }
 

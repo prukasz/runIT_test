@@ -11,8 +11,8 @@
 // one element of obj as a payload, bounds-checked (see vm_obj_elem_ptr())
 static __always_inline vm_payload_t obj_elem(vm_obj_h obj, uint32_t i) {
   uint8_t* p = vm_obj_elem_ptr(obj, i);
-  if (unlikely(!p)) return (vm_payload_t){VM_OBJ_NONE, NULL, 0};
-  return (vm_payload_t){(vm_obj_t_e)obj->head.d.obj_t, p, 1};
+  if (unlikely(!p)) return (vm_payload_t){.ptr = NULL, .count = 0, .type = VM_OBJ_NONE, ._pad = 0};
+  return (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0};
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ static __attribute__((noinline)) err_h name_not_found_err(uint16_t id, uint8_t c
 // not in the SET entry points, because this is the last place still holding
 // the owning object's header.
 static err_h resolve_d(const vm_accessor_t* acc, uint8_t depth, bool for_write, vm_resolved_t* out) {
-  out->payload = (vm_payload_t){VM_OBJ_NONE, NULL, 0};
+  out->payload = (vm_payload_t){.ptr = NULL, .count = 0, .type = VM_OBJ_NONE, ._pad = 0};
   out->owner = NULL;
 
   if (unlikely(depth >= VM_ACCESSOR_MAX_DEPTH)) return err_depth(acc->id);

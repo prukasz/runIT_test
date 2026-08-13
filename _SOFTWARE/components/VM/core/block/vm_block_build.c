@@ -89,3 +89,15 @@ err_h vm_block_create(vm_block_h* out, uint16_t id, const vm_block_cfg_t* cfg) {
   *out = b;
   return NULL;
 }
+
+err_h vm_block_err_pin_missing(uint16_t block_idx, uint8_t pin_id, bool is_out) {
+  SE_RET_ERR(ERR_VM_BLOCK_PIN_MISSING, .block_idx = block_idx, .pin_id = pin_id, .is_out = is_out ? 1 : 0);
+}
+
+err_h vm_block_err_pin_unlinked(uint16_t block_idx, uint8_t pin_id, bool is_out) {
+  SE_RET_ERR(ERR_VM_BLOCK_PIN_UNLINKED, .block_idx = block_idx, .pin_id = pin_id, .is_out = is_out ? 1 : 0);
+}
+
+void vm_block_report_error(err_h cause, uint16_t block_idx, uint8_t block_type) {
+  SE_push_to_handler(SE_WRAP_ERR(cause, ERR_VM_BLOCK_FAILED, .block_idx = block_idx, .block_type = block_type));
+}

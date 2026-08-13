@@ -159,17 +159,12 @@ bool vm_accessor_cache_build(vm_accessor_t* acc) {
   if (!obj) return false;  // accessor built before its object; stays uncached
 
   if (acc->count == 0) {
-    vm_payload_t p = vm_obj_as_payload(obj);
-    acc->c_ptr = p.ptr;
-    acc->c_type = (uint8_t)p.type;
-    acc->c_count = p.count;
+    acc->c_payload = vm_obj_as_payload(obj);
   } else {
     if (acc->indices[0].kind != VM_IDX_LITERAL) return false;
     uint8_t* p = vm_obj_elem_ptr(obj, acc->indices[0].value);
     if (!p) return false;  // out of range -- leave it to report properly at access
-    acc->c_ptr = p;
-    acc->c_type = obj->head.d.obj_t;
-    acc->c_count = 1;
+    acc->c_payload = (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0};
   }
 
   acc->c_owner = obj;

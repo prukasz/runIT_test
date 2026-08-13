@@ -113,21 +113,17 @@ static inline uint32_t dec_vm_u32(const uint8_t* p) {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-/**
- * @brief Guard every read: `in_need` more bytes must remain at `in_off` of `in_len`.
- *
- * Parameters are named in_* so plain token substitution cannot collide with
- * the .packet/.need/.got designators below -- same reason SE_CHECK_IN_RANGE
- * in [[sys_error.h]] uses in_val/in_min/in_max.
- */
-#define DEC_VM_NEED(in_pkt, in_off, in_len, in_need)                                        \
-  do {                                                                                      \
-    if ((uint32_t)(in_off) + (uint32_t)(in_need) > (uint32_t)(in_len)) {                    \
-      SE_RET_ERR(ERR_VM_LOAD_SHORT_RECORD, .packet = (uint8_t)(in_pkt),                     \
-                 .need = (uint16_t)(in_need),                                               \
-                 .got = (uint16_t)((in_len) > (in_off) ? (in_len) - (in_off) : 0));         \
-    }                                                                                       \
-  } while (0)
+static inline void dec_vm_u16_array(uint16_t* dst, const uint8_t* src, uint8_t count) {
+  for (uint8_t i = 0; i < count; i++) dst[i] = dec_vm_u16(src + (size_t)i * 2);
+}
+
+static inline err_h dec_vm_need(uint8_t pkt, size_t off, size_t len, size_t need) {
+  if (unlikely((uint32_t)off + (uint32_t)need > (uint32_t)len)) {
+    SE_RET_ERR(ERR_VM_LOAD_SHORT_RECORD, .packet = pkt, .need = (uint16_t)need,
+               .got = (uint16_t)(len > off ? len - off : 0));
+  }
+  return NULL;
+}
 
 /** @brief 0x40 -- drop whatever is loaded, leaving the VM fail-closed. */
 static inline err_h decoder_packet_vm_reset(void) {
@@ -138,12 +134,11 @@ static inline err_h decoder_packet_vm_reset(void) {
 
 /** @brief 0x41 -- reserve the id tables and cap the arena. */
 static inline err_h decoder_packet_vm_open(const uint8_t* body, size_t len) {
-  DEC_VM_NEED(HEADER_packet_vm_open, 0, len, 10);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_open, 0, len, 10));
   uint16_t obj_cnt = dec_vm_u16(body);
   uint16_t acc_cnt = dec_vm_u16(body + 2);
   uint16_t blk_cnt = dec_vm_u16(body + 4);
   uint32_t total = dec_vm_u32(body + 6);
-  // logged after the call, so a rejected open cannot read as a successful one
   SE_RET_IF_ERR(vm_loader_open(obj_cnt, acc_cnt, blk_cnt, total));
   ESP_LOGI(DEC_VM_LOADER_TAG, "open: %u objects, %u accessors, %u blocks, %lu bytes", obj_cnt, acc_cnt, blk_cnt, (unsigned long)total);
   return NULL;
@@ -151,7 +146,7 @@ static inline err_h decoder_packet_vm_open(const uint8_t* body, size_t len) {
 
 /** @brief 0x45 -- create one block and resolve its wiring. */
 static inline err_h decoder_packet_vm_add_block(const uint8_t* body, size_t len) {
-  DEC_VM_NEED(HEADER_packet_vm_add_block, 0, len, 14);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_block, 0, len, 14));
   uint16_t blk_id = dec_vm_u16(body);
   vm_block_cfg_t cfg = {
       .block_idx = dec_vm_u16(body + 2),
@@ -166,39 +161,31 @@ static inline err_h decoder_packet_vm_add_block(const uint8_t* body, size_t len)
   };
   size_t off = 14;
 
-  /* Ids are staged into locals rather than aliased onto the frame: the frame
-     has no alignment guarantee and Xtensa will not load an unaligned u16, so
-     they have to be read a byte pair at a time regardless. All three counts
-     are checked against their limits before any buffer is indexed -- these are
-     the array writes in this file whose length comes from the packet. */
   if (cfg.in_cnt > VM_BLOCK_MAX_IN || cfg.q_cnt > VM_BLOCK_MAX_OUT || cfg.en_cnt > VM_BLOCK_MAX_EN) {
     SE_RET_ERR(ERR_VM_BLK_BAD_SHAPE, .blk_id = cfg.block_idx, .in_cnt = cfg.in_cnt, .q_cnt = cfg.q_cnt);
   }
 
   uint16_t in_ids[VM_BLOCK_MAX_IN];
-  DEC_VM_NEED(HEADER_packet_vm_add_block, off, len, (size_t)cfg.in_cnt * 2);
-  for (uint8_t i = 0; i < cfg.in_cnt; i++) in_ids[i] = dec_vm_u16(body + off + (size_t)i * 2);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_block, off, len, (size_t)cfg.in_cnt * 2));
+  dec_vm_u16_array(in_ids, body + off, cfg.in_cnt);
   off += (size_t)cfg.in_cnt * 2;
   cfg.in_acc_ids = cfg.in_cnt ? in_ids : NULL;
 
   uint16_t out_ids[VM_BLOCK_MAX_OUT];
-  DEC_VM_NEED(HEADER_packet_vm_add_block, off, len, (size_t)cfg.q_cnt * 2);
-  for (uint8_t i = 0; i < cfg.q_cnt; i++) out_ids[i] = dec_vm_u16(body + off + (size_t)i * 2);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_block, off, len, (size_t)cfg.q_cnt * 2));
+  dec_vm_u16_array(out_ids, body + off, cfg.q_cnt);
   off += (size_t)cfg.q_cnt * 2;
   cfg.out_obj_ids = cfg.q_cnt ? out_ids : NULL;
 
   uint16_t en_ids[VM_BLOCK_MAX_EN];
-  DEC_VM_NEED(HEADER_packet_vm_add_block, off, len, (size_t)cfg.en_cnt * 2);
-  for (uint8_t i = 0; i < cfg.en_cnt; i++) en_ids[i] = dec_vm_u16(body + off + (size_t)i * 2);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_block, off, len, (size_t)cfg.en_cnt * 2));
+  dec_vm_u16_array(en_ids, body + off, cfg.en_cnt);
   off += (size_t)cfg.en_cnt * 2;
   cfg.en_acc_ids = cfg.en_cnt ? en_ids : NULL;
 
-  DEC_VM_NEED(HEADER_packet_vm_add_block, off, len, cfg.custom_len);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_block, off, len, cfg.custom_len));
   SE_RET_IF_ERR(vm_loader_add_block(blk_id, &cfg));
 
-  /* Private state is copied after the block exists, because until then there
-     is nowhere to put it. A block that declares custom_len but ships no bytes
-     is legal -- vm_block_create() zeroed the region. */
   if (cfg.custom_len) {
     vm_block_h blk = vm_block_by_id(blk_id);
     memcpy(vm_block_custom_data(blk), body + off, cfg.custom_len);
@@ -208,19 +195,19 @@ static inline err_h decoder_packet_vm_add_block(const uint8_t* body, size_t len)
 
 /** @brief 0x44 -- create a batch of accessors. */
 static inline err_h decoder_packet_vm_add_acc(const uint8_t* body, size_t len) {
-  DEC_VM_NEED(HEADER_packet_vm_add_acc, 0, len, 1);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_acc, 0, len, 1));
   uint8_t n = body[0];
   size_t off = 1;
 
   for (uint8_t i = 0; i < n; i++) {
-    DEC_VM_NEED(HEADER_packet_vm_add_acc, off, len, 6);
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_acc, off, len, 6));
     uint16_t acc_id = dec_vm_u16(body + off);
     uint16_t root_id = dec_vm_u16(body + off + 2);
     uint8_t idx_count = body[off + 4];
     uint8_t idx_len = body[off + 5];
     off += 6;
 
-    DEC_VM_NEED(HEADER_packet_vm_add_acc, off, len, idx_len);
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_acc, off, len, idx_len));
     SE_RET_IF_ERR(vm_loader_add_accessor(acc_id, root_id, idx_count, body + off, idx_len));
     off += idx_len;
   }
@@ -229,12 +216,12 @@ static inline err_h decoder_packet_vm_add_acc(const uint8_t* body, size_t len) {
 
 /** @brief 0x42 -- create a batch of objects. */
 static inline err_h decoder_packet_vm_add_objs(const uint8_t* body, size_t len) {
-  DEC_VM_NEED(HEADER_packet_vm_add_objs, 0, len, 1);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_objs, 0, len, 1));
   uint8_t n = body[0];
   size_t off = 1;
 
   for (uint8_t i = 0; i < n; i++) {
-    DEC_VM_NEED(HEADER_packet_vm_add_objs, off, len, 2 + sizeof(vm_obj_head_t));
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_objs, off, len, 2 + sizeof(vm_obj_head_t)));
     uint16_t id = dec_vm_u16(body + off);
 
     vm_obj_head_t head;
@@ -242,7 +229,7 @@ static inline err_h decoder_packet_vm_add_objs(const uint8_t* body, size_t len) 
     off += 2 + sizeof(head);
 
     uint8_t name_len = head.d.name_size;
-    DEC_VM_NEED(HEADER_packet_vm_add_objs, off, len, name_len);
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_objs, off, len, name_len));
     const char* name = name_len ? (const char*)(body + off) : NULL;
     off += name_len;
 
@@ -253,18 +240,18 @@ static inline err_h decoder_packet_vm_add_objs(const uint8_t* body, size_t len) 
 
 /** @brief 0x43 -- fill payload bytes, or link children for a PTR object. */
 static inline err_h decoder_packet_vm_set_data(const uint8_t* body, size_t len) {
-  DEC_VM_NEED(HEADER_packet_vm_set_data, 0, len, 1);
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_set_data, 0, len, 1));
   uint8_t n = body[0];
   size_t off = 1;
 
   for (uint8_t i = 0; i < n; i++) {
-    DEC_VM_NEED(HEADER_packet_vm_set_data, off, len, 6);
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_set_data, off, len, 6));
     uint16_t id = dec_vm_u16(body + off);
     uint16_t start_idx = dec_vm_u16(body + off + 2);
     uint16_t byte_len = dec_vm_u16(body + off + 4);
     off += 6;
 
-    DEC_VM_NEED(HEADER_packet_vm_set_data, off, len, byte_len);
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_set_data, off, len, byte_len));
     SE_RET_IF_ERR(vm_loader_set_data(id, start_idx, body + off, byte_len));
     off += byte_len;
   }

@@ -213,7 +213,7 @@ static void test_conversion(void) {
   // reading a PTR/STR payload yields zero rather than garbage
   in_u32 = 7;
   (void)VM_OBJ_SET_VAL(in_u32, &a_u32);
-  vm_payload_t praw = {VM_OBJ_STR, NULL, 0};
+  vm_payload_t praw = {.ptr = NULL, .count = 0, .type = VM_OBJ_STR, ._pad = 0};
   vm_val_t vraw = vm_payload_read(praw);
   ck("payload_read of NULL ptr is zero", vraw.u64 == 0);
 }
@@ -303,7 +303,7 @@ static void test_resolution(void) {
   /* Whole-array iteration -- the shape a fold block (Sum, Average, Min/Max)
      uses: resolve once to a payload, then step it element by element. */
   static const vm_accessor_t w_arr = {.id = 0, .count = 0, .indices = NULL};
-  vm_payload_t arrp = {VM_OBJ_NONE, NULL, 0};
+  vm_payload_t arrp = {.ptr = NULL, .count = 0, .type = VM_OBJ_NONE, ._pad = 0};
   bool got_payload = vm_obj_get_payload(&arrp, &w_arr) == NULL;
   ck("get_payload on whole array gives count 4", got_payload && arrp.count == 4 && arrp.type == VM_OBJ_U32);
   uint64_t sum = 0;
@@ -1442,7 +1442,7 @@ static void test_strings(void) {
   s->payload[1] = 'e';
 
   // walking the buffer, which is how any string block reads one
-  vm_payload_t sp = {VM_OBJ_NONE, NULL, 0};
+  vm_payload_t sp = {.ptr = NULL, .count = 0, .type = VM_OBJ_NONE, ._pad = 0};
   bool resolved = vm_obj_get_payload(&sp, &w_s) == NULL;
   ck("whole-object accessor yields the buffer", resolved && sp.type == VM_OBJ_STR && sp.count == 8);
   char out[9] = {0};
