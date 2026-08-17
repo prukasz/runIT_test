@@ -36,6 +36,9 @@ not resolve to a runnable block.
    its own header along with its own .c. */
 #define VM_BLK_EXPR 8      // RPN expression over floats      -- vm_block_expr.h
 #define VM_BLK_EXPR_BIT 9  // RPN expression over uint32 bits -- vm_block_expr.h
+#define VM_BLK_IF 10       // two-way flow router             -- vm_block_branch.h
+#define VM_BLK_SWITCH 11   // n-way flow router               -- vm_block_branch.h
+#define VM_BLK_FOR 12      // span owner: repeats the range after it -- vm_block_for.h
 
 /**
  * @brief Private state every placeholder carries.
@@ -63,7 +66,12 @@ typedef struct vm_dummy_state_t {
 } vm_dummy_state_t;
 
 /** @brief This block's placeholder state, or NULL if it declared too little
- *  custom_data to hold one. */
+ *  custom_data to hold one.
+ *
+ *  Size, not identity: a real block's private state can be *larger* than this
+ *  and mean something entirely different, so anything reaching into a block it
+ *  did not build must check `cfg.block_type <= VM_BLK_ON_EVENT` first. The
+ *  placeholders themselves are the intended callers, and they already know. */
 static inline vm_dummy_state_t* vm_dummy_state(vm_block_h b) {
   if (b->cfg.custom_len < sizeof(vm_dummy_state_t)) return NULL;
   return (vm_dummy_state_t*)vm_block_custom_data(b);

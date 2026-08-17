@@ -24,11 +24,15 @@ bool g_vm_block_fault = false;
    A failure is silent rather than reported: it will be reported again the
    moment the body reads the same pin, and a pin that cannot be read is
    certainly not an arrival. Fail-closed, same as the enable list. */
-static bool pin_fresh(const vm_accessor_t* acc) {
+static inline bool pin_fresh(const vm_accessor_t* acc) {
   if (!acc) return false;  // pin exists, nothing wired to it
 
+  if (likely(acc->flags & VM_ACC_F_CACHED)) {
+    return acc->c_owner && acc->c_owner->head.f.upd;
+  }
+
   vm_resolved_t r;
-  if (likely(vm_resolve_fast(acc, false, &r))) {
+  if (vm_resolve_fast(acc, false, &r)) {
     return r.owner && r.owner->head.f.upd;
   }
 

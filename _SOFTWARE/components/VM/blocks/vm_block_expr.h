@@ -4,47 +4,13 @@
 #include "vm_block.h"
 
 /*
-The two expression blocks, and the bytecode they share.
-
-Both are the same machine with a different word: a stack of at most
-VM_EXPR_STACK_MAX values, an instruction stream already in RPN, and no control
-flow of any kind. VM_BLK_EXPR works in `float`, VM_BLK_EXPR_BIT in `uint32_t`,
-and that single difference is why they are two block types rather than one with
-a mode byte -- the opcode palettes barely overlap (there is no sensible `ROL`
-on a float and no `SQRT` on a bit pattern), and a mode byte would have meant
-every program carrying the answer to a question the block type already asks.
-
-Straight-line RPN is the whole point. There is no jump, so the instruction
-stream cannot loop and its worst-case duration is `code_len` -- which is what
-lets a block run inside a section whose duration has to stay computable. A
-program that needs a branch uses `SEL`, which evaluates both arms; one that
-needs a loop uses VM_BLK_REPEAT and a span.
-
-  THE LAYOUT, in the block's own custom_data
-
-    u8   const_cnt      how many literals follow the header
-    u8   rt             runtime scratch -- MUST be 0 on the wire
-    u16  code_len       bytecode length in bytes
-    u32  consts[const_cnt]   literals: float bits for EXPR, value for EXPR_BIT
-    u8   code[code_len]      the instruction stream
-
-  The constants come *before* the code so they land 4-aligned without a pad
-  byte anywhere: custom_data always starts at a 4-aligned offset (the block
-  header is 16 bytes and every pin array is 4-byte pointers), and the header
-  here is exactly 4. Reading a literal is then a plain aligned load rather
-  than a memcpy, which matters because a literal is the second most common
-  instruction after a pin read.
-
-  `rt` is the one byte the block writes back into its own private state. It
-  carries the "already reported" latch for arithmetic faults -- see the
-  reporting note in vm_block_expr.c. It is not a parameter and a client must
-  send it as zero.
-
-  ENCODING an instruction: one opcode byte, plus one operand byte for `IN`
-  and `K` only. Everything else is a bare byte, because everything else takes
-  its arguments off the stack. `END` is optional -- `code_len` is what
-  terminates the walk -- and exists so a client can pad a record without the
-  padding meaning something.
+RPN Bytecode Expression Engine (VM_BLK_EXPR for float, VM_BLK_EXPR_BIT for uint32).
+Layout in custom_data:
+  [0]     u8  const_cnt         Literals count following header
+  [1]     u8  rt                Runtime latch (VM_EXPR_RT_FAULTED; 0 on wire)
+  [2..3]  u16 code_len          Bytecode length in bytes
+  [4..]   u32 consts[const_cnt] 4-aligned literals
+  [...]   u8  code[code_len]    RPN instruction stream (IN and K have +1 operand byte)
 */
 
 /** @brief Deepest the evaluation stack may go. An expression needing more is

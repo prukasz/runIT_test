@@ -203,6 +203,16 @@ static void run_block(vm_block_h b, vm_block_fn fn) {
   // per-call bits only; VM_BLK_RT_SPAN_BAD and anything sticky survives
   b->cfg.rt &= (uint8_t)~VM_BLK_RT_PER_CALL;
 
+  /* g_vm_block_fault is one global, and a span owner is *mid-call* while the
+     blocks inside its span run through here. Without saving it, the innermost
+     block to finish decides two things it has no business deciding: it clears
+     whatever fault the owner had already recorded, and it leaves its own behind
+     for the owner's on_error to be applied to. So a FOR would have its ENO
+     dropped because the last block in its body failed -- after that block's own
+     on_error had already dealt with it -- and a FOR that genuinely failed would
+     get away with it. Saving here is what keeps the flag per-block rather than
+     per-nesting-level; the top-level walk saves and restores `false`. */
+  const bool outer_fault = g_vm_block_fault;
   g_vm_block_fault = false;
   fn(b);
 
@@ -218,6 +228,8 @@ static void run_block(vm_block_h b, vm_block_fn fn) {
   if (unlikely(g_vm_block_fault) && b->cfg.on_error == VM_BLK_ERR_STOP) {
     vm_block_set_ENO(b, false);
   }
+
+  g_vm_block_fault = outer_fault;  // hand the owner back its own fault state
 }
 
 void vm_exec_run_range(uint16_t start, uint16_t end) {

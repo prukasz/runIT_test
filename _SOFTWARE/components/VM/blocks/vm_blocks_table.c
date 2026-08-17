@@ -1,5 +1,7 @@
 #include "vm_blocks.h"
+#include "vm_block_branch.h"
 #include "vm_block_expr.h"
+#include "vm_block_for.h"
 #include "vm_exec.h"
 
 /*
@@ -31,6 +33,9 @@ const vm_block_fn g_vm_blocks[] = {
     [VM_BLK_ON_EVENT] = vm_blk_on_event,
     [VM_BLK_EXPR] = vm_blk_expr,
     [VM_BLK_EXPR_BIT] = vm_blk_expr_bit,
+    [VM_BLK_IF] = vm_blk_if,
+    [VM_BLK_SWITCH] = vm_blk_switch,
+    [VM_BLK_FOR] = vm_blk_for,
 };
 
 const uint16_t g_vm_blocks_cnt = (uint16_t)(sizeof(g_vm_blocks) / sizeof(g_vm_blocks[0]));

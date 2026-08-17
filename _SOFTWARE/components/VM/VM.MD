@@ -22,6 +22,10 @@ components/VM/
 │   ├── vm_blocks_dummy.c       # seven placeholders, one per block shape
 │   ├── vm_block_expr.h         # RPN bytecode: layout, both opcode palettes, fault reasons
 │   ├── vm_block_expr.c         # EXPR (float) and EXPR_BIT (uint32) — one machine, two words
+│   ├── vm_block_branch.h       # why a router is enable-driven, and what each one selects
+│   ├── vm_block_branch.c       # IF (two-way) and SWITCH (n-way) — outputs that are flow, not data
+│   ├── vm_block_for.h          # span layout, the turn budget, claim-first
+│   ├── vm_block_for.c          # FOR — a C for loop, and the only block that runs other blocks
 │   └── vm_blocks_table.c       # g_vm_blocks[] — the palette, entire
 └── core/
     ├── errors/
@@ -317,6 +321,10 @@ The class is registered in `sys_interface_init()` — see [[SYS_INTERFACE.MD]].
 Stages **P–S** cover execution: dispatch and what it refuses at load, section ranges and overlap, a pass run synchronously over a hand-built program (a block standing itself down, keeping its data, the `upd` sweep, holding while inactive, spans, `on_error`), and events. It dispatches through the real palette — the placeholders in `blocks/` — and reads their `calls`/`acts` counters out of the blocks' own private state, so there is no test-only seam in the exec layer at all.
 
 Stage **T** is the first stage about a *real* block, and the first about a compiled input: fifteen expression programs, hand-assembled as RPN in the same layout the `0x45` record's private-state tail carries, run through `vm_exec_pass()`. It covers arithmetic and literals, a comparison feeding `SEL`, one pin named twice resolving once, the bitwise palette (masked shift, popcount, a shift of 32 landing on 0 rather than on undefined behaviour, a rotate), a declared-but-unnamed pin never being read — which is what the lazy input cache buys and what an eager prefetch would break — and then every fault: a zero divisor, an unknown opcode, a stack underflow, a program ending on two values, and `custom_data` too short for its own header. The fault assertions are about the *lifetimes* as much as the detection — malformed code latched in `VM_BLK_RT_CFG_BAD` and still latched a pass later, a math fault latched in the block's own `rt` and re-armed by the next clean evaluation, and in both cases nothing published and the flow withdrawn by the supervisor rather than by the block.
+
+Stage **U** is the flow routers, `IF` and `SWITCH` — the first blocks whose outputs are **flow rather than data**, and the one place the template's "a block that stands down leaves its outputs standing" rule is deliberately broken. A router's outputs feed downstream *enable* lists, so a stale branch is not a stale value but a whole subtree still running behind a gate that has closed; the stage therefore gives every way of not-deciding its own block — disabled, unwired condition, selector out of range, an `IF` with no `ELSE` to drive — and asserts the same answer from all four: no branch high, flow withdrawn. The gated switch is the load-bearing one, since it is the only assertion the unmodified rule would fail. Around it: the one-hot moving and releasing the branch it left, a float selector *rounding* into its case (`vm_read_as_i32`, so a router converts like every other pin), the loud/quiet asymmetry that makes a branch usable as an enable source at all, out-of-range being an ordinary state rather than a reported fault, and both shape faults latching in `VM_BLK_RT_CFG_BAD` to report once per load. Plus the property the design rests on — a router's `custom_len` is **zero**, so there is no private state to go stale between passes.
+
+Stage **V** is `FOR`, and as much about the walk as about the block — everything in it is *counted* rather than sampled, because the only way to tell "the owner ran the body three times" from "the owner ran it three times and the walk ran it again" is the body's call counter. It runs eight loops: the plain ascending one, a descending `i=10; i>0; i-=2`, a geometric `i=1; i<100; i*=2`, one whose `end` comes off a pin while its `start` falls back to a constant, one gated off, one malformed (a span it can read, a loop it cannot), one whose body faults, and one with a zero step that cannot end at all. The assertions are the turn counts, the iterator's last published value, a condition already false before the first turn, the budget catching the loop that never ends and latching once, and an `EXPR` folding `0+1+2+3` into an object it also reads — which is the whole point of a span. The load-bearing one is `a failing body block does not withdraw its owner's flow`, verified by reverting the `run_block()` fault save and confirming that assertion, and only that one, fails.
 
 | Stage | Covers |
 | :--- | :--- |
@@ -794,6 +802,52 @@ way nothing is published — the output stands and `cfg.on_error` decides the fl
 `VM_BLK_RT_CFG_BAD` (0x40) is generic, not expression-specific: any block type
 can latch "my private state is malformed" in it and report once per load.
 
+### Flow routers
+
+`IF` takes one condition and drives two boolean outputs; `SWITCH` takes one
+selector and drives up to sixteen. Both carry **no `custom_data` at all** —
+`in_cnt` names the selector pin, `q_cnt` names the branch count, and there is
+nothing else to say — which also makes them the only stateless blocks in the
+palette: the one-hot is recomputed from the input every pass and nothing is
+carried between them.
+
+**Their outputs are flow, not data, and that inverts the template's rule.** The
+rule in `vm_block_template.h` is that a block which does not act withdraws only
+the *flow* and leaves its outputs standing, because an output holds data and
+last pass's data is still the right answer. A router has no data — its outputs
+are read as downstream **enable sources**, so they follow the flow's rule: driven
+on every pass the block is enabled, cleared on every pass it is not. One that
+stood down leaving branch 3 high would hold the whole subtree below it enabled
+through a closed gate, and because branch outputs feed enable lists that leak
+propagates down the DAG rather than stopping at one block.
+
+For the same reason **a router retracts its own outputs on a failure**, which no
+other block should do. `cfg.on_error` is the supervisor's to apply and all it can
+reach is ENO — the right and sufficient net for a block whose outputs are data,
+and no net at all for one whose outputs gate.
+
+Clearing is *quiet*, exactly as `vm_block_set_ENO(b, false)` is: a loud false
+reads as an arrival to an update-driven block below, the opposite of standing
+down. The taken branch is loud. That asymmetry is the whole of what makes a
+branch output usable as an enable source.
+
+**Selection.** `IF` reads the pin as a float and takes output 0 when it is
+non-zero — truthiness is `!= 0.0f`, the same test the expression palette's
+`AND`/`OR`/`XOR`/`NOT` use, so a condition computed in `EXPR` and one tested here
+always agree. `SWITCH` reads the pin as an `int32`, so a float source **rounds**
+(`vm_read_as_i32`, as every float-to-integer pin read in the VM does) rather than
+truncating — a router converting its own way would be the odd pin out. Case
+values are dense: branch index *is* the selector value, because remapping a
+sparse set onto `0..n-1` is one `EXPR` block and a value→branch table would cost
+every switch in every program 64 bytes it does not use.
+
+A selector outside `0..q_cnt-1` takes **no branch** — every output clears, ENO
+goes false — and is *not* reported. It is an ordinary runtime state, and at scan
+rate reporting it would bury the log; a program wanting a default branch drives
+one from an `EXPR` range test. The two genuine faults (too few outputs for the
+type, an unwired selector pin) are standing conditions and latch in
+`VM_BLK_RT_CFG_BAD` to report once per load, like malformed bytecode.
+
 ### Spans
 
 A block that repeats or skips part of the order keeps the range in its own
@@ -810,6 +864,92 @@ somebody else run it once.
 Nesting is capped at `VM_EXEC_MAX_SPAN_DEPTH`. A claim that doesn't move the
 walk forward is reported once (sticky `VM_BLK_RT_SPAN_BAD`) and then ignored,
 so it degrades to running inline rather than to a hang.
+
+**`g_vm_block_fault` is saved across a nested `run_block()`**, and FOR is the
+only block that could ever have needed it. The flag is one global, and a span
+owner is *mid-call* while the blocks in its body run through the same
+`run_block()`. Without saving, the last block in the span decides two things it
+has no business deciding: it clears whatever fault the owner had already
+recorded, and it leaves its own behind for the owner's `cfg.on_error` to be
+applied to — so a FOR loses its ENO because something it ran failed, *after*
+that block's own `on_error` had already dealt with it, and a FOR that genuinely
+failed gets away with it. Saving in `run_block()` keeps the flag per-block
+rather than per-nesting-level; the top-level walk saves and restores `false`.
+
+The **block watchdog** is deliberately not nested. During a span the word names
+whichever body block is currently running, which is the granularity that matters
+— a hung body block is named correctly. A span owner's own duration is not
+watched because it is bounded by construction: `count × span`, both static.
+
+### FOR
+
+The span owner, and the only block that runs other blocks. It is a C `for` loop
+over a float iterator:
+
+```
+for (i = start; i <cmp> end; i = i <op> step)
+```
+
+`start`, `end` and `step` each come from an input pin *or*, when that pin is
+unwired, from a constant in `custom_data` — the standard unwired-pin rule, so a
+loop with nothing wired is fully static and a loop with `end` wired walks however
+many elements the array actually holds. `cmp` (`<`, `<=`, `>`, `>=`) and `op`
+(`+`, `-`, `*`, `/`) are always the block's own, because they are the *shape* of
+the loop rather than data flowing through it. There is deliberately no `!=`: on a
+float it is the one condition that misses its own exit.
+
+`custom_data` is `[vm_span_t span][f32 k_start][f32 k_end][f32 k_step][u16
+max_turns][u8 op][u8 cmp][u8 rt][pad]`, 24 bytes. The span is first because that
+is not this block's choice: `vm_block_span()` reads one off the head of *any*
+block's `custom_data` and `vm_block_claim_span()` writes one back through the
+same bytes, so the walk and the block read one copy of the range rather than two
+that can disagree.
+
+**`max_turns` is a budget, not the count, and it is what makes a span
+schedulable.** The loop runs its real condition, so the turn count is whatever
+the pins work out to — which means a program can phrase a loop that never ends. A
+`step` of zero. `MUL` by one. A step pointing away from `end`. This runs inside a
+section on core 1, where the block watchdog cannot help: it names whichever
+*body* block is currently running, and those keep changing, so a spinning FOR
+looks like healthy progress right up until the task watchdog resets the board.
+
+So `max_turns` is checked every turn and ends the loop when reached. Worst-case
+section duration stays `max_turns × span` whatever the pins say, and every
+non-terminating loop becomes a bounded one that reports itself
+(`ERR_VM_FOR_BAD_LOOP`, latched in `VM_FOR_RT_BAD`, re-armed by a loop that ends
+on its own condition) instead of hanging. Hitting the budget always means the
+loop did not finish by itself, so it is always worth reporting. The same tag
+covers an iterator that goes non-finite — an overflow, or `DIV` by a zero step.
+
+**The iterator accumulates**, `i = i <op> step` applied to the running value
+exactly as C does it, rather than recomputed as `start + n·step`. That is the
+semantics the name promises and the only definition that means anything for `MUL`
+and `DIV`. The cost is C's cost: a fractional step drifts, so `0.0` stepping by
+`0.1` toward `1.0` may turn nine times or eleven. Integer starts and steps are
+exact to 2²⁴, far past any loop that could finish inside a scan cycle.
+
+**A malformed FOR still claims.** If `custom_len` holds a span but not a count,
+the block claims the range and then runs it zero times, latching
+`VM_BLK_RT_CFG_BAD`. Not claiming would leave the body about to execute once,
+uncontrolled, in the middle of the walk — and for a body that drives actuators,
+once is strictly worse than never.
+
+**The iterator is what makes a span worth having.** If the block declares an
+output, `i` is published to output 0 before each turn, *loudly*, so an
+update-driven block in the body re-triggers every turn rather than only on the
+first. That object is what a by-ref accessor in the body roots its index at,
+which is the whole mechanism for walking an array — wire a `U32` object to it and
+the pin conversion rounds the float for you. A FOR with no outputs is a plain
+repeat, which is a real thing to want.
+Accumulating needs no mechanism either: `upd` is swept at the end of the **pass**,
+not per turn, so a block inside the span reading an object it also writes sees
+its own last value and re-triggers — a sum is one `EXPR` wired back to itself,
+plus something ahead of the loop to zero the accumulator.
+
+**ENO goes true before the body**, not after it as the template had it. A block
+inside the span gated on the FOR's ENO has to see it on turn 0; asserting
+afterwards would gate the first turn on last pass's answer, and on the first pass
+on nothing at all. The flow is genuinely asserted for as long as the body runs.
 
 ### `upd`, and who clears it
 
@@ -938,8 +1078,10 @@ Note the app **partition** is 1 MB (`CONFIG_PARTITION_TABLE_SINGLE_APP`), not th
 ## Design Notes & Known Limitations
 
 * **Everything below the self test is covered.** `vm_selftest` covers object, accessor, loader layers, blocks, EN/ENO, and performance benchmarks.
-* **No block types palette yet.** The pin/EN/ENO/error scaffolding is in place; the standard block palette is expanding.
-* **No block types are implemented.** The pin/EN/ENO/error scaffolding is in place; the palette is not.
+* **The palette is five blocks deep, and the engine is finished.** `EXPR`/`EXPR_BIT` (compute), `IF`/`SWITCH` (flow) and `FOR` (spans) are real; the seven placeholders in `blocks/vm_blocks_dummy.c` still stand in for every other shape. `FOR` was the last block that reaches into `core/exec/` — everything remaining is a leaf that only reads pins and calls out — so the supervisor is not expected to change again for the palette's sake.
+* **Nothing in `blocks/` touches a driver yet**, so the `blocks/ → core/`, never-the-reverse boundary is asserted but not exercised. The first IO block is what tests it, and it is also where the open question sits: whether a device block calls its driver synchronously inside the section or stages the write for a freeze point.
+* **The pass clock has no users.** `vm_now_ms()` is built and documented; no block is stateful in time yet. Timers (`TON`/`TOF`/`TP`) and edge detectors are the first.
+* **There is no way to move a non-scalar.** `vm_obj_copy_content()` handles arrays, strings and structs with full type/count/mutability checking and is covered by stage E, but no block exposes it — so no uploaded program can copy an array. A `MOVE` block closes this.
 * **Subscription and telemetry are not built.** The design is settled (supervisor iterates a list of ids, sends `[id][content]` on `upd`, client rebuilds objects from a manifest) but no code exists. Note `VM_OBJ_PTR` objects must be rejected as subscription targets for the same reason `retentive` rejects them.
 * **Callback-driven sections are designed, not built.** Intended shape: the VM registers one route with `sys_callbacks`, events land on a VM-owned queue drained by the supervisor at a cycle boundary, and typed event blocks publish them. This keeps a single permanent registration, so a program reload swaps only an internal table and cannot leave a dangling callback into a freed arena.
 * **NVS retention is not built.** Design: periodic batch flush plus flush-on-shutdown, keyed by **name not id** (ids shift between firmware builds), leaves only.

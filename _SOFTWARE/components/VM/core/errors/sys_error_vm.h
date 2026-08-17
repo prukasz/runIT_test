@@ -58,7 +58,8 @@
   X(ERR_VM_EXEC_BAD_SPAN, struct { uint16_t block_idx; uint16_t start; uint16_t end; })                               \
   X(ERR_VM_EVENT_OVERFLOW, struct { uint16_t type; uint16_t depth; uint16_t dropped; })                               \
   X(ERR_VM_EXPR_BAD_CODE, struct { uint16_t block_idx; uint16_t pc; uint8_t opcode; uint8_t reason; })                \
-  X(ERR_VM_EXPR_MATH, struct { uint16_t block_idx; uint16_t pc; uint8_t opcode; uint8_t reason; })
+  X(ERR_VM_EXPR_MATH, struct { uint16_t block_idx; uint16_t pc; uint8_t opcode; uint8_t reason; })                    \
+  X(ERR_VM_FOR_BAD_LOOP, struct { uint16_t block_idx; uint32_t turns; uint16_t cap; uint8_t reason; })
 
 /**
  * @brief Human-readable descriptions for the VM tags - see
@@ -106,7 +107,8 @@
   X(ERR_VM_EXEC_BAD_SPAN)          \
   X(ERR_VM_EVENT_OVERFLOW)         \
   X(ERR_VM_EXPR_BAD_CODE)          \
-  X(ERR_VM_EXPR_MATH)
+  X(ERR_VM_EXPR_MATH)              \
+  X(ERR_VM_FOR_BAD_LOOP)
 
 #define LOG_BODY_ERR_VM_ALLOC_EXHAUSTED(p, out, out_size) \
   snprintf((out), (out_size), "vm arena exhausted: requested %lu, %lu remaining", (unsigned long)(p)->requested, (unsigned long)(p)->remaining)
@@ -216,6 +218,15 @@
 #define LOG_BODY_ERR_VM_EXPR_MATH(p, out, out_size)                                                         \
   snprintf((out), (out_size), "block %u expression at pc %u (op %u): %s", (p)->block_idx, (p)->pc,          \
            (p)->opcode, VM_EXPR_MATH_NAME((p)->reason))
+/* A loop that could not end on its own condition -- a zero step, a step
+   pointing away from the end, an iterator that overflowed. The turn budget
+   caught it, which is what the budget is for; reporting it is how the program
+   learns its loop was wrong rather than merely slow. `reason` is a
+   VM_FOR_BAD_* code from vm_block_for.h. */
+#define VM_FOR_BAD_NAME(r) ((r) == 0 ? "ran its whole turn budget" : (r) == 1 ? "iterator went non-finite" : "?")
+#define LOG_BODY_ERR_VM_FOR_BAD_LOOP(p, out, out_size)                                                      \
+  snprintf((out), (out_size), "block %u loop %s after %lu of %u turns", (p)->block_idx,                     \
+           VM_FOR_BAD_NAME((p)->reason), (unsigned long)(p)->turns, (p)->cap)
 
 /**
  * @brief SE_EMIT_ERR() relies on an ambient `#define OWNER` per source file
