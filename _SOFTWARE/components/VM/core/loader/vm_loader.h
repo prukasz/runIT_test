@@ -5,6 +5,7 @@
 #include "vm_block_build.h"
 #include "vm_obj_access.h"
 #include "vm_obj_build.h"
+#include "vm_section.h"
 
 /*
 Program loading -- turns an uploaded description into the live object graph.
@@ -64,7 +65,7 @@ void vm_loader_reset(void);
  * @return err_h ERR_VM_LOAD_TOO_BIG if total_size exceeds the pool,
  *         ERR_BASE_NO_MEM if the id registries do not fit inside it.
  */
-err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint32_t total_size);
+err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint16_t sec_cnt, uint32_t total_size);
 
 /**
  * @brief Create one object and bind it to @p id.
@@ -132,6 +133,23 @@ err_h vm_loader_add_accessor(uint16_t acc_id, uint16_t root_obj_id, uint8_t idx_
  *         ERR_BASE_NO_MEM.
  */
 err_h vm_loader_add_block(uint16_t blk_id, const vm_block_cfg_t* cfg);
+
+/**
+ * @brief Declare one section: `[start, end)` over the block order.
+ *
+ * Last in the load order, after every block it covers -- a range is validated
+ * against the block registry, so the blocks have to be there to validate it
+ * against. Same rule blocks have with the accessors they name, one level up.
+ *
+ * A section is an atomic unit, not a schedule: every section runs every pass,
+ * and what the range buys is a boundary the system may be interrupted at. A
+ * program may legitimately declare none, in which case the whole order is one
+ * uninterruptible section.
+ *
+ * @return err_h ERR_VM_SEC_BAD_RANGE, ERR_VM_SEC_OVERLAP, ERR_VM_REG_OOB /
+ *         ERR_VM_REG_DUP for the id, or ERR_BASE_NO_MEM.
+ */
+err_h vm_loader_add_section(uint16_t sec_id, uint16_t start, uint16_t end);
 
 /** @brief Current state -- decoders use it to reject out-of-sequence packets. */
 vm_load_state_e vm_loader_state(void);

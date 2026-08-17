@@ -19,7 +19,8 @@
  * Load sequence (see vm_loader.h for the state rules):
  * @code
  *   0x40 reset      : -
- *   0x41 open       : u16 obj_cnt, u16 acc_cnt, u16 blk_cnt, u32 total_size
+ *   0x41 open       : u16 obj_cnt, u16 acc_cnt, u16 blk_cnt, u16 sec_cnt,
+ *                     u32 total_size
  *   0x42 add objs   : u8 n, n x { u16 id, vm_obj_head_t head,
  *                                 char name[head.d.name_size] }
  *   0x43 set data   : u8 n, n x { u16 id, u16 start_idx, u16 byte_len,
@@ -37,6 +38,7 @@
  *                     q_cnt  x u16 object id,
  *                     en_cnt x u16 accessor id,
  *                     custom_len x u8 initial private state
+ *   0x46 add section: u8 n, n x { u16 sec_id, u16 start, u16 end }
  * @endcode
  *
  * 0x45 carries exactly one block, unlike the batching packets above: a block
@@ -55,8 +57,14 @@
  * en_cnt > 1 makes the flow graph a DAG rather than a tree, and en_mode says how
  * the sources combine: VM_BLK_EN_ANY for branches rejoining ("either path
  * reached me"), VM_BLK_EN_ALL for independent conditions that must all hold.
- * There is no section id here -- section membership is the section packet's
- * ordered id list, not a field on the block. See [[VM_EXEC.MD]].
+ * There is no section id here -- a section is a `[start, end)` range over the
+ * block order, declared by 0x46, not a field on the block. See [[VM_EXEC.MD]].
+ *
+ * **Block order is execution order.** The device never sorts: the client walks
+ * the wire graph, topologically sorts each connected component and uploads its
+ * 0x45 frames in that order, so the block registry index *is* the order the
+ * supervisor walks. That is why 0x46 can describe a section as two numbers,
+ * and why 0x46 comes last -- its range is validated against the blocks.
  *
  * All multi-byte fields are little-endian, matching the target.
  *
@@ -103,6 +111,7 @@
 #define HEADER_packet_vm_set_data 0x43
 #define HEADER_packet_vm_add_acc 0x44
 #define HEADER_packet_vm_add_block 0x45
+#define HEADER_packet_vm_add_section 0x46
 
 // little-endian readers -- the cursor is a raw byte stream, so nothing here
 // may assume the alignment a struct cast would imply
@@ -134,13 +143,40 @@ static inline err_h decoder_packet_vm_reset(void) {
 
 /** @brief 0x41 -- reserve the id tables and cap the arena. */
 static inline err_h decoder_packet_vm_open(const uint8_t* body, size_t len) {
-  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_open, 0, len, 10));
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_open, 0, len, 12));
   uint16_t obj_cnt = dec_vm_u16(body);
   uint16_t acc_cnt = dec_vm_u16(body + 2);
   uint16_t blk_cnt = dec_vm_u16(body + 4);
-  uint32_t total = dec_vm_u32(body + 6);
-  SE_RET_IF_ERR(vm_loader_open(obj_cnt, acc_cnt, blk_cnt, total));
-  ESP_LOGI(DEC_VM_LOADER_TAG, "open: %u objects, %u accessors, %u blocks, %lu bytes", obj_cnt, acc_cnt, blk_cnt, (unsigned long)total);
+  uint16_t sec_cnt = dec_vm_u16(body + 6);
+  uint32_t total = dec_vm_u32(body + 8);
+  SE_RET_IF_ERR(vm_loader_open(obj_cnt, acc_cnt, blk_cnt, sec_cnt, total));
+  ESP_LOGI(DEC_VM_LOADER_TAG, "open: %u objects, %u accessors, %u blocks, %u sections, %lu bytes", obj_cnt, acc_cnt, blk_cnt, sec_cnt, (unsigned long)total);
+  return NULL;
+}
+
+/**
+ * @brief 0x46 -- declare sections over the block order.
+ *
+ * Batched like 0x42/0x43/0x44 rather than one-per-frame like 0x45: a section
+ * record is three fixed u16s, so there is no length that can desynchronise a
+ * cursor and nothing to gain from isolating one record per frame.
+ *
+ * Must arrive after every 0x45 it covers -- the range is validated against the
+ * block registry, so the blocks have to be there to validate it against.
+ */
+static inline err_h decoder_packet_vm_add_section(const uint8_t* body, size_t len) {
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_section, 0, len, 1));
+  uint8_t n = body[0];
+  size_t off = 1;
+
+  for (uint8_t i = 0; i < n; i++) {
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_section, off, len, 6));
+    uint16_t sec_id = dec_vm_u16(body + off);
+    uint16_t start = dec_vm_u16(body + off + 2);
+    uint16_t end = dec_vm_u16(body + off + 4);
+    off += 6;
+    SE_RET_IF_ERR(vm_loader_add_section(sec_id, start, end));
+  }
   return NULL;
 }
 
@@ -287,6 +323,8 @@ static inline err_h dec_vm_loader_decode(const uint8_t* data, size_t len) {
       return decoder_packet_vm_add_acc(body, body_len);
     case HEADER_packet_vm_add_block:
       return decoder_packet_vm_add_block(body, body_len);
+    case HEADER_packet_vm_add_section:
+      return decoder_packet_vm_add_section(body, body_len);
     default:
       ESP_LOGW(DEC_VM_LOADER_TAG, "unknown packet header 0x%02X", data[0]);
       SE_RET_ERR(ERR_INTERFACE_UNKNOWN_PACKET, .class_header = VM_LOADER_CLASS_HEADER, .packet_header = data[0]);

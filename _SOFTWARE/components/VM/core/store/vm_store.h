@@ -31,7 +31,8 @@ weren't already part of the program being discarded.
  *              + 4 B per enable source + own vars
  *   object     4 B head + payload, 4-byte aligned, + tag bytes if named
  *   accessor   20 B + 8 B per chain index
- *   registry   4 B per id, in each of the three id spaces
+ *   section    4 B (a [start, end) pair over the block order)
+ *   registry   4 B per id, in each of the four id spaces
  */
 #define VM_STORE_MAX_POOL (128 * 1024)
 
@@ -40,7 +41,14 @@ typedef enum vm_reg_e {
   VM_REG_OBJ = 0,
   VM_REG_ACC = 1,
   VM_REG_BLK = 2,
-  VM_REG_CNT = 3,
+  /* Sections are `[start, end)` ranges over the block registry, which is
+     itself the execution order (see [[VM_EXEC.MD]]). They get a registry of
+     their own rather than a side table because they are allocated, bound and
+     torn down on exactly the same schedule as everything else a program owns
+     -- and reusing the registry means a bad section id already reports as
+     ERR_VM_REG_OOB with the right `kind`. */
+  VM_REG_SEC = 3,
+  VM_REG_CNT = 4,
 } vm_reg_e;
 
 /** @brief "Allocate but do not bind" -- for storage addressed through

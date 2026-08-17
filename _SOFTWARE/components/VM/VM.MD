@@ -17,24 +17,38 @@ Three properties shape every decision in this component:
 components/VM/
 ├── CMakeLists.txt
 ├── VM.MD                 # This documentation
+├── blocks/                     # THE PALETTE — one .c per block type
+│   ├── vm_blocks.h             # type ids + the placeholders' shared private state
+│   ├── vm_blocks_dummy.c       # seven placeholders, one per block shape
+│   ├── vm_block_expr.h         # RPN bytecode: layout, both opcode palettes, fault reasons
+│   ├── vm_block_expr.c         # EXPR (float) and EXPR_BIT (uint32) — one machine, two words
+│   └── vm_blocks_table.c       # g_vm_blocks[] — the palette, entire
 └── core/
     ├── errors/
     │   └── sys_error_vm.h      # VM owner map + error tag map + _OWNED error macros
     ├── store/
-    │   └── vm_store.h/.c       # THE storage API — per-load pool, bump arena, three id registries
+    │   └── vm_store.h/.c       # THE storage API — per-load pool, bump arena, four id registries
     ├── obj/
     │   ├── vm_obj.h            # vm_obj_head_t / vm_obj_t / vm_obj_h, type widths, header helpers
     │   ├── vm_obj_build.h/.c   # vm_obj_create() / vm_accessor_create()
     │   ├── vm_obj_dyn.h/.c     # heap objects, refcounted, register + teardown
     │   └── vm_obj_access.h/.c  # accessors, payload resolution, typed get/set macros
     ├── block/
-    │   ├── vm_block.h          # vm_block_data_t, pin access, EN/ENO, BLOCK_CALL
-    │   └── vm_block_build.h/.c # vm_block_create(), wiring resolution
+    │   ├── vm_block.h          # vm_block_data_t, pin access, EN/ENO, cfg.rt, spans, BLOCK_CALL
+    │   ├── vm_block_build.h/.c # vm_block_create(), wiring resolution
+    │   ├── vm_block_run.c      # what a block body reaches for: ask, claim a span
+    │   └── vm_block_template.h # worked templates: update-driven, enable-driven, span owner
+    ├── exec/
+    │   ├── vm_section.h/.c     # sections as [start, end) ranges over the block order
+    │   ├── vm_event.h/.c       # routed sys_callbacks events — two buffers, swapped per pass
+    │   └── vm_exec.h/.c        # the supervisor: pass loop, dispatch, spans, block watchdog
     └── loader/
         └── vm_loader.h/.c      # load state machine, wire-facing validation
 ```
 
-The groups are stacked bottom-up: `errors` and `store` are depended on by everything, `obj` builds on `store`, `block` on `obj`, and `loader` drives all of them.
+The groups are stacked bottom-up: `errors` and `store` are depended on by everything, `obj` builds on `store`, `block` on `obj`, `exec` on `block`, and `loader` drives all of them.
+
+`blocks/` sits outside `core/` and depends on it, never the reverse. The supervisor dispatches through the *declaration* of `g_vm_blocks` in `vm_exec.h` and never learns what is in it — which is what keeps `core/` free of `sys_io`, `sys_actions` and every other driver a real block will pull in.
 
 **Every include across the project is by bare filename** — `#include "vm_obj.h"`, never `"obj/vm_obj.h"`. Each group is on the include path instead (see `CMakeLists.txt`), so this tree is a reading aid and regrouping it again later touches no source file. The one path that is spelled out is `../VM/core/errors` in `sys_errors/CMakeLists.txt`, which reaches the error map without a circular `REQUIRES`.
 
@@ -273,11 +287,13 @@ Scheduling granularity is therefore the **section, not the block**: an idle even
 
 ```
 0x40 reset    : -
-0x41 open     : u16 obj_cnt, u16 acc_cnt, u32 total_size
+0x41 open     : u16 obj_cnt, u16 acc_cnt, u16 blk_cnt, u16 sec_cnt, u32 total_size
 0x42 add objs : u8 n, n x { u16 id, vm_obj_head_t head, char name[head.d.name_size] }
 0x43 set data : u8 n, n x { u16 id, u16 start_idx, u16 byte_len, u8 data[byte_len] }
 0x44 add acc  : u8 n, n x { u16 acc_id, u16 root_obj_id, u8 idx_count, u8 idx_len, u8 idx_data[idx_len] }
                 idx_data = idx_count x { u8 kind, LITERAL u32 | REF u16 acc_id | NAME u8 len + bytes }
+0x45 add block: one block — header, in ids, out ids, en ids, private state
+0x46 add secs : u8 n, n x { u16 sec_id, u16 start, u16 end }
 ```
 
 All multi-byte fields little-endian. Design points:
@@ -297,6 +313,10 @@ The class is registered in `sys_interface_init()` — see [[SYS_INTERFACE.MD]].
 ## On-Target Self Test
 
 `components/runit/vm_selftest.c` exercises the stack bottom-up so a failure points at one layer rather than at "the VM". Enable with `RUNIT_ENABLE_VM_SELFTEST` in `runit_board_cfg.h`; results are PASS/FAIL lines on serial with a final tally.
+
+Stages **P–S** cover execution: dispatch and what it refuses at load, section ranges and overlap, a pass run synchronously over a hand-built program (a block standing itself down, keeping its data, the `upd` sweep, holding while inactive, spans, `on_error`), and events. It dispatches through the real palette — the placeholders in `blocks/` — and reads their `calls`/`acts` counters out of the blocks' own private state, so there is no test-only seam in the exec layer at all.
+
+Stage **T** is the first stage about a *real* block, and the first about a compiled input: fifteen expression programs, hand-assembled as RPN in the same layout the `0x45` record's private-state tail carries, run through `vm_exec_pass()`. It covers arithmetic and literals, a comparison feeding `SEL`, one pin named twice resolving once, the bitwise palette (masked shift, popcount, a shift of 32 landing on 0 rather than on undefined behaviour, a rotate), a declared-but-unnamed pin never being read — which is what the lazy input cache buys and what an eager prefetch would break — and then every fault: a zero divisor, an unknown opcode, a stack underflow, a program ending on two values, and `custom_data` too short for its own header. The fault assertions are about the *lifetimes* as much as the detection — malformed code latched in `VM_BLK_RT_CFG_BAD` and still latched a pass later, a math fault latched in the block's own `rt` and re-armed by the next clean evaluation, and in both cases nothing published and the flow withdrawn by the supervisor rather than by the block.
 
 | Stage | Covers |
 | :--- | :--- |
@@ -323,6 +343,8 @@ Several assertions exist to pin a decision rather than to check an obvious behav
 `vm_selftest_inject(frame, len)` is exposed for ad-hoc probing — hand it any raw frame (class byte included) and it returns the decoder's `err_h` without pushing it.
 
 Pair it with `RUNIT_SKIP_DEVICE_INIT` to boot with no I2C devices installed, which is useful when the VM is what you want to test and a missing or faulty peripheral would otherwise stall boot.
+
+Both the test and the benchmark **yield one tick between stages** (and between benchmark scenarios), never inside a measurement. They run synchronously on `main`, which is priority 1 and blocks nowhere — no assertion or measurement waits on anything, and console logging does not yield either — so without it `IDLE0` never runs from boot init until the last stage finishes, and the task watchdog it feeds trips at `CONFIG_ESP_TASK_WDT_TIMEOUT_S` naming `main` as the CPU 0 hog. The two together are well past that, so it is not a matter of one slow stage. The tick costs nothing measurable: it lands outside the timed region, each scenario already warms the icache with a discarded call, and the figure reported is the best of three trials.
 
 ---
 
@@ -363,6 +385,33 @@ The fixes, in the order they matter:
 4. **`VM_OBJ_SHIFT_PACK`** replaces the shift table with a literal. Two bits per type in one immediate, and every valid width is `1 << shift`, so the size table leaves the hot path too.
 
 A float read of `flat[i]` now ends in a single `lsi f0, a11, 0`, and the binary got *smaller* despite the inlining, because a fused switch is less code than two.
+
+### Expression blocks
+
+Three programs of rising size on the same machine, timed per **block execution** rather than per access — the whole of what a pass pays: trigger scan, `custom_data` check, bytecode walk, publish, ENO write. All eight pins are cached single-literal accessors on a dedicated input object, and none of the three uses a transcendental, so what is measured is the interpreter rather than libm.
+
+| Program | cyc/exec | µs @ 160 MHz |
+| :--- | ---: | ---: |
+| 2 pins, 1 op | 473 | 2.98 |
+| 4 pins, 3 ops | 793 | 4.99 |
+| 8 pins, 20 ops + 6 literals | 2832 | 17.81 |
+
+The three points fit **~233 cycles fixed + ~78 cycles per bytecode instruction**, and the per-instruction figure is flat across the two intervals (80 and 76) — a pin read, a literal push and an arithmetic op all cost about the same. Since a cached pin read is 27 cyc on its own and a float add is about two, that flatness says the per-instruction overhead, not the work, is what is being measured.
+
+### Where the 78 cycles is not
+
+Two plausible culprits were checked against the disassembly and **both are innocent**, which is worth recording so they are not chased again:
+
+* **The opcode switch is not a linear compare chain.** GCC emits a *binary decision tree* — `bnei 5`, `bgeui 6`, `bnei 2`, `bgeui 3` … — so dispatch is about six branches. It is not a jump table (this target emits only 15 `jx` in the whole firmware, so the Xtensa cost model appears to avoid them), but a six-branch tree is 10–20 cycles, not 78.
+* **The inlined fault paths are not the cost.** Every guard building its own error puts 70 `SE_alloc_bytes` + `vm_block_report_error` pairs in the function, at 2569 instructions. Hoisting them into one epilogue was tried: it collapsed those to 5 call sites and cut **3.2 kB** from the image, and it made every program **4–6% slower** — 473 → 502 cyc on the two-pin add, 2832 → 2945 on the twenty-op case. It was reverted.
+
+### Where it is
+
+Register pressure. The loop body reloads its variables from the frame every instruction — `l8ui a2, a1, 112`, `l8ui a10, a1, 134` — because Xtensa's windowed ABI leaves this function about twelve usable registers while the loop wants `pc`, `sp`, `loaded`, the code pointer and both struct pointers live at once, on top of a 128-byte frame for `st[16]` and `in[16]`.
+
+That also explains the failed experiment exactly: an epilogue must be told where it went wrong, so `at`, `op`, the reason and the `err_h` all become live across the whole loop — four more spilled values, paid once per *instruction* instead of once per *fault*. The lesson generalises: in this loop, anything that adds a live value loses, and code size is not the currency.
+
+The untried lever is the classic one for a stack interpreter — keep the top of stack in a local instead of in `st[sp-1]`, so a binary op costs one load rather than two loads and a store — with dropping the `in[]` pin cache (which buys a repeat mention 27 cyc but costs a live register on every instruction) as the cheaper half-measure.
 
 That took `flat[i]` 111 → 66 cyc and `grid[r][c]` 141 → 105. It also made every *other* row slightly worse — by-ref 500 → 512, by-name 665 → 686, write 152 → 157 — because a shape the inline resolver does not handle now pays for the attempt before walking. That is the intended trade, but it exposed where the remaining cost actually was:
 
@@ -461,17 +510,18 @@ The class is bound once in `sys_interface_init()`:
 | | packet | payload | effect |
 | :--- | :--- | :--- | :--- |
 | **0x40** | reset | — | `vm_loader_reset()` |
-| **0x41** | open | `u16 obj_cnt, u16 acc_cnt, u16 blk_cnt, u32 total_size` | reset, cap arena, build all three id tables |
+| **0x41** | open | `u16 obj_cnt, u16 acc_cnt, u16 blk_cnt, u16 sec_cnt, u32 total_size` | reset, cap arena, build all four id tables |
 | **0x42** | add objects | `u8 n`, then `{u16 id, vm_obj_head_t head, char name[]}` | create + bind each object |
 | **0x43** | set data | `u8 n`, then `{u16 id, u16 start_idx, u16 byte_len, u8 data[]}` | fill a payload, **or link children** |
 | **0x44** | add accessors | `u8 n`, then `{u16 acc_id, u16 root_obj_id, u8 idx_count, u8 idx_len, u8 idx_data[]}` | create + pre-resolve each accessor |
-| **0x45** | add block | one block: header, in ids, out ids, en ids, private state | create + resolve all wiring |
+| **0x45** | add block | one block: header, in ids, out ids, en ids, private state | check the type is registered, create + resolve all wiring |
+| **0x46** | add sections | `u8 n`, then `{u16 sec_id, u16 start, u16 end}` | bind `[start, end)` ranges over the block order |
 
 0x42, 0x43 and 0x44 are batched and repeatable — a program arrives across as many frames as the MTU needs. **0x45 carries exactly one block**, because a block record varies in length four separate ways (inputs, outputs, enable sources, private state); batching would need a length prefix per record and a cursor that can desynchronise, and one-per-frame puts a malformed record's blast radius at that block.
 
-### One store, three registries
+### One store, four registries
 
-Objects, accessors and blocks are three id spaces over **one** arena, and they go through one API — [vm_store.h](core/store/vm_store.h):
+Objects, accessors, blocks and sections are four id spaces over **one** arena, and they go through one API — [vm_store.h](core/store/vm_store.h):
 
 ```c
 vm_store_open(total, counts)     // size the arena, build the registries
@@ -523,6 +573,8 @@ Three shape limits, all enforced at load — `in_cnt`, `q_cnt` and `en_cnt` each
 | a child object before the `0x43` that links it | `ERR_VM_ACCESSOR_UNKNOWN_ID` |
 | a referenced accessor before the one referencing it | `ERR_VM_ACC_TABLE_OOB` |
 | every object and accessor a block names, before the block | `ERR_VM_BLK_BAD_REF`, naming the slot |
+| a block's type registered in the palette, before the block | `ERR_VM_BLK_UNKNOWN_TYPE` |
+| every block a section covers, before the section | `ERR_VM_SEC_BAD_RANGE` |
 | a root object before the accessor rooted on it | **no error** — the accessor stays uncached, costing speed only |
 
 ### On failure
@@ -531,9 +583,325 @@ Every stage returns an `err_h` chain up through the decoder to `sys_interface`. 
 
 ### Where this path currently ends
 
-At **fully wired blocks**. A program uploads its objects, its accessors and its blocks, and every block comes out with resolved pins, EN, ENO and zeroed private state.
+At **a program that runs**, with an empty palette.
 
-What is still missing is everything that would *run* it: `vm_code.h` is a draft, there is no supervisor, no scan cycle, and no block palette — `block_type` is carried and stored but nothing dispatches on it yet. So a loaded program today is a complete, resolvable graph with nothing to execute it.
+A program uploads its objects, its accessors, its blocks and its sections; every block comes out with resolved pins, EN, ENO and zeroed private state, and its `block_type` checked against the palette. `vm_exec_pass()` then walks the section ranges in order, decides activation for each block, dispatches through the descriptor, drives non-activating blocks' outputs to their defaults quietly, honours `cfg.on_error`, and clears `upd` at the end of the pass. `vm_exec_start()` puts that loop on core 1.
+
+What is still missing is the **real palette** — blocks that do something. `blocks/` currently holds seven placeholders with the right shapes and no behaviour, which is what the self test dispatches through (stages P–S) and what a real block gets copied from. A `0x45` naming any other type is rejected with `ERR_VM_BLK_UNKNOWN_TYPE`, by design rather than by omission: a type nothing dispatches is better refused at load than discovered on a pass.
+
+---
+
+## Execution (`core/exec/`)
+
+The model this implements is [[VM_EXEC.MD]] — read that for *why*. This is what
+exists in code.
+
+### The pass
+
+```
+for each bound section:  freeze point -> run [start, end) atomically
+end of pass:             sample subscriptions -> clear upd
+```
+
+`vm_exec_pass()` runs one pass on the calling task; `vm_exec_start()` puts that
+loop on a task pinned to **core 1**, yielding one tick per pass. At
+`CONFIG_FREERTOS_HZ = 100` that one tick *is* the 10 ms floor, and it is also
+what feeds core 1's idle-task watchdog — `taskYIELD()` would not, since idle
+runs at priority 0.
+
+A **freeze point** is the only place anything external intervenes: queued
+events become visible, overflow errors are raised, and freeze/resume take
+effect. Nothing lands mid-section, so a section always traverses one snapshot.
+
+If no section is bound, the whole block order runs as one section. That covers
+both "the program declared none" and "its section packets never arrived" — the
+alternative for the second case is a program that loads, counts passes and
+executes nothing, with nothing to see.
+
+### Activation is the block's, not the supervisor's
+
+**Every block in a running section is called.** The supervisor tests nothing,
+gates nothing and skips nothing.
+
+That is where the knowledge is. A block knows what wakes it — an arrival, a
+level, a deadline, nothing at all — better than any table describing it from
+outside, and it already holds everything needed to answer. So it asks:
+
+| helper | question |
+| :--- | :--- |
+| `vm_block_triggered()` | did anything new arrive on any of my inputs? |
+| `vm_block_input_fresh(pin)` | was it *that* one? |
+| `vm_block_is_enabled()` | do my enable sources say so? |
+| `vm_block_set_ENO(b, false)` | not acting — and this is the *entire* else-branch |
+
+and the ordinary block body is:
+
+```c
+static void blk_expression(vm_block_h b) {
+  IF_BLOCK_TRIGGERED(b) {
+    ...
+    vm_block_set_ENO(b, true);
+  } else {
+    vm_block_set_ENO(b, false);         // nothing arrived, so nothing changed
+  }
+}
+```
+
+**A block that does not act keeps its outputs and drops its ENO. Nothing else.**
+Nothing changed, so last pass's answer is still the right one — an expression
+whose inputs are all old computes the same result, and zeroing it would publish
+a 0 where a correct number was standing. Data persists; what is withdrawn is
+the flow.
+
+Nothing else is needed because **the supervisor already withdraws freshness for
+everybody**: the end-of-pass `upd` sweep means an output nobody rewrote reads
+as stale on the next pass for free. So both kinds of downstream block stand
+down on their own — one gated on the ENO level, one waiting on an arrival that
+never came — and the flow below prunes itself by data.
+
+There is no "clear my outputs" call, and there was one. It existed for outputs
+carrying *flow* rather than data — a router's `YES`/`NO` — on the theory that a
+router which fired once would otherwise leave `YES` true forever. That only
+bites if something reads `YES` as a **level**, and an event router's consumers
+are update-driven: they gate on freshness, which the sweep already withdraws.
+The call was solving a problem the sweep had already solved.
+
+The write is **asymmetric, and `vm_block_set_ENO()` owns the asymmetry** so no
+block body can get it wrong: **true is loud** (an assertion of flow is news, so
+it sets `upd`), **false is quiet** (a loud false would read as an *arrival* to
+an update-driven block below — the exact opposite of standing down).
+
+An actuator's `when inactive: Hold` then needs no mechanism at all — the block
+is called like every other and simply never sets ENO false, holding its output
+and its flow alike.
+
+`core/block/vm_block_template.h` carries a worked template per shape.
+
+`vm_block_triggered()` latches `VM_BLK_RT_TRIGGERED` in `cfg.rt`, so the answer
+survives the call for telemetry and debugging. Blocks that never ask pay
+nothing for the feature existing.
+
+### The palette
+
+One `const` array in `blocks/vm_blocks_table.c`, indexed by `block_type`. That
+is all of it — there is no palette module, no registry, no registration call
+and no indirection:
+
+```c
+const vm_block_fn g_vm_blocks[] = {
+    /* [VM_BLK_NONE] stays NULL: an unset block_type must not be runnable. */
+    [VM_BLK_NOP]   = vm_blk_nop,
+    [VM_BLK_GATE]  = vm_blk_gate,
+    [VM_BLK_ROUTE] = vm_blk_route,
+};
+```
+
+Everything a block needs is already in the handle — pins, enable list, outputs,
+private state — so there is nothing for a descriptor to hold that the block
+cannot read directly, and nothing for the supervisor to decide on its behalf. A
+designated initialiser *is* the registration, the table lives in flash, and
+adding a block type is its own `.c` plus one line here.
+
+That did cost something: a central table is a two-place edit, which is exactly
+what a registration API avoided. It was worth it. A table you can read at a
+glance beats a mapping you have to grep for, and a mutable array, a duplicate
+check, a slot-range check, an init order and two error tags all went with it.
+One gap remains: C lets a later designated initialiser silently override an
+earlier one, so the component builds with **`-Woverride-init`** to make a
+doubly-claimed type a warning rather than a last-one-wins surprise.
+
+A firmware has exactly one palette, so the array *is* what dispatch indexes —
+nothing can point it somewhere else. It lives beside the blocks rather than in
+`core/exec/` on purpose: the supervisor must not know what is in the palette,
+it dispatches through the declaration in `vm_exec.h` and nothing more, so the
+dependency runs `blocks/` → `exec/` and never back. That is what keeps `core/`
+free of every driver a real block will eventually pull in.
+
+**Type 0 is reserved.** An unset `block_type` is zero, and it must not resolve
+to something runnable.
+
+`vm_exec_check_block_type()` runs at load and refuses exactly one thing: a type
+no function claims. Otherwise the block would load fine and be silently skipped
+on every pass — a program that runs, reports nothing, and does less than it says.
+
+What is deliberately **missing** is a description of what a block *takes in* —
+pin counts, private-state size, types. That is load-time validation and editor
+material, and it comes back as its own table when there is a palette to
+describe. Until then a wrong `custom_len` is the program's own problem.
+
+### What ships today
+
+Seven **placeholders** (`blocks/vm_blocks.h`): `NOP`, `GATE`, `ON_UPDATE`,
+`HOLD`, `REPEAT`, `FAULT`, `ON_EVENT`. They have the shapes real blocks have and
+none of the behaviour — each decides whether to act exactly as its kind of
+block would, then publishes a `1` instead of doing anything, and keeps
+`calls`/`acts` counters in its private state so the gap between "was
+dispatched" and "decided to act" is observable.
+
+They earn their place three ways: they are the templates in
+`core/block/vm_block_template.h` made real, one per shape; they give the self
+test something to dispatch, so standing down, holding, span claiming and
+`on_error` are actually executed rather than merely compiled; and a real block
+starts by copying the one nearest its shape.
+
+Two **real** blocks (`blocks/vm_block_expr.h`), numbered from where the
+placeholders stop because the id space is one space: `EXPR` (8) and `EXPR_BIT`
+(9).
+
+### Expression blocks
+
+One machine with two words — `EXPR` evaluates in `float`, `EXPR_BIT` in
+`uint32_t` — over an RPN instruction stream the client compiles and ships in
+the block's own `custom_data`:
+
+```
+u8 const_cnt | u8 rt | u16 code_len | u32 consts[const_cnt] | u8 code[code_len]
+```
+
+The literals precede the code so they land 4-aligned with no pad: `custom_data`
+always starts 4-aligned and the header is exactly 4 bytes, so reading one is an
+aligned load. `rt` is the block's own scratch byte and must be zero on the wire.
+
+They are two block types rather than one with a mode byte because the palettes
+barely overlap — there is no sensible `ROL` on a float, no `SQRT` on a bit
+pattern — and a mode byte would make every program carry the answer to a
+question `block_type` already asks. Only the first six opcodes (`END`, `IN`,
+`K`, `DUP`, `DROP`, `SWAP`) are numbered alike, so an encoder or disassembler
+can handle pushes and stack plumbing without knowing which block it is aimed at.
+
+**Straight-line, by construction.** There is no jump, so an expression cannot
+loop and its worst-case duration is `code_len` — which is what lets one sit
+inside a section whose duration has to stay computable. A branch is `SEL`, which
+evaluates both arms; a loop is `REPEAT` and a span.
+
+**Activation is `IF_BLOCK_TRIGGERED` alone; the enable list is not consulted.**
+An expression is a function of its inputs, so re-evaluating one nothing arrived
+on has a known answer. A program wanting one gated wires the gate downstream,
+where a level belongs. Pins are read at most once each per evaluation and only
+if the code names them, so every occurrence of `IN 2` is the same number even
+through a dynamic accessor, and a declared-but-unused pin costs nothing.
+
+**Two fault classes, two lifetimes, because this runs at 100 Hz.** A malformed
+program (`ERR_VM_EXPR_BAD_CODE` — bad opcode, truncated operand, stack under- or
+overflow, a stack not ending on exactly one value) is a standing condition, so
+it is reported once and latched in `VM_BLK_RT_CFG_BAD`, exactly as a malformed
+span is. A bad *value* (`ERR_VM_EXPR_MATH` — zero divisor, negative square root,
+a result that came out non-finite) belongs to this pass's data: it is reported
+on entering a fault episode and re-armed by the next clean evaluation, so a
+divisor stuck at zero for a minute is one error rather than six thousand. Either
+way nothing is published — the output stands and `cfg.on_error` decides the flow.
+
+`VM_BLK_RT_CFG_BAD` (0x40) is generic, not expression-specific: any block type
+can latch "my private state is malformed" in it and report once per load.
+
+### Spans
+
+A block that repeats or skips part of the order keeps the range in its own
+private state, like any other parameter, and **claims** it at run time with
+`vm_block_claim_span()`. That sets `VM_BLK_RT_SPAN`; the walker reads the bit
+*after* the call and jumps, because only the block knows it is a span owner.
+
+The contract that matters: **claim first, unconditionally**, before deciding
+anything else. A FOR that returns early without claiming — disabled, or count
+zero — leaves the walk about to run the span inline, which is the one outcome
+neither branch wanted. Running a span zero times is not the same as letting
+somebody else run it once.
+
+Nesting is capped at `VM_EXEC_MAX_SPAN_DEPTH`. A claim that doesn't move the
+walk forward is reported once (sticky `VM_BLK_RT_SPAN_BAD`) and then ignored,
+so it degrades to running inline rather than to a hang.
+
+### `upd`, and who clears it
+
+The supervisor, at the **end of a pass** — not at the point of consumption
+(which would break fan-out: two blocks reading one fresh object, and whichever
+ran first steals the update) and not per section (which would make a value
+written in section 0 read as stale in section 3 of the same pass). The sweep
+respects `upd_resetable`, and covers dynamic objects as well as the registry.
+Subscriptions are sampled *before* it, via `vm_exec_set_sample_hook()`.
+
+### The block watchdog
+
+One store per block, no clock reads: the supervisor publishes `(seq << 16) |
+block_id` to a volatile, and a 20 ms `esp_timer` samples it. Same word twice
+running means that block hung, and the error **names it** rather than just
+resetting the chip. The sequence number is what distinguishes "still running"
+from "running again next pass".
+
+[[VM_EXEC.MD]] specifies a timer ISR here with a deferred report. This uses an
+ordinary `esp_timer`, whose callback already runs at task level on core 0 — so
+it keeps sampling while core 1 is stuck, and can build the error where it
+detects it. The deferred hand-off would have been worse: a genuinely hung block
+never reaches the freeze point that would have drained the flag.
+
+### Events
+
+**An event lives exactly one scan cycle.** A FreeRTOS queue and a snapshot:
+
+```
+sys_callbacks routes here  ->  [ queue ]  -- drained at the top of a pass -->
+[ this cycle's events ]  <-  blocks query here, until the next drain
+```
+
+A pass therefore sees one unchanging snapshot of everything that arrived while
+the previous pass was running, and whatever it does not act on is overwritten
+at the next drain. Events **can** go unhandled, on purpose: a block that was disabled
+when its event arrived simply misses it, which is the same answer a physical
+edge gives.
+
+The drain replaces a hand-rolled queue's entire apparatus — no per-entry
+lifetime, no sequence numbers, no visibility watermark, no ordering maintained
+across passes — and the cost of it going wrong is one lost event rather than a
+corrupted stream.
+
+**What is buffered is `cb_event_t`** — the system's own callback event, exactly
+as [[SYS_CALLBACKS.MD]] routed it. There is no VM event type, on purpose: a
+VM-side struct would mean a translation step that has to be extended every time
+a new callback kind appears, and would throw away what the head already carries
+(`callback_type`, `route_mask`, `action_id`). GPIO edges, power faults and BLE
+traffic are the whole point of this buffer, and they already have a shape.
+
+The VM plugs in as **route slot `SYS_CB_ROUTE_VM` (4)**, registered from a
+load-time constructor like every other domain. Unlike the other slots it does
+not *handle* the event — it parks it for one scan cycle and lets blocks decide.
+
+**Blocks ask; nothing is delivered, and nothing is addressed to a block.** An
+event block is not woken and not routed to. It walks `[0, vm_event_count())`
+with `vm_event_at()`, recognises what it cares about from the head and the
+union, and either acts or stands down. Nothing is consumed, so two blocks
+watching the same GPIO both see the edge — there is no ownership to arbitrate
+and no order to get wrong. A driver reports "GPIO 4 rose" knowing nothing about
+the program; any number of blocks may act on it, or none.
+
+**There is no locking of the VM's own.** Producers are `sys_cb_task` (core 0);
+the consumer is the supervisor (core 1), and they genuinely run at once — but a
+FreeRTOS queue already arbitrates that correctly, so there is nothing here to
+get wrong. After the drain, this cycle's events live in an array no other task
+can see, which makes every read a block does lock-free *by construction* rather
+than by argument.
+
+`vm_event_post()` is **not** called from an ISR, despite being the far end of
+an interrupt. `sys_callback_trigger()` already absorbed that with
+`xQueueSendFromISR`, and `sys_cb_task` dispatches route functions at task
+level, so ISR safety was handled a layer down. It never waits, though: a
+producer that blocked would stall `sys_cb_task` and with it every other route —
+an event the VM has no room for must not cost `sys_io` its own delivery.
+
+An earlier version hand-rolled a double buffer under a `portMUX`. It worked,
+but it was two buffers, an index, a spinlock and a swap-time race to reason
+about, reimplementing what `R_QUEUE_DEFINE` gives for free.
+
+Overflow — more than `VM_EVENT_DEPTH` in one cycle — drops the newest and
+raises `ERR_VM_EVENT_OVERFLOW`. Events dropped by the *drain* for want of a
+taker are normal, and silent.
+
+### `usr_mutable`, finally read
+
+`mutable` is "may be written at all"; `usr_mutable` is "may be written by *user
+logic*". A block's own ENO is the first and not the second, so a Set block the
+user drew cannot forge another block's flow. Internal writes keep using
+`vm_obj_set_scalar()`; user-authored and remote writes go through the `_usr`
+forms, which check both.
 
 ---
 
@@ -586,18 +954,25 @@ Note the app **partition** is 1 MB (`CONFIG_PARTITION_TABLE_SINGLE_APP`), not th
 **Dynamic objects** — `vm_obj_dyn_create()`, `vm_obj_dyn_retain()`, `vm_obj_dyn_release()`, `vm_obj_dyn_reset()`, `vm_obj_dyn_id()`, `vm_obj_dyn_get()`, `vm_obj_is_dynamic()`
 **Header helpers** — `vm_obj_total_size()`, `vm_obj_payload_size()`, `vm_obj_type_size()`, `vm_type_width()`, `vm_obj_items_cnt()`, `vm_obj_tag()`, `vm_obj_payload()`
 **Store** — `vm_store_open()`, `vm_store_alloc()`, `vm_store_get()`, `vm_store_reset()`, `vm_store_used()`, `vm_store_capacity()`
-**Access** — `vm_obj_by_id()`, `vm_accessor_by_id()`, `vm_obj_get_payload()`, `vm_get_obj()`, `vm_obj_set_scalar()`, `vm_obj_set_scalar_direct()`, `vm_obj_copy_content()`, `vm_obj_link()`, `vm_obj_link_direct()`, `vm_payload_at()`, `vm_obj_as_payload()`, `vm_payload_read()`
-**Macros** — `VM_OBJ_GET_VAL()`, `VM_OBJ_SET_VAL()`, `VM_OBJ_SET_VAL_AT()`, `VM_PAYLOAD_GET_VAL()`, `VM_VAL_CAST_TO()`
-**Blocks** — `vm_block_get_in()`, `vm_block_get_out()`, `vm_block_is_enabled()`, `vm_block_set_ENO()`, `vm_block_inputs()`, `vm_block_outputs()`, `vm_block_en_list()`, `vm_block_custom_data()`, `vm_block_size()`, `IF_BLOCK_ENABLED()`, `BLOCK_CALL()`
-**Loading** — `vm_loader_reset()`, `vm_loader_open()`, `vm_loader_add_obj()`, `vm_loader_set_data()`, `vm_loader_add_accessor()`, `vm_loader_state()`, `vm_loader_used()`
+**Access** — `vm_obj_by_id()`, `vm_accessor_by_id()`, `vm_obj_get_payload()`, `vm_get_obj()`, `vm_obj_set_scalar()`, `vm_obj_set_scalar_direct()`, `vm_obj_copy_content()`, `vm_obj_link()`, `vm_obj_link_direct()`, `vm_obj_clear_quiet()`, `vm_payload_at()`, `vm_obj_as_payload()`, `vm_payload_read()`
+**User-authored / remote writes** (check `usr_mutable` as well as `mutable`) — `vm_obj_set_scalar_usr()`, `vm_obj_set_scalar_direct_usr()`, `vm_obj_copy_content_usr()`
+**Macros** — `VM_OBJ_GET_VAL()`, `VM_OBJ_SET_VAL()`, `VM_OBJ_SET_VAL_AT()`, `VM_OBJ_SET_VAL_USR()`, `VM_OBJ_SET_VAL_AT_USR()`, `VM_PAYLOAD_GET_VAL()`, `VM_VAL_CAST_TO()`
+**Blocks** — `vm_block_get_in()`, `vm_block_get_out()`, `vm_block_is_enabled()`, `vm_block_triggered()`, `vm_block_input_fresh()`, `vm_block_set_ENO()`, `vm_block_span()`, `vm_block_claim_span()`, `vm_block_inputs()`, `vm_block_outputs()`, `vm_block_en_list()`, `vm_block_custom_data()`, `vm_block_size()`, `IF_BLOCK_ENABLED()`, `IF_BLOCK_TRIGGERED()`, `BLOCK_CALL()`
+**Dispatch** — `vm_block_fn_for()`, `vm_exec_check_block_type()`, `vm_exec_use_blocks()`
+**Sections** — `vm_section_create()`, `vm_section_by_id()`, `vm_section_count()`
+**Events** — `vm_event_post()`, `vm_event_count()`, `vm_event_at()`, `vm_event_drain()`, `vm_event_take_overflow()`, `vm_event_reset()`
+**Execution** — `vm_exec_start()`, `vm_exec_stop()`, `vm_exec_pass()`, `vm_exec_run_range()`, `vm_exec_set_mode()`, `vm_exec_mode()`, `vm_exec_pass_count()`, `vm_exec_last_pass_us()`, `vm_exec_set_sample_hook()`, `vm_exec_reset()`, `vm_clock_us()`, `vm_now_ms()`
+**Loading** — `vm_loader_reset()`, `vm_loader_open()`, `vm_loader_add_obj()`, `vm_loader_set_data()`, `vm_loader_add_accessor()`, `vm_loader_add_block()`, `vm_loader_add_section()`, `vm_loader_state()`, `vm_loader_used()`
 
 ---
 
 ## Error Ownership
 
-Owners `0xA900`–`0xA907` (`SYS_VM_OWNER_MAP` in `core/errors/sys_error_vm.h`): `OWNER_VM_BASE`, `OWNER_VM_STORE`, `OWNER_VM_OBJ`, `OWNER_VM_ACCESSOR`, `OWNER_VM_BLOCK`, `OWNER_VM_CODE`, `OWNER_VM_LOADER`, `OWNER_DEC_VM_LOADER`.
+Owners `0xA900`–`0xA908` (`SYS_VM_OWNER_MAP` in `core/errors/sys_error_vm.h`): `OWNER_VM_BASE`, `OWNER_VM_STORE`, `OWNER_VM_OBJ`, `OWNER_VM_ACCESSOR`, `OWNER_VM_BLOCK`, `OWNER_VM_CODE`, `OWNER_VM_LOADER`, `OWNER_DEC_VM_LOADER`, `OWNER_VM_EXEC`.
 
-Tags (`SYS_ERROR_VM_MAP`) cover allocation (`ERR_VM_ALLOC_EXHAUSTED`), resolution (`ERR_VM_ACCESSOR_UNKNOWN_ID`, `_OOB`, `_TYPE_MISMATCH`, `_NULL_OBJ`, `_DEPTH_EXCEEDED`, `_INDEX_FAILED`, `_NAME_NOT_FOUND`, `_NOT_MUTABLE`), blocks (`ERR_VM_BLOCK_INPUT_UNRESOLVED`, `_PIN_MISSING`, `_PIN_UNLINKED`, `_FAILED`), construction (`ERR_VM_OBJ_BAD_TYPE`, `_EMPTY`, `_TOO_LARGE`, `_NAME_TOO_LONG`, `_RETENTIVE_PTR`, `_COPY_MISMATCH`), loading (`ERR_VM_LOAD_BAD_STATE`, `_TOO_BIG`, `_DATA_RANGE`, `_SHORT_RECORD`), accessors (`ERR_VM_ACC_INDEX_OOB`, `ERR_VM_ACC_BAD_KIND`), blocks (`ERR_VM_BLK_BAD_SHAPE`, `ERR_VM_BLK_BAD_REF`) and the registries (`ERR_VM_REG_OOB`, `ERR_VM_REG_DUP` — one pair for all three id spaces, with `kind` naming which).
+Tags (`SYS_ERROR_VM_MAP`) cover allocation (`ERR_VM_ALLOC_EXHAUSTED`), resolution (`ERR_VM_ACCESSOR_UNKNOWN_ID`, `_OOB`, `_TYPE_MISMATCH`, `_NULL_OBJ`, `_DEPTH_EXCEEDED`, `_INDEX_FAILED`, `_NAME_NOT_FOUND`, `_NOT_MUTABLE`), blocks (`ERR_VM_BLOCK_INPUT_UNRESOLVED`, `_PIN_MISSING`, `_PIN_UNLINKED`, `_FAILED`), construction (`ERR_VM_OBJ_BAD_TYPE`, `_EMPTY`, `_TOO_LARGE`, `_NAME_TOO_LONG`, `_RETENTIVE_PTR`, `_COPY_MISMATCH`), loading (`ERR_VM_LOAD_BAD_STATE`, `_TOO_BIG`, `_DATA_RANGE`, `_SHORT_RECORD`), accessors (`ERR_VM_ACC_INDEX_OOB`, `ERR_VM_ACC_BAD_KIND`), blocks (`ERR_VM_BLK_BAD_SHAPE`, `ERR_VM_BLK_BAD_REF`) and the registries (`ERR_VM_REG_OOB`, `ERR_VM_REG_DUP` — one pair for all four id spaces, with `kind` naming which).
+
+Execution adds its own group: the palette (`ERR_VM_BLK_UNKNOWN_TYPE`), sections (`ERR_VM_SEC_BAD_RANGE`, `ERR_VM_SEC_OVERLAP`), the supervisor (`ERR_VM_EXEC_BLOCK_HUNG`, `ERR_VM_EXEC_SPAN_DEPTH`, `ERR_VM_EXEC_BAD_SPAN`), events (`ERR_VM_EVENT_OVERFLOW`) and the user-write guard (`ERR_VM_OBJ_NOT_USR_MUTABLE`).
 
 `sys_error_vm.h` also supplies `SE_*_OWNED` variants (`SE_EMIT_ERR_OWNED`, `SE_ERR_NEW_OWNED`, `SE_RET_ERR_OWNED`, `SE_WRAP_ERR_OWNED`, `SE_CHECK_NOT_NULL_OWNED`, `SE_CHECK_IF_ALLOCATED_OWNED`) that take the owner explicitly, for header-only code pulled into translation units with their own ambient `OWNER`.
 

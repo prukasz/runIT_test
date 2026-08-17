@@ -6,10 +6,15 @@
 idf_component_register(
     SRCS "core/store/vm_store.c"
          "core/obj/vm_obj_build.c" "core/obj/vm_obj_access.c" "core/obj/vm_obj_dyn.c"
-         "core/block/vm_block_build.c"
+         "core/block/vm_block_build.c" "core/block/vm_block_run.c"
+         "core/exec/vm_section.c" "core/exec/vm_event.c" "core/exec/vm_exec.c"
          "core/loader/vm_loader.c"
-    INCLUDE_DIRS "core/errors" "core/store" "core/obj" "core/block" "core/loader"
-    REQUIRES sys_errors
+         "blocks/vm_blocks_dummy.c" "blocks/vm_block_expr.c" "blocks/vm_blocks_table.c"
+    INCLUDE_DIRS "core/errors" "core/store" "core/obj" "core/block" "core/exec" "core/loader" "blocks"
+    # exec/ is the first layer with anything outside the arena to talk to: the
+    # supervisor is a FreeRTOS task pinned to core 1 (utils' R_TASK_* macros),
+    # and every timing block plus the block watchdog reads esp_timer.
+    REQUIRES sys_errors utils freertos esp_timer callbacks
 )
 
 # The project builds at -Og (CONFIG_COMPILER_OPTIMIZATION_DEBUG), which is the
@@ -21,3 +26,10 @@ idf_component_register(
 # regardless of the project-wide setting. Measured with vm_bench.c -- see the
 # benchmark section of VM.MD before changing this.
 target_compile_options(${COMPONENT_LIB} PRIVATE -O2)
+
+# The palette is a designated-initialiser table (blocks/vm_blocks_table.c), and
+# C lets a later designated initialiser silently override an earlier one -- so
+# two block types claiming the same id would compile clean and the last one
+# would win. -Woverride-init makes that a warning instead of a surprise. It is
+# in -Wextra, which the project does not enable, so it is asked for by name.
+target_compile_options(${COMPONENT_LIB} PRIVATE -Woverride-init)

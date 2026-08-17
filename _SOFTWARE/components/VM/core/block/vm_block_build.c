@@ -99,5 +99,9 @@ err_h vm_block_err_pin_unlinked(uint16_t block_idx, uint8_t pin_id, bool is_out)
 }
 
 void vm_block_report_error(err_h cause, uint16_t block_idx, uint8_t block_type) {
+  /* Same mark BLOCK_CALL leaves -- every route a body reports a failure by has
+     to set it, or cfg.on_error would be honoured for some failures and not
+     others depending on which macro the block author reached for. */
+  g_vm_block_fault = true;
   SE_push_to_handler(SE_WRAP_ERR(cause, ERR_VM_BLOCK_FAILED, .block_idx = block_idx, .block_type = block_type));
 }

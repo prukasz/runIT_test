@@ -326,6 +326,45 @@ err_h vm_obj_set_scalar(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_
   return vm_store_inline(r.owner, r.payload, v, src_type, target->id);
 }
 
+/*
+The user-authored / remote write path. Same resolve, one more gate: the write
+is refused unless the deepest object it lands on is `usr_mutable` as well as
+`mutable`.
+
+`usr_mutable` is checked on `r.owner` -- the object the bytes belong to, the
+same object `mutable` was checked on inside the resolve. Checking it anywhere
+else would let a chain through a permissive parent reach a guarded child, or
+the reverse.
+*/
+err_h vm_obj_set_scalar_usr(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type) {
+  vm_resolved_t r;
+  if (unlikely(!vm_resolve_fast(target, true, &r))) {
+    SE_RET_IF_ERR(resolve_d(target, 0, true, &r));
+  }
+  if (unlikely(!r.owner->head.f.usr_mutable)) {
+    SE_RET_ERR(ERR_VM_OBJ_NOT_USR_MUTABLE, .id = target->id, .obj = (void*)r.owner);
+  }
+  return vm_store_inline(r.owner, r.payload, v, src_type, target->id);
+}
+
+err_h vm_obj_copy_content_usr(const vm_accessor_t* source, const vm_accessor_t* target) {
+  vm_resolved_t dst;
+  SE_RET_IF_ERR(resolve_d(target, 0, true, &dst));
+  if (!dst.owner->head.f.usr_mutable) {
+    SE_RET_ERR(ERR_VM_OBJ_NOT_USR_MUTABLE, .id = target->id, .obj = (void*)dst.owner);
+  }
+  return vm_obj_copy_content(source, target);
+}
+
+err_h vm_obj_not_usr_mutable_err(vm_obj_h obj, uint16_t id) {
+  SE_RET_ERR(ERR_VM_OBJ_NOT_USR_MUTABLE, .id = id, .obj = (void*)obj);
+}
+
+void vm_obj_clear_quiet(vm_obj_h obj) {
+  if (!obj || (vm_obj_t_e)obj->head.d.obj_t == VM_OBJ_PTR) return;
+  if (obj->head.payload_size) memset(obj->payload, 0, obj->head.payload_size);
+}
+
 // cold arms of the direct write path -- see vm_obj_set_scalar_direct() in the header
 err_h vm_obj_null_obj_err(void) {
   SE_RET_ERR(ERR_NULL_PTR, 0);

@@ -39,6 +39,7 @@ Interrupt / Hardware Event -> sys_callback_trigger() -> Static FreeRTOS Queue ->
 | 1 | `SYS_CB_ROUTE_BLE` | `ble/sys_ble.c` (constructor) | `sys_ble_cb_dummy_log` | Dummy — `ESP_LOGI`s `BLE` payload fields only, placeholder until `ble` has real routing logic |
 | 2 | `SYS_CB_ROUTE_PWR` | `sys_power.c` (constructor) | `sys_power_cb_dummy_log` | Dummy — `ESP_LOGI`s `PWR` payload fields only, placeholder until `sys_power` has real routing logic |
 | 3 | `SYS_CB_ROUTE_WIFI` | — | — | Reserved, not implemented — no entry in `s_route_table`, WiFi doesn't exist yet |
+| 4 | `SYS_CB_ROUTE_VM` | `vm_event.c` (constructor) | `vm_event_route` | **Does not handle the event** — parks it in the VM's per-scan-cycle buffer for blocks to query, then drops it at the next swap. See [[VM_EXEC.MD]] |
 | 4–15 | — | — | — | Unassigned — free for progressive expansion |
 
 There is no longer a single shared "generic logger" route — each domain owns and logs only its own event type. A caller wanting a domain's default log behavior sets that domain's route bit; nothing is broadcast automatically.
@@ -80,6 +81,7 @@ typedef struct sys_callback_head_t {
 #define SYS_CB_ROUTE_BLE    1
 #define SYS_CB_ROUTE_PWR    2
 #define SYS_CB_ROUTE_WIFI   3
+#define SYS_CB_ROUTE_VM     4
 #define SYS_CB_ROUTE_BIT(idx) (1u << (idx))
 ```
 `route_mask`'s width (and therefore the valid index range) is `CONFIG_SYS_CB_ROUTE_COUNT` (Kconfig, default 16), not a fixed header macro. See [Dynamic Callback Event Routing](#dynamic-callback-event-routing) above for how these map to `s_route_table`.

@@ -27,6 +27,10 @@ typedef struct sys_callback_head_t {
 #define SYS_CB_ROUTE_BLE 1  /* ble's own callback-event handler */
 #define SYS_CB_ROUTE_PWR 2  /* sys_power's own callback-event handler */
 #define SYS_CB_ROUTE_WIFI 3 /* WiFi-specific handling - not implemented yet */
+/* The VM's per-scan-cycle event buffer. Unlike the routes above, this one does
+   not *handle* the event - it parks it for the length of one scan cycle so
+   blocks can query it, then drops it. See [[VM_EXEC.MD]]. */
+#define SYS_CB_ROUTE_VM 4
 
 #define SYS_CB_ROUTE_BIT(idx) (1u << (idx))
 

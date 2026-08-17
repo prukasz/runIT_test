@@ -112,12 +112,16 @@ Program-upload table for [[VM.MD]]. **Structurally different from the tables abo
 | Packet | Byte | Payload | Calls |
 | :--- | :--- | :--- | :--- |
 | Reset | `0x40` | — | `vm_loader_reset()` |
-| Open | `0x41` | `u16 obj_cnt`, `u16 acc_cnt`, `u32 total_size` | `vm_loader_open()` |
+| Open | `0x41` | `u16 obj_cnt`, `u16 acc_cnt`, `u16 blk_cnt`, `u16 sec_cnt`, `u32 total_size` | `vm_loader_open()` |
 | Add objects | `0x42` | `u8 n`, `n ×` `{u16 id, vm_obj_head_t head, char name[head.d.name_size]}` | `vm_loader_add_obj()` per record |
 | Set data | `0x43` | `u8 n`, `n ×` `{u16 id, u16 start_idx, u16 byte_len, u8 data[byte_len]}` | `vm_loader_set_data()` per record |
 | Add accessors | `0x44` | `u8 n`, `n ×` `{u16 acc_id, u16 root_obj_id, u8 idx_count, u8 idx_len, u8 idx_data[idx_len]}` | `vm_loader_add_accessor()` per record |
+| Add block | `0x45` | one block: header, `in_cnt ×` accessor id, `q_cnt ×` object id, `en_cnt ×` accessor id, `custom_len ×` private state | `vm_loader_add_block()` |
+| Add sections | `0x46` | `u8 n`, `n ×` `{u16 sec_id, u16 start, u16 end}` | `vm_loader_add_section()` per record |
 
 `idx_data` holds `idx_count` records of `{u8 kind, payload}` — `LITERAL` a `u32` position, `REF` a `u16` accessor id, `NAME` a `u8` length then that many unterminated bytes. A `REF` target must already exist, which makes reference cycles unconstructable rather than merely depth-capped at resolve time.
+
+`0x45` carries exactly **one** block, unlike everything else here: a block record varies in length four separate ways, so batching would need a length prefix per record and a cursor that can desynchronise. `0x46` is batched again — three fixed `u16`s per record. Both come late in the load by necessity: a block names accessors and objects that must already be bound, and a section's range is validated against the blocks. **Block order is execution order** — the client topologically sorts and uploads in that order, so a section is describable as two numbers ([[VM_EXEC.MD]]).
 
 All multi-byte fields little-endian. Every length is checked against the bytes actually present before use (`DEC_VM_NEED`), raising `ERR_VM_LOAD_SHORT_RECORD` rather than reading past the frame — the cursor walk has no struct-size check to lean on, so this is the only thing standing between a truncated frame and an overread.
 

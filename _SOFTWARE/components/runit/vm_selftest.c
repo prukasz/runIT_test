@@ -1,12 +1,19 @@
 #include "vm_selftest.h"
 #include <esp_log.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "sys_interface.h"
 #include "vm_block.h"
+#include "vm_block_expr.h"
+#include "vm_event.h"
+#include "vm_exec.h"
+#include "vm_blocks.h"
 #include "vm_loader.h"
 #include "vm_obj_access.h"
 #include "vm_obj_build.h"
 #include "vm_obj_dyn.h"
+#include "vm_section.h"
 
 #define OWNER OWNER_VM_BASE
 
@@ -34,7 +41,7 @@ static void ck(const char* what, bool ok) {
 static uint16_t s_acc_id;  // handed out in creation order by the direct stages
 
 static void direct_arena_reset(void) {
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 32, [VM_REG_ACC] = 24, [VM_REG_BLK] = 4};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 32, [VM_REG_ACC] = 24, [VM_REG_BLK] = 8, [VM_REG_SEC] = 4};
   (void)vm_store_open(DIRECT_POOL, counts);
   s_acc_id = 0;
 }
@@ -59,6 +66,43 @@ static vm_obj_h mk(uint16_t id, vm_obj_t_e type, uint16_t items, const char* nam
   }
   return o;
 }
+
+/* ==========================================================================
+   Reading the placeholder blocks
+
+   The exec stages dispatch through the real palette (blocks/vm_blocks.h) --
+   there is one, compiled in, and nothing can swap it. The placeholder blocks
+   there each keep two counters in their private state: `calls`, bumped every
+   time the supervisor dispatched to them, and `acts`, bumped when the block
+   decided to do something. The gap between the two is the whole of activation.
+   ========================================================================== */
+
+static vm_dummy_state_t* blk_state(uint16_t blk_id) {
+  vm_block_h b = vm_block_by_id(blk_id);
+  return b ? vm_dummy_state(b) : NULL;
+}
+
+static uint32_t blk_calls(uint16_t blk_id) {
+  vm_dummy_state_t* s = blk_state(blk_id);
+  return s ? s->calls : 0;
+}
+
+static uint32_t blk_acts(uint16_t blk_id) {
+  vm_dummy_state_t* s = blk_state(blk_id);
+  return s ? s->acts : 0;
+}
+
+// counters only -- a span block's range lives in the same struct and must stay
+static void blk_counters_reset(uint16_t first, uint16_t last) {
+  for (uint16_t i = first; i <= last; i++) {
+    vm_dummy_state_t* s = blk_state(i);
+    if (s) {
+      s->calls = 0;
+      s->acts = 0;
+    }
+  }
+}
+
 
 /* ==========================================================================
    A -- header helpers and the type tables
@@ -1146,13 +1190,22 @@ static err_h f_send(void) {
 #define OBJ_TEMP 1
 #define OBJ_HUM 2
 
-static err_h upload_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint32_t total) {
+/* sec_cnt joins the open packet rather than being derived: the pool is sized
+   before anything loads, and a section is an allocation like everything else.
+   Most stages declare none -- a program with no sections is one section over
+   the whole order (see vm_exec_pass()). */
+static err_h upload_open_sec(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint16_t sec_cnt, uint32_t total) {
   f_begin(VM_LOADER_CLASS_HEADER, 0x41);
   f_u16(obj_cnt);
   f_u16(acc_cnt);
   f_u16(blk_cnt);
+  f_u16(sec_cnt);
   f_u32(total);
   return f_send();
+}
+
+static err_h upload_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint32_t total) {
+  return upload_open_sec(obj_cnt, acc_cnt, blk_cnt, 0, total);
 }
 
 /* Call sites still read in elements, which is how a program is actually
@@ -1609,14 +1662,17 @@ static void test_block_upload(void) {
   uint16_t outs[1] = {1};
   uint8_t custom[4] = {0xDE, 0xAD, 0xBE, 0xEF};
 
-  add_block_record(0, 100, 7, ins, 2, outs, 1, 2, 2, custom, sizeof(custom));
+  /* VM_BLK_GATE rather than VM_BLK_GATE: custom_len is
+     checked against the descriptor exactly now, so a block carrying four bytes
+     of private state has to be a type that declares four bytes. */
+  add_block_record(0, 100, VM_BLK_GATE, ins, 2, outs, 1, 2, 2, custom, sizeof(custom));
   ck("0x45 creates a block", f_send() == NULL);
 
   vm_block_h b = vm_block_by_id(0);
   ck("block is bound to its id", b != NULL);
   if (!b) return;
 
-  ck("block header round-trips", b->cfg.block_idx == 100 && b->cfg.block_type == 7 && b->cfg.in_cnt == 2 && b->cfg.q_cnt == 1 && b->cfg.custom_len == 4 && b->cfg.on_error == VM_BLK_ERR_STOP);
+  ck("block header round-trips", b->cfg.block_idx == 100 && b->cfg.block_type == VM_BLK_GATE && b->cfg.in_cnt == 2 && b->cfg.q_cnt == 1 && b->cfg.custom_len == 4 && b->cfg.on_error == VM_BLK_ERR_STOP);
   ck("ids resolved to pointers, not kept as ids", vm_block_inputs(b)[0] == vm_accessor_by_id(0) && vm_block_inputs(b)[1] == vm_accessor_by_id(1) && vm_block_outputs(b)[0] == vm_obj_by_id(1));
   ck("EN and ENO resolved", b->cfg.en_cnt == 1 && vm_block_en_list(b)[0] == vm_accessor_by_id(2) && b->cfg.eno == vm_obj_by_id(2));
   ck("private state arrived", memcmp(vm_block_custom_data(b), custom, sizeof(custom)) == 0);
@@ -1636,26 +1692,26 @@ static void test_block_upload(void) {
   ck("uploaded block writes its output", vm_block_get_out(&q, b, 0) == NULL && VM_OBJ_SET_VAL_AT(6.5f, q, 0) == NULL && VM_OBJ_GET_VAL(c, vm_accessor_by_id(1)) == NULL);
 
   // references are the whole risk with blocks: every one of these must refuse
-  add_block_record(1, 101, 7, (uint16_t[]){99}, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_GATE, (uint16_t[]){99}, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("unknown input accessor id -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, 7, ins, 2, (uint16_t[]){99}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_GATE, ins, 2, (uint16_t[]){99}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("unknown output object id -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, 7, ins, 2, outs, 1, 99, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_GATE, ins, 2, outs, 1, 99, VM_BLOCK_NO_ID, NULL, 0);
   ck("unknown EN accessor id -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, 7, ins, 2, outs, 1, VM_BLOCK_NO_ID, 99, NULL, 0);
+  add_block_record(1, 101, VM_BLK_GATE, ins, 2, outs, 1, VM_BLOCK_NO_ID, 99, NULL, 0);
   ck("unknown ENO object id -> BAD_REF", f_send() != NULL);
 
   ck("a refused block leaves its id unbound", vm_block_by_id(1) == NULL);
 
   /* NO_ID is legal on an input (the pin stays unwired and the block falls back
      to its own constant), on EN and on ENO -- but never on an output. */
-  add_block_record(1, 101, 7, ins, 2, (uint16_t[]){VM_BLOCK_NO_ID}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_GATE, ins, 2, (uint16_t[]){VM_BLOCK_NO_ID}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("NO_ID output -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, 7, (uint16_t[]){0, VM_BLOCK_NO_ID}, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_GATE, (uint16_t[]){0, VM_BLOCK_NO_ID}, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("NO_ID input leaves the pin unwired", f_send() == NULL && vm_block_by_id(1) && vm_block_inputs(vm_block_by_id(1))[0] == vm_accessor_by_id(0) && vm_block_inputs(vm_block_by_id(1))[1] == NULL);
   const vm_accessor_t* unwired = NULL;
   ck("an unwired pin reports PIN_UNLINKED, not garbage", vm_block_get_in(&unwired, vm_block_by_id(1), 1) != NULL && unwired == NULL);
@@ -1667,7 +1723,7 @@ static void test_block_upload(void) {
      float, which is non-zero and so reads as enabled too. */
   f_begin(VM_LOADER_CLASS_HEADER, 0x45);
   f_u16(2); f_u16(106);
-  f_u8(7); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
+  f_u8(VM_BLK_GATE); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
   f_u16(0); f_u16(1);  // inputs
   f_u16(1);            // output
   f_u16(2); f_u16(0);  // two enable sources
@@ -1690,28 +1746,28 @@ static void test_block_upload(void) {
   ck("ALL disabled again as soon as one source drops", !vm_block_is_enabled(vm_block_by_id(2)));
   ((float*)vm_obj_by_id(0)->payload)[0] = 2.5f;
 
-  add_block_record(1, 102, 7, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 102, VM_BLK_GATE, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("duplicate block id -> TABLE_DUP", f_send() != NULL);
 
-  add_block_record(9, 103, 7, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(9, 103, VM_BLK_GATE, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("block id past the table -> TABLE_OOB", f_send() != NULL);
 
   // in_cnt past the connected_in mask cannot be represented, so it is refused
   uint16_t many[VM_BLOCK_MAX_IN + 1] = {0};
-  add_block_record(1, 104, 7, many, VM_BLOCK_MAX_IN + 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 104, VM_BLK_GATE, many, VM_BLOCK_MAX_IN + 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("in_cnt past VM_BLOCK_MAX_IN -> BAD_SHAPE", f_send() != NULL);
 
   // truncation: the record claims two inputs but carries one id
   f_begin(VM_LOADER_CLASS_HEADER, 0x45);
   f_u16(5); f_u16(105);
-  f_u8(7); f_u8(2); f_u8(1); f_u8(0); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
+  f_u8(VM_BLK_GATE); f_u8(2); f_u8(1); f_u8(0); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
   f_u16(0);  // only one of the two promised ids
   ck("truncated 0x45 -> SHORT_RECORD", f_send() != NULL);
 
   // ...and the same for a promised enable list that is not there
   f_begin(VM_LOADER_CLASS_HEADER, 0x45);
   f_u16(5); f_u16(107);
-  f_u8(7); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
+  f_u8(VM_BLK_GATE); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
   f_u16(0); f_u16(1);  // inputs
   f_u16(1);            // output
   f_u16(2);            // only one of the two promised enable ids
@@ -1833,26 +1889,622 @@ static void test_dynamic_objects(void) {
   ck("dynamic create rejects a zero payload", vm_obj_dyn_create(&bad, &bh, NULL) != NULL && bad == NULL && vm_obj_dyn_get(0) == NULL);
 }
 
+/* ==========================================================================
+   P -- the palette
+
+   A block type is a function and nothing else, so there is exactly one thing
+   the palette can refuse: a type no function claims. What a block *takes in*
+   is not described anywhere yet, deliberately -- that table comes with the
+   palette itself.
+   ========================================================================== */
+
+static void test_palette(void) {
+  ESP_LOGI(TAG, "-- P: palette --");
+
+  ck("a filled slot resolves to its function", vm_block_fn_for(VM_BLK_ON_UPDATE) == vm_blk_on_update);
+  ck("every placeholder type resolves", vm_block_fn_for(VM_BLK_NOP) && vm_block_fn_for(VM_BLK_GATE) && vm_block_fn_for(VM_BLK_HOLD) && vm_block_fn_for(VM_BLK_ON_EVENT) && vm_block_fn_for(VM_BLK_REPEAT) && vm_block_fn_for(VM_BLK_FAULT));
+
+  /* Type 0 is reserved, and the reason is worth a check of its own: an unset
+     `block_type` is zero, and it must not resolve to something runnable. */
+  ck("VM_BLK_NONE resolves to NULL", vm_block_fn_for(VM_BLK_NONE) == NULL);
+  /* Off the end of the table, expressed as the table's own length -- a
+     hand-written "last type + 1" silently becomes an *occupied* slot the next
+     time a block type is added, which is the one thing this must not test. */
+  ck("a type past the table resolves to NULL", vm_block_fn_for((uint8_t)g_vm_blocks_cnt) == NULL);
+
+  vm_loader_reset();
+  ck("0x41 open", upload_open(2, 1, 2, 512) == NULL);
+
+  f_begin(VM_LOADER_CLASS_HEADER, 0x42);
+  f_u8(2);
+  add_obj_record(0, 1, VM_OBJ_B, VM_LOAD_F_MUTABLE, NULL);
+  add_obj_record(1, 1, VM_OBJ_B, VM_LOAD_F_MUTABLE, NULL);
+  ck("0x42 objects", f_send() == NULL);
+
+  f_begin(VM_LOADER_CLASS_HEADER, 0x44);
+  f_u8(1);
+  f_u16(0); f_u16(0); f_u8(0); f_u8(0);
+  ck("0x44 accessor", f_send() == NULL);
+
+  uint16_t ins[1] = {0};
+  uint16_t outs[1] = {1};
+
+  /* Refused at the packet that introduced it, rather than loading fine and
+     then being silently skipped on every pass -- a program that runs, reports
+     nothing, and does less than it says. */
+  add_block_record(0, 0, 200, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  ck("a block_type nothing registered -> UNKNOWN_TYPE", f_send() != NULL && vm_block_by_id(0) == NULL);
+  ck("a refused block costs no arena", vm_block_by_id(0) == NULL);
+
+  add_block_record(0, 0, VM_BLK_ON_UPDATE, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  ck("a registered type is accepted", f_send() == NULL && vm_block_by_id(0) != NULL);
+
+  /* Private state is the type's own business, so any length loads. The block
+     is the only thing that knows what those bytes mean. */
+  uint8_t custom[4] = {1, 2, 3, 4};
+  add_block_record(1, 1, VM_BLK_ON_UPDATE, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, custom, 4);
+  ck("private state of any length loads -- nothing describes it yet", f_send() == NULL && vm_block_by_id(1) != NULL);
+}
+
+/* ==========================================================================
+   Q -- sections
+
+   A section says nothing about whether or when its blocks run -- every section
+   runs every pass. What it says is where the pass may be interrupted, which is
+   why the ranges have to partition the order rather than merely fit inside it.
+   ========================================================================== */
+
+static void test_sections(void) {
+  ESP_LOGI(TAG, "-- Q: sections --");
+  direct_arena_reset();
+
+  /* Three blocks to have an order to carve up. Shape does not matter here;
+     these go in through the direct API, which is below the palette check. */
+  vm_obj_h q = mk(0, VM_OBJ_B, 1, NULL, true);
+  uint16_t outs[1] = {0};
+  for (uint16_t i = 0; i < 3; i++) {
+    vm_block_h b = NULL;
+    (void)vm_block_create(&b, i,
+                          &(vm_block_cfg_t){.block_idx = i, .block_type = VM_BLK_GATE, .q_cnt = 1, .out_obj_ids = outs, .eno_obj_id = VM_BLOCK_NO_ID});
+  }
+  ck("three blocks to section", q && vm_block_by_id(2) != NULL);
+
+  // vm_section_count() is the declared id space, like every other registry's
+  // count -- not how many are bound
+  ck("a range inside the order binds", vm_section_create(0, 0, 2) == NULL && vm_section_by_id(0) != NULL);
+  const vm_section_t* s0 = vm_section_by_id(0);
+  ck("the range round-trips", s0 && s0->start == 0 && s0->end == 2);
+
+  ck("an overlapping range -> SEC_OVERLAP", vm_section_create(1, 1, 3) != NULL && vm_section_by_id(1) == NULL);
+  ck("the rest of the order binds", vm_section_create(1, 2, 3) == NULL);
+  ck("a range past the last block -> SEC_BAD_RANGE", vm_section_create(2, 2, 9) != NULL);
+  ck("an empty range -> SEC_BAD_RANGE", vm_section_create(2, 1, 1) != NULL);
+  ck("a reversed range -> SEC_BAD_RANGE", vm_section_create(2, 3, 1) != NULL);
+  ck("a rejected section leaves its id unbound", vm_section_by_id(2) == NULL);
+}
+
+/* ==========================================================================
+   R -- the pass
+
+   Builds a small program by the direct API and runs passes over it
+   synchronously, so every assertion is about a pass that has already finished
+   rather than about one happening on the other core.
+   ========================================================================== */
+
+// registry id == block_idx throughout this stage, so a run counter reads as
+// "block N ran", and the id is also its position in the execution order
+#define EX_ALWAYS 0
+#define EX_GATED 1
+#define EX_TRIGGERED 2
+#define EX_HOLD 3
+#define EX_SPAN 4
+#define EX_IN_SPAN 5
+#define EX_FAULT 6
+
+static vm_accessor_t* ex_acc(uint16_t acc_id, uint16_t root_obj) {
+  vm_accessor_t* a = NULL;
+  if (vm_accessor_create(&a, acc_id, root_obj, 0) != NULL) return NULL;
+  (void)vm_accessor_cache_build(a);
+  return a;
+}
+
+static bool ex_block(uint16_t id, uint8_t type, const uint16_t* ins, uint8_t in_cnt, const uint16_t* outs, uint8_t q_cnt,
+                     const uint16_t* ens, uint8_t en_cnt, uint16_t eno, uint8_t on_error) {
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = type,
+                                              .in_cnt = in_cnt,
+                                              .q_cnt = q_cnt,
+                                              .en_cnt = en_cnt,
+                                              .en_mode = VM_BLK_EN_ANY,
+                                              .on_error = on_error,
+                                              .custom_len = sizeof(vm_dummy_state_t),
+                                              .in_acc_ids = ins,
+                                              .out_obj_ids = outs,
+                                              .en_acc_ids = ens,
+                                              .eno_obj_id = eno});
+  return e == NULL && b != NULL;
+}
+
+static void test_exec_pass(void) {
+  ESP_LOGI(TAG, "-- R: the pass --");
+  vm_loader_reset();
+  direct_arena_reset();
+
+  /* obj 0 gate (the enable source), obj 1 trigger source, objs 2..7 outputs.
+     The gate and the trigger are upd_resetable, because the end-of-pass sweep
+     is one of the things under test and a non-resettable object is deliberately
+     exempt from it. */
+  vm_obj_head_t gh = hd(VM_OBJ_B, 1);
+  gh.f.mutable = 1;
+  gh.f.upd_resetable = 1;
+  vm_obj_h gate = NULL, trig = NULL;
+  bool built = vm_obj_create(&gate, 0, &gh, NULL) == NULL;
+  vm_obj_head_t th = hd(VM_OBJ_U32, 1);
+  th.f.mutable = 1;
+  th.f.upd_resetable = 1;
+  built = built && vm_obj_create(&trig, 1, &th, NULL) == NULL;
+  // 2..7 outputs, 8 the gated block's ENO, 9 the failing block's -- separate,
+  // so an assertion about one cannot be satisfied by the other
+  for (uint16_t i = 2; i < 10; i++) built = built && mk(i, VM_OBJ_B, 1, NULL, true) != NULL;
+  ck("objects built", built);
+
+  built = ex_acc(0, 0) != NULL && ex_acc(1, 1) != NULL;
+  ck("accessors built", built);
+
+  const uint16_t acc_gate[1] = {0};
+  const uint16_t acc_trig[1] = {1};
+
+  bool blocks = true;
+  blocks = blocks && ex_block(EX_ALWAYS, VM_BLK_NOP, NULL, 0, (uint16_t[]){2}, 1, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
+  blocks = blocks && ex_block(EX_GATED, VM_BLK_GATE, NULL, 0, (uint16_t[]){3}, 1, acc_gate, 1, 8, VM_BLK_ERR_STOP);
+  blocks = blocks && ex_block(EX_TRIGGERED, VM_BLK_ON_UPDATE, acc_trig, 1, (uint16_t[]){4}, 1, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
+  blocks = blocks && ex_block(EX_HOLD, VM_BLK_HOLD, NULL, 0, (uint16_t[]){5}, 1, acc_gate, 1, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
+  blocks = blocks && ex_block(EX_SPAN, VM_BLK_REPEAT, NULL, 0, NULL, 0, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
+  blocks = blocks && ex_block(EX_IN_SPAN, VM_BLK_NOP, NULL, 0, (uint16_t[]){6}, 1, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
+  blocks = blocks && ex_block(EX_FAULT, VM_BLK_FAULT, NULL, 0, (uint16_t[]){7}, 1, NULL, 0, 9, VM_BLK_ERR_STOP);
+  ck("blocks built in execution order", blocks);
+  if (!blocks) return;
+
+  // the span owner claims exactly the block that follows it
+  vm_span_t* sp = &blk_state(EX_SPAN)->span;
+  sp->start = EX_IN_SPAN;
+  sp->end = EX_IN_SPAN + 1;
+
+  /* ---- pass 1: gate open, trigger fresh ---- */
+  *(uint8_t*)gate->payload = 1;
+  gate->head.f.upd = 1;
+  trig->head.f.upd = 1;
+
+  vm_exec_reset_stats();
+  vm_exec_pass();
+
+  ck("a pass counts", vm_exec_pass_count() == 1);
+  ck("an ungated block was called and acted", blk_calls(EX_ALWAYS) == 1 && blk_acts(EX_ALWAYS) == 1);
+  ck("an enabled block acted", blk_acts(EX_GATED) == 1);
+  ck("a block asking what arrived acted on a fresh input", blk_acts(EX_TRIGGERED) == 1);
+  ck("...and latched that it was triggered", (vm_block_by_id(EX_TRIGGERED)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
+  ck("a block that acted published its output", *(uint8_t*)vm_obj_by_id(2)->payload == 1);
+
+  /* The span owner ran its range twice, and the outer walk jumped over it --
+     three would mean the walk fell into the span as well. */
+  ck("a span owner ran, once", blk_calls(EX_SPAN) == 1);
+  ck("the outer walk jumped over the span", blk_calls(EX_IN_SPAN) == 2);
+
+  /* on_error STOP: the block published a true output and a true ENO, then
+     failed. It is the *flow* that stops -- the output stands, exactly as it
+     does for a block that simply chose not to act, and the false ENO is what
+     keeps anything below from acting on it. */
+  ck("a failing block ran", blk_calls(EX_FAULT) == 1 && blk_acts(EX_FAULT) == 1);
+  ck("on_error STOP publishes a false ENO", *(uint8_t*)vm_obj_by_id(9)->payload == 0);
+  ck("...and leaves what was published standing", *(uint8_t*)vm_obj_by_id(7)->payload == 1);
+  ck("a block that succeeded kept its true ENO", *(uint8_t*)vm_obj_by_id(8)->payload == 1);
+
+  /* ---- the end-of-pass sweep ---- */
+  ck("upd is cleared at the end of the pass", gate->head.f.upd == 0 && trig->head.f.upd == 0);
+
+  /* ---- pass 2: gate shut, trigger stale ----
+     These outputs are not upd_resetable, so the end-of-pass sweep left their
+     `upd` standing from when they were written. Cleared by hand here, because
+     what the next pass has to show is that nothing *sets* it -- a stand-down
+     that is loud would read as an arrival to everything below. */
+  vm_obj_by_id(3)->head.f.upd = 0;   // the gated block's output
+  vm_obj_by_id(8)->head.f.upd = 0;   // its ENO
+  *(uint8_t*)gate->payload = 0;
+
+  vm_exec_pass();
+
+  /* Every block is *called* every pass -- that is the whole of the
+     supervisor's policy. What changes is whether the block acts. */
+  ck("every block is called again regardless", blk_calls(EX_TRIGGERED) == 2 && blk_calls(EX_GATED) == 2);
+  ck("a stale trigger means the block does not act", blk_acts(EX_TRIGGERED) == 1);
+  ck("a shut gate means the block does not act", blk_acts(EX_GATED) == 1);
+
+  /* Standing down keeps the data and withdraws the flow. The output holds
+     last pass's answer -- nothing changed, so it is still the right one --
+     while ENO drops so everything below stands down in turn. */
+  ck("a block that stood down kept its output", *(uint8_t*)vm_obj_by_id(3)->payload == 1);
+  ck("...and left it alone entirely, upd included", vm_obj_by_id(3)->head.f.upd == 0);
+  ck("...its ENO being the only thing it touched", *(uint8_t*)vm_obj_by_id(8)->payload == 0);
+  ck("...taken false quietly, so the drop is not itself an arrival", vm_obj_by_id(8)->head.f.upd == 0);
+
+  /* `when inactive: Hold` needs no support from anywhere: the block is called
+     like every other, and simply stands down at all. */
+  ck("a holding block is called while inactive", blk_calls(EX_HOLD) == 2 && blk_acts(EX_HOLD) == 1);
+  ck("...and holds what it last commanded", *(uint8_t*)vm_obj_by_id(5)->payload == 1);
+
+  /* ---- sections partition the same order, and change nothing about it ---- */
+  ck("sections over the whole order", vm_section_create(0, 0, 3) == NULL && vm_section_create(1, 3, 7) == NULL);
+  blk_counters_reset(EX_ALWAYS, EX_FAULT);
+  vm_exec_pass();
+  ck("every section runs every pass", blk_calls(EX_ALWAYS) == 1 && blk_calls(EX_HOLD) == 1 && blk_calls(EX_FAULT) == 1);
+  ck("a span inside a section still runs from its owner only", blk_calls(EX_IN_SPAN) == 2);
+
+  /* That the pass timer records something, and nothing about how long.
+     This stage runs a block that deliberately fails, and reporting that
+     failure goes out over UART from the error handler -- which can preempt
+     mid-pass and costs milliseconds per line, dwarfing the seven blocks it is
+     supposedly timing. The 10 ms floor is a property of the supervisor loop
+     (one tick per pass), not of a pass measured with a logger in it; vm_bench.c
+     is where per-access cost is actually measured. */
+  ESP_LOGI(TAG, "  last pass: %lu us over 7 blocks", (unsigned long)vm_exec_last_pass_us());
+  ck("the pass timer records a duration", vm_exec_last_pass_us() > 0);
+}
+
+/* ==========================================================================
+   S -- events
+
+   Activation is transient, data is persistent. This is the transient half, and
+   it is transient in the strongest sense available: an event lives exactly one
+   scan cycle. Two buffers, swapped once per pass; whatever a pass does not take
+   is gone at the next swap, on purpose.
+   ========================================================================== */
+
+// what sys_callbacks would route: an IO edge, built by hand
+static cb_event_t io_evt(uint8_t device, uint8_t pin, int32_t value) {
+  cb_event_t e = {0};
+  e.head.callback_type = CALLBACK_IO;
+  e.head.route_mask = SYS_CB_ROUTE_BIT(SYS_CB_ROUTE_VM);
+  e.event.io.device_id = device;
+  e.event.io.pin_id = pin;
+  e.event.io.trigger_value = value;
+  return e;
+}
+
+static void test_events(void) {
+  ESP_LOGI(TAG, "-- S: events --");
+  vm_event_reset();
+
+  ck("an empty cycle has nothing to look at", vm_event_count() == 0 && vm_event_at(0) == NULL);
+
+  cb_event_t a = io_evt(1, 4, 11);
+  cb_event_t b = io_evt(1, 5, 22);
+  cb_event_t c = io_evt(2, 4, 33);
+  ck("posting takes", vm_event_post(&a) && vm_event_post(&b) && vm_event_post(&c));
+
+  /* A post lands in the buffer the *next* pass reads, never the one a pass is
+     reading. That is what lets a whole pass traverse one snapshot with no lock
+     on the reading side at all. */
+  ck("a post is not visible in the cycle it arrived", vm_event_count() == 0);
+
+  vm_event_drain();
+  ck("the swap hands the whole batch to this cycle", vm_event_count() == 3);
+
+  /* The whole query API: walk them and recognise what you care about. The
+     system's own struct arrives intact -- nothing was translated on the way
+     in, so a block reads the same fields a driver wrote. */
+  const cb_event_t* e0 = vm_event_at(0);
+  ck("the callback arrives intact, head and all", e0 && e0->head.callback_type == CALLBACK_IO && e0->event.io.pin_id == 4 && e0->event.io.trigger_value == 11);
+  ck("...in the order it was routed", vm_event_at(1)->event.io.pin_id == 5 && vm_event_at(2)->event.io.device_id == 2);
+  ck("past the end reads NULL", vm_event_at(3) == NULL);
+
+  /* Nothing is consumed, which is what lets two blocks watch the same pin:
+     there is no ownership to arbitrate and no order to get wrong. */
+  ck("reading does not consume", vm_event_count() == 3 && vm_event_at(0)->event.io.trigger_value == 11);
+
+  /* The whole point of the design: a cycle's events are dropped at the next
+     swap whether anything acted on them or not. A block that was disabled
+     when the edge arrived simply misses it. */
+  vm_event_drain();
+  ck("an unhandled event is gone one cycle later", vm_event_count() == 0);
+
+  /* Overflow drops and raises a system error -- never silent, never unbounded.
+     The error is built at task level because the post path may be an ISR.
+     Note this is *overflow* only: events dropped by the swap for want of a
+     taker are normal, and silent. */
+  vm_event_reset();
+  uint16_t stored = 0;
+  for (uint16_t i = 0; i < VM_EVENT_DEPTH + 4; i++) {
+    cb_event_t e = io_evt(1, (uint8_t)i, i);
+    if (vm_event_post(&e)) stored++;
+  }
+  ck("a cycle fills to exactly its depth", stored == VM_EVENT_DEPTH);
+  // discarded rather than pushed, like every other expected rejection in this
+  // file -- the point is that one was built, not what it prints
+  ck("overflow raises an error naming the drops", vm_event_take_overflow() != NULL);
+  ck("taking the overflow clears it", vm_event_take_overflow() == NULL);
+
+  vm_event_drain();
+  ck("everything that was accepted is there", vm_event_count() == VM_EVENT_DEPTH);
+  ck("and it kept its order", vm_event_at(0)->event.io.pin_id == 0);
+
+  vm_event_reset();
+  ck("reset empties both buffers", vm_event_count() == 0 && vm_event_at(0) == NULL);
+}
+
+/* ==========================================================================
+   T -- the expression blocks
+
+   The first real blocks in the palette, and the first whose behaviour is
+   *compiled* rather than wired: an RPN instruction stream living in the
+   block's own custom_data. So this stage is as much about the bytecode as
+   about the block. Every program below is hand-assembled here and run through
+   vm_exec_pass(), which is the same path a client-compiled one takes -- the
+   block is dispatched from the real palette and there is no test-only seam.
+
+   Registry id == block_idx == position in the execution order, as in stage R,
+   and each block gets its own result and ENO object so no assertion about one
+   can be satisfied by another.
+   ========================================================================== */
+
+#define EXPR_OUT(n) ((uint16_t)(10 + (n)))  // block n's result object
+#define EXPR_ENO(n) ((uint16_t)(30 + (n)))  // block n's ENO
+
+/* A float literal as the u32 the wire carries. The union is the format's, not
+   a trick of the test: see vm_expr_k_t. */
+static uint32_t kf(float f) {
+  vm_expr_k_t k = {.f = f};
+  return k.u;
+}
+
+static bool near_f(float a, float b) {
+  return fabsf(a - b) < 1e-4f;
+}
+
+static float out_f(uint16_t n) {
+  vm_obj_h o = vm_obj_by_id(EXPR_OUT(n));
+  return o ? *(float*)o->payload : -1.0f;
+}
+
+static uint32_t out_u(uint16_t n) {
+  vm_obj_h o = vm_obj_by_id(EXPR_OUT(n));
+  return o ? *(uint32_t*)o->payload : 0xDEADBEEFu;
+}
+
+static bool eno_of(uint16_t n) {
+  vm_obj_h o = vm_obj_by_id(EXPR_ENO(n));
+  return o && *(uint8_t*)o->payload != 0;
+}
+
+// the block's own view of its fault episode -- VM_EXPR_RT_FAULTED
+static uint8_t expr_rt(uint16_t n) {
+  vm_block_h b = vm_block_by_id(n);
+  return b ? ((const vm_expr_code_t*)vm_block_custom_data(b))->rt : 0xFFu;
+}
+
+static bool cfg_bad(uint16_t n) {
+  vm_block_h b = vm_block_by_id(n);
+  return b && (b->cfg.rt & VM_BLK_RT_CFG_BAD) != 0;
+}
+
+/* Builds one expression block and lays its code out exactly as the 0x45
+   record's private-state tail would: header, then the literals, then the
+   bytecode. `custom_len` is the program's word, so it comes from
+   vm_expr_size() rather than from a struct the loader knows about. */
+static bool expr_block(uint16_t id, uint8_t type, const uint16_t* ins, uint8_t in_cnt, const uint32_t* ks,
+                       uint8_t k_cnt, const uint8_t* code, uint16_t code_len, uint16_t custom_len) {
+  const uint16_t outs[1] = {EXPR_OUT(id)};
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = type,
+                                              .in_cnt = in_cnt,
+                                              .q_cnt = 1,
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = custom_len,
+                                              .in_acc_ids = ins,
+                                              .out_obj_ids = outs,
+                                              .eno_obj_id = EXPR_ENO(id)});
+  if (e != NULL || b == NULL) return false;
+  if (custom_len < vm_expr_size(k_cnt, code_len)) return true;  // the deliberately-too-short case
+
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  c->const_cnt = k_cnt;
+  c->code_len = code_len;
+  for (uint8_t i = 0; i < k_cnt; i++) c->consts[i].u = ks[i];
+  memcpy(&c->consts[k_cnt], code, code_len);
+  return true;
+}
+
+// the common case: custom_data sized to exactly what the program needs
+static bool expr_blk(uint16_t id, uint8_t type, const uint16_t* ins, uint8_t in_cnt, const uint32_t* ks, uint8_t k_cnt,
+                     const uint8_t* code, uint16_t code_len) {
+  return expr_block(id, type, ins, in_cnt, ks, k_cnt, code, code_len, (uint16_t)vm_expr_size(k_cnt, code_len));
+}
+
+static void test_expr(void) {
+  ESP_LOGI(TAG, "-- T: expression blocks --");
+  vm_loader_reset();
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 48, [VM_REG_ACC] = 8, [VM_REG_BLK] = 16, [VM_REG_SEC] = 2};
+  (void)vm_store_open(DIRECT_POOL, counts);
+
+  /* Inputs 0..4 are deliberately *not* upd_resetable, so their `upd` survives
+     the end-of-pass sweep and every pass triggers -- the same standing
+     freshness a constant has. Input 5 is resetable, which is what makes the
+     stand-down case at the end possible. */
+  bool built = true;
+  for (uint16_t i = 0; i < 5; i++) {
+    built = built && mk(i, i < 3 ? VM_OBJ_F : VM_OBJ_U32, 1, NULL, true) != NULL;
+    if (built) vm_obj_by_id(i)->head.f.upd = 1;
+  }
+  vm_obj_head_t sh = hd(VM_OBJ_F, 1);
+  sh.f.mutable = 1;
+  sh.f.upd_resetable = 1;
+  vm_obj_h stale_in = NULL;
+  built = built && vm_obj_create(&stale_in, 5, &sh, NULL) == NULL;
+
+  *(float*)vm_obj_by_id(0)->payload = 3.0f;   // A
+  *(float*)vm_obj_by_id(1)->payload = 4.0f;   // B
+  *(float*)vm_obj_by_id(2)->payload = 0.0f;   // the divisor, zero to begin with
+  *(uint32_t*)vm_obj_by_id(3)->payload = 0x12345678u;
+  *(uint32_t*)vm_obj_by_id(4)->payload = 8u;
+  *(float*)stale_in->payload = 5.0f;
+  stale_in->head.f.upd = 1;
+
+  // results 10..24 and ENOs 30..44, one pair per block
+  for (uint16_t n = 0; n <= 14; n++) {
+    bool bits = (n >= 9 && n <= 12);
+    built = built && mk(EXPR_OUT(n), bits ? VM_OBJ_U32 : VM_OBJ_F, 1, NULL, true) != NULL;
+    built = built && mk(EXPR_ENO(n), VM_OBJ_B, 1, NULL, true) != NULL;
+  }
+  ck("objects built", built);
+
+  bool accs = true;
+  for (uint16_t i = 0; i < 6; i++) accs = accs && ex_acc(i, i) != NULL;
+  ck("accessors built", accs);
+
+  /* ---- the programs, in execution order ---------------------------------
+     Written as a client would emit them: RPN, one opcode byte, an operand
+     byte after IN and K only. */
+  static const uint8_t c_add[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_ADD};
+  // (A + B) * 2 - hypot(A, B)  ->  14 - 5
+  static const uint8_t c_compound[] = {VM_EXPR_IN, 0, VM_EXPR_IN,  1, VM_EXPR_ADD, VM_EXPR_K,     0,
+                                       VM_EXPR_MUL, VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_HYPOT, VM_EXPR_SUB};
+  // A < B ? 10 : 20 -- both arms evaluated, which is what having no jump means
+  static const uint8_t c_sel[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_LT, VM_EXPR_K, 0, VM_EXPR_K, 1, VM_EXPR_SEL};
+  static const uint8_t c_reuse[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 0, VM_EXPR_MUL};  // one pin, twice
+  static const uint8_t c_div[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_DIV};
+  static const uint8_t c_badop[] = {VM_EXPR_IN, 0, 0xFE};
+  static const uint8_t c_under[] = {VM_EXPR_IN, 0, VM_EXPR_ADD};   // ADD with one operand
+  static const uint8_t c_two[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1};   // ends holding two values
+  static const uint8_t c_lazy[] = {VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_MUL};  // pin 1 declared, never named
+  static const uint8_t c_shr[] = {VM_BIT_IN, 0, VM_BIT_IN, 1, VM_BIT_SHR, VM_BIT_K, 0, VM_BIT_AND};
+  static const uint8_t c_pop[] = {VM_BIT_IN, 0, VM_BIT_NOT, VM_BIT_POPCNT};
+  static const uint8_t c_shl32[] = {VM_BIT_IN, 0, VM_BIT_K, 0, VM_BIT_SHL};
+  static const uint8_t c_rol[] = {VM_BIT_IN, 0, VM_BIT_K, 0, VM_BIT_ROL};
+  static const uint8_t c_pass[] = {VM_EXPR_IN, 0};
+
+  const uint32_t k_two[] = {kf(2.0f)};
+  const uint32_t k_arms[] = {kf(10.0f), kf(20.0f)};
+  const uint32_t k_ff[] = {0xFFu};
+  const uint32_t k_32[] = {32u};
+  const uint32_t k_8[] = {8u};
+
+  bool blk = true;
+  blk = blk && expr_blk(0, VM_BLK_EXPR, (uint16_t[]){0, 1}, 2, NULL, 0, c_add, sizeof(c_add));
+  blk = blk && expr_blk(1, VM_BLK_EXPR, (uint16_t[]){0, 1}, 2, k_two, 1, c_compound, sizeof(c_compound));
+  blk = blk && expr_blk(2, VM_BLK_EXPR, (uint16_t[]){0, 1}, 2, k_arms, 2, c_sel, sizeof(c_sel));
+  blk = blk && expr_blk(3, VM_BLK_EXPR, (uint16_t[]){0}, 1, NULL, 0, c_reuse, sizeof(c_reuse));
+  blk = blk && expr_blk(4, VM_BLK_EXPR, (uint16_t[]){0, 2}, 2, NULL, 0, c_div, sizeof(c_div));
+  blk = blk && expr_blk(5, VM_BLK_EXPR, (uint16_t[]){0}, 1, NULL, 0, c_badop, sizeof(c_badop));
+  blk = blk && expr_blk(6, VM_BLK_EXPR, (uint16_t[]){0}, 1, NULL, 0, c_under, sizeof(c_under));
+  blk = blk && expr_blk(7, VM_BLK_EXPR, (uint16_t[]){0, 1}, 2, NULL, 0, c_two, sizeof(c_two));
+  blk = blk && expr_blk(8, VM_BLK_EXPR, (uint16_t[]){0, VM_BLOCK_NO_ID}, 2, k_two, 1, c_lazy, sizeof(c_lazy));
+  blk = blk && expr_blk(9, VM_BLK_EXPR_BIT, (uint16_t[]){3, 4}, 2, k_ff, 1, c_shr, sizeof(c_shr));
+  blk = blk && expr_blk(10, VM_BLK_EXPR_BIT, (uint16_t[]){3}, 1, NULL, 0, c_pop, sizeof(c_pop));
+  blk = blk && expr_blk(11, VM_BLK_EXPR_BIT, (uint16_t[]){3}, 1, k_32, 1, c_shl32, sizeof(c_shl32));
+  blk = blk && expr_blk(12, VM_BLK_EXPR_BIT, (uint16_t[]){3}, 1, k_8, 1, c_rol, sizeof(c_rol));
+  blk = blk && expr_blk(13, VM_BLK_EXPR, (uint16_t[]){5}, 1, NULL, 0, c_pass, sizeof(c_pass));
+  // custom_data too short to hold even the header, let alone what it claims
+  blk = blk && expr_block(14, VM_BLK_EXPR, (uint16_t[]){0}, 1, NULL, 0, c_add, sizeof(c_add), 2);
+  ck("expression blocks built in execution order", blk);
+  if (!blk) return;
+
+  /* ---- pass 1 ---- */
+  vm_exec_reset_stats();
+  vm_exec_pass();
+
+  ck("A + B", near_f(out_f(0), 7.0f) && eno_of(0));
+  ck("(A + B) * K - hypot(A, B) -- literals and a nested call", near_f(out_f(1), 9.0f) && eno_of(1));
+  ck("a comparison feeding SEL picks the near arm", near_f(out_f(2), 10.0f) && eno_of(2));
+  ck("one pin named twice is one value", near_f(out_f(3), 9.0f) && eno_of(3));
+
+  /* The laziness the input cache buys: pin 1 exists, nothing is wired to it,
+     and the code never names it -- so it is never read and never fails. An
+     eager prefetch would fault this block every pass. */
+  ck("a declared but unnamed pin is never read", near_f(out_f(8), 6.0f) && eno_of(8));
+
+  ck("bitwise: (X >> Y) & 0xFF", out_u(9) == 0x56u && eno_of(9));
+  ck("bitwise: popcount of ~X", out_u(10) == 19u && eno_of(10));
+  ck("a shift of 32 is 0, not undefined", out_u(11) == 0u && eno_of(11));
+  ck("a rotate carries the top byte round", out_u(12) == 0x34567812u && eno_of(12));
+
+  /* Every fault is the same shape: nothing published, and the flow withdrawn
+     by the supervisor under cfg.on_error rather than by the block. */
+  ck("divide by zero publishes nothing", near_f(out_f(4), 0.0f) && !eno_of(4));
+  ck("...and latches the fault episode", (expr_rt(4) & VM_EXPR_RT_FAULTED) != 0);
+  ck("an unknown opcode faults", !eno_of(5) && near_f(out_f(5), 0.0f));
+  ck("a stack underflow faults", !eno_of(6));
+  ck("a program ending on two values faults", !eno_of(7));
+  ck("custom_data too short for the header faults", !eno_of(14));
+
+  /* Malformed code is a standing condition, so it is latched and reported once
+     per load -- at 100 Hz the alternative is six thousand identical errors a
+     minute. Bad *data* is not latched that way; see the re-arm below. */
+  ck("a malformed program is latched, so it reports once", cfg_bad(5) && cfg_bad(6) && cfg_bad(7) && cfg_bad(14));
+  ck("...and a well-formed one is not", !cfg_bad(0) && !cfg_bad(4) && !cfg_bad(9));
+
+  ck("a fresh input runs the expression", near_f(out_f(13), 5.0f) && eno_of(13));
+  ck("the sweep clears a resetable input's upd", stale_in->head.f.upd == 0);
+
+  /* ---- pass 2: the divisor is no longer zero, the passthrough's input is
+          no longer fresh ---- */
+  *(float*)vm_obj_by_id(2)->payload = 2.0f;
+  vm_obj_by_id(EXPR_ENO(13))->head.f.upd = 0;
+  vm_exec_pass();
+
+  ck("the same expression recovers once the data does", near_f(out_f(4), 1.5f) && eno_of(4));
+  ck("...and a clean evaluation re-arms fault reporting", (expr_rt(4) & VM_EXPR_RT_FAULTED) == 0);
+  ck("a malformed program stays latched across passes", cfg_bad(5));
+
+  /* An expression is a function of its inputs, so nothing arriving means the
+     answer cannot have changed: the block stands down, its result stands, and
+     only the flow is withdrawn. */
+  ck("a stale input means the expression does not run", !eno_of(13));
+  ck("...and its result stands", near_f(out_f(13), 5.0f));
+  ck("...with the ENO taken false quietly", vm_obj_by_id(EXPR_ENO(13))->head.f.upd == 0);
+}
+
 void vm_selftest_run(void) {
   s_pass = 0;
   s_fail = 0;
   ESP_LOGW(TAG, "==== VM self-test start ====");
 
-  test_header_helpers();
-  test_conversion();
-  test_resolution();
-  test_nested();
-  test_mutation();
-  test_block_api();
-  test_obj_construction();
-  test_names_and_accessor_build();
-  test_resolution_cache();
-  test_access_edges();
-  test_strings();
-  test_upload();
-  test_block_upload();
-  test_malformed();
-  test_dynamic_objects();
+  /* A tick between stages, and the reason is the whole run rather than any one
+     stage: this executes synchronously on `main`, which is priority 1 and
+     blocks nowhere -- no assertion waits on anything and console logging does
+     not yield either. So without this, IDLE0 (priority 0) never runs from boot
+     init until the last stage finishes, and the task watchdog it feeds trips
+     with `main` named as the CPU 0 hog. The cost is one tick per stage and it
+     buys back the whole budget for whatever runs after. */
+#define STAGE(fn) \
+  do {            \
+    fn();         \
+    vTaskDelay(1); \
+  } while (0)
+
+  STAGE(test_header_helpers);
+  STAGE(test_conversion);
+  STAGE(test_resolution);
+  STAGE(test_nested);
+  STAGE(test_mutation);
+  STAGE(test_block_api);
+  STAGE(test_obj_construction);
+  STAGE(test_names_and_accessor_build);
+  STAGE(test_resolution_cache);
+  STAGE(test_access_edges);
+  STAGE(test_strings);
+  STAGE(test_upload);
+  STAGE(test_block_upload);
+  STAGE(test_malformed);
+  STAGE(test_dynamic_objects);
+  STAGE(test_palette);
+  STAGE(test_sections);
+  STAGE(test_exec_pass);
+  STAGE(test_events);
+  STAGE(test_expr);
+#undef STAGE
 
   vm_obj_dyn_reset();  // before the loader: parents holding these live in the pool
   vm_loader_reset();

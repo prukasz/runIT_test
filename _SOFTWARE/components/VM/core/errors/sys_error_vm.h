@@ -12,7 +12,8 @@
   X(OWNER_VM_BLOCK, 0xA904, "OWNER_VM_BLOCK")       \
   X(OWNER_VM_CODE, 0xA905, "OWNER_VM_CODE")         \
   X(OWNER_VM_LOADER, 0xA906, "OWNER_VM_LOADER")     \
-  X(OWNER_DEC_VM_LOADER, 0xA907, "OWNER_DEC_VM_LOADER")
+  X(OWNER_DEC_VM_LOADER, 0xA907, "OWNER_DEC_VM_LOADER") \
+  X(OWNER_VM_EXEC, 0xA908, "OWNER_VM_EXEC")
 
 // `obj`/`parent_obj` carry the failing vm_obj_t* for local (serial) trace
 // diagnosis -- meaningless once encoded to a remote client with no symbol
@@ -47,7 +48,17 @@
   X(ERR_VM_REG_DUP, struct { uint8_t kind; uint16_t id; })                                                            \
   X(ERR_VM_BLK_BAD_SHAPE, struct { uint16_t blk_id; uint8_t in_cnt; uint8_t q_cnt; })                                 \
   X(ERR_VM_BLK_BAD_REF, struct { uint16_t blk_id; uint16_t ref_id; uint8_t slot; uint8_t kind; })                      \
-  X(ERR_VM_DYN_FULL, struct { uint16_t limit; })
+  X(ERR_VM_DYN_FULL, struct { uint16_t limit; })                                                                      \
+  X(ERR_VM_OBJ_NOT_USR_MUTABLE, struct { uint16_t id; void* obj; })                                                   \
+  X(ERR_VM_BLK_UNKNOWN_TYPE, struct { uint16_t blk_id; uint8_t block_type; })                                         \
+  X(ERR_VM_SEC_BAD_RANGE, struct { uint16_t sec_id; uint16_t start; uint16_t end; uint16_t blk_cnt; })                \
+  X(ERR_VM_SEC_OVERLAP, struct { uint16_t sec_id; uint16_t other_id; uint16_t start; uint16_t end; })                 \
+  X(ERR_VM_EXEC_BLOCK_HUNG, struct { uint16_t block_idx; uint16_t ms; })                                              \
+  X(ERR_VM_EXEC_SPAN_DEPTH, struct { uint16_t block_idx; uint8_t depth; })                                            \
+  X(ERR_VM_EXEC_BAD_SPAN, struct { uint16_t block_idx; uint16_t start; uint16_t end; })                               \
+  X(ERR_VM_EVENT_OVERFLOW, struct { uint16_t type; uint16_t depth; uint16_t dropped; })                               \
+  X(ERR_VM_EXPR_BAD_CODE, struct { uint16_t block_idx; uint16_t pc; uint8_t opcode; uint8_t reason; })                \
+  X(ERR_VM_EXPR_MATH, struct { uint16_t block_idx; uint16_t pc; uint8_t opcode; uint8_t reason; })
 
 /**
  * @brief Human-readable descriptions for the VM tags - see
@@ -85,7 +96,17 @@
   X(ERR_VM_REG_DUP)                \
   X(ERR_VM_BLK_BAD_SHAPE)          \
   X(ERR_VM_BLK_BAD_REF)            \
-  X(ERR_VM_DYN_FULL)
+  X(ERR_VM_DYN_FULL)               \
+  X(ERR_VM_OBJ_NOT_USR_MUTABLE)    \
+  X(ERR_VM_BLK_UNKNOWN_TYPE)       \
+  X(ERR_VM_SEC_BAD_RANGE)          \
+  X(ERR_VM_SEC_OVERLAP)            \
+  X(ERR_VM_EXEC_BLOCK_HUNG)        \
+  X(ERR_VM_EXEC_SPAN_DEPTH)        \
+  X(ERR_VM_EXEC_BAD_SPAN)          \
+  X(ERR_VM_EVENT_OVERFLOW)         \
+  X(ERR_VM_EXPR_BAD_CODE)          \
+  X(ERR_VM_EXPR_MATH)
 
 #define LOG_BODY_ERR_VM_ALLOC_EXHAUSTED(p, out, out_size) \
   snprintf((out), (out_size), "vm arena exhausted: requested %lu, %lu remaining", (unsigned long)(p)->requested, (unsigned long)(p)->remaining)
@@ -145,7 +166,7 @@
   snprintf((out), (out_size), "accessor %u index %u: unknown kind %u", (p)->acc_id, (p)->pos, (p)->kind)
 /* One tag for all three registries -- `kind` is a vm_reg_e, named here so a
    trace still reads as "object"/"accessor"/"block" rather than as a number. */
-#define VM_REG_NAME(k) ((k) == 0 ? "object" : (k) == 1 ? "accessor" : (k) == 2 ? "block" : "?")
+#define VM_REG_NAME(k) ((k) == 0 ? "object" : (k) == 1 ? "accessor" : (k) == 2 ? "block" : (k) == 3 ? "section" : "?")
 #define LOG_BODY_ERR_VM_REG_OOB(p, out, out_size)   snprintf((out), (out_size), "%s registry: id %u is outside the %u-entry table", VM_REG_NAME((p)->kind), (p)->id, (p)->count)
 #define LOG_BODY_ERR_VM_REG_DUP(p, out, out_size)   snprintf((out), (out_size), "%s registry: id %u is already bound", VM_REG_NAME((p)->kind), (p)->id)
 #define LOG_BODY_ERR_VM_BLK_BAD_SHAPE(p, out, out_size) \
@@ -159,6 +180,42 @@
            : (p)->kind == 2 ? "EN"                                                                                                                                           \
                             : "ENO",                                                                                                                                         \
            (p)->slot, (p)->ref_id)
+
+#define LOG_BODY_ERR_VM_OBJ_NOT_USR_MUTABLE(p, out, out_size) \
+  snprintf((out), (out_size), "object %u: write rejected, user logic may not write this object (obj=%p)", (p)->id, (p)->obj)
+#define LOG_BODY_ERR_VM_BLK_UNKNOWN_TYPE(p, out, out_size) \
+  snprintf((out), (out_size), "block %u: nothing in the palette runs type %u", (p)->blk_id, (p)->block_type)
+#define LOG_BODY_ERR_VM_SEC_BAD_RANGE(p, out, out_size)                                                  \
+  snprintf((out), (out_size), "section %u: range [%u,%u) is not inside the %u-block order", (p)->sec_id,   \
+           (p)->start, (p)->end, (p)->blk_cnt)
+#define LOG_BODY_ERR_VM_SEC_OVERLAP(p, out, out_size)                                                       \
+  snprintf((out), (out_size), "section %u: range [%u,%u) overlaps section %u", (p)->sec_id, (p)->start,     \
+           (p)->end, (p)->other_id)
+#define LOG_BODY_ERR_VM_EXEC_BLOCK_HUNG(p, out, out_size) \
+  snprintf((out), (out_size), "block %u has been executing for over %u ms", (p)->block_idx, (p)->ms)
+#define LOG_BODY_ERR_VM_EXEC_SPAN_DEPTH(p, out, out_size) \
+  snprintf((out), (out_size), "block %u: span nesting exceeded depth %u", (p)->block_idx, (p)->depth)
+#define LOG_BODY_ERR_VM_EXEC_BAD_SPAN(p, out, out_size) \
+  snprintf((out), (out_size), "block %u declares span [%u,%u), which does not move the walk forward", (p)->block_idx, (p)->start, (p)->end)
+#define LOG_BODY_ERR_VM_EVENT_OVERFLOW(p, out, out_size)                                                     \
+  snprintf((out), (out_size), "vm event buffer full at %u per cycle: %u dropped, latest of callback type %u", \
+           (p)->depth, (p)->dropped, (p)->type)
+/* Both expression tags name the byte offset of the *instruction*, not the
+   cursor past its operand, so a trace points at what a disassembly shows.
+   `reason` is a VM_EXPR_BAD_* / VM_EXPR_MATH_* code from vm_block_expr.h. */
+#define VM_EXPR_BAD_NAME(r)                                                                                 \
+  ((r) == 0 ? "header does not fit custom_data" : (r) == 1 ? "block has no output"                          \
+   : (r) == 2 ? "unknown opcode" : (r) == 3 ? "bad operand"                                                 \
+   : (r) == 4 ? "stack underflow" : (r) == 5 ? "stack overflow"                                             \
+   : (r) == 6 ? "stack did not end with one value" : "?")
+#define VM_EXPR_MATH_NAME(r) \
+  ((r) == 0 ? "divide by zero" : (r) == 1 ? "operand outside domain" : (r) == 2 ? "result not finite" : "?")
+#define LOG_BODY_ERR_VM_EXPR_BAD_CODE(p, out, out_size)                                                     \
+  snprintf((out), (out_size), "block %u expression at pc %u (op %u): %s", (p)->block_idx, (p)->pc,          \
+           (p)->opcode, VM_EXPR_BAD_NAME((p)->reason))
+#define LOG_BODY_ERR_VM_EXPR_MATH(p, out, out_size)                                                         \
+  snprintf((out), (out_size), "block %u expression at pc %u (op %u): %s", (p)->block_idx, (p)->pc,          \
+           (p)->opcode, VM_EXPR_MATH_NAME((p)->reason))
 
 /**
  * @brief SE_EMIT_ERR() relies on an ambient `#define OWNER` per source file

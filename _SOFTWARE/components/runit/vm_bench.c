@@ -3,7 +3,11 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "vm_block.h"
+#include "vm_block_expr.h"
+#include "vm_blocks.h"
 #include "vm_obj_access.h"
 #include "vm_obj_build.h"
 
@@ -42,6 +46,40 @@ static vm_block_h s_blk_scalar;
 static vm_block_h s_blk_array;
 static vm_block_h s_blk_tag;
 
+/*
+Expression-block fixtures.
+
+Three programs of rising size over a *dedicated* input object, so the figures
+are three points on one line and the per-pin and per-op costs fall out of the
+differences between them:
+
+  simple   2 pins,  1 op
+  mid      4 pins,  3 ops
+  hard     8 pins, 20 ops (13 binary, 7 unary) and 6 literals
+
+Deliberately no transcendental in any of them. `sinf`/`logf`/`powf` are libm
+calls whose cost has nothing to do with the VM, and one of them in the hard
+program would swamp the twenty opcodes it is there to measure. What these
+three time is the machine -- the dispatch, the stack, the pin cache, the
+publish -- and a program using a transcendental pays libm on top of it.
+
+Their own input object rather than s_flat: the block scenarios above write
+s_flat[0] on every execution, so sharing it would leave these reading a value
+that drifts with whatever ran first.
+*/
+#define EXPR_IN_CNT 8
+#define EXPR_BUF 160
+static uint8_t s_expr_simple_buf[EXPR_BUF] __attribute__((aligned(8)));
+static uint8_t s_expr_mid_buf[EXPR_BUF] __attribute__((aligned(8)));
+static uint8_t s_expr_hard_buf[EXPR_BUF] __attribute__((aligned(8)));
+static vm_block_h s_expr_simple;
+static vm_block_h s_expr_mid;
+static vm_block_h s_expr_hard;
+static vm_obj_h s_expr_in;   // VM_OBJ_F[8], holds 1.0 .. 8.0
+static vm_obj_h s_expr_out;  // where all three publish
+static vm_obj_h s_expr_eno;
+static vm_accessor_t* s_expr_acc[EXPR_IN_CNT];
+
 
 // keeps the optimiser from deleting a scenario whose result nobody reads
 static volatile float s_sink;
@@ -53,6 +91,9 @@ static uint32_t s_cpu_mhz = 240;
 #define OBJ_FLAT 9
 #define OBJ_RSEL 10
 #define OBJ_CSEL 11
+#define OBJ_EXPR_IN 12
+#define OBJ_EXPR_OUT 13
+#define OBJ_EXPR_ENO 14
 
 /* ==========================================================================
    Fixtures
@@ -81,13 +122,39 @@ static err_h mk_acc(vm_accessor_t** out, uint16_t root, uint8_t idx_count) {
   return vm_accessor_create(out, s_next_acc++, root, idx_count);
 }
 
+/* Lays one expression block out in a static buffer exactly as the arena would:
+   header, pin arrays, then custom_data carrying the code. cfg.in_cnt / q_cnt /
+   custom_len have to be set before vm_block_custom_data(), which derives the
+   offset from them. */
+static vm_block_h expr_fixture(uint8_t* buf, uint16_t block_idx, uint8_t in_cnt, const uint32_t* ks, uint8_t k_cnt,
+                               const uint8_t* code, uint16_t code_len) {
+  memset(buf, 0, EXPR_BUF);
+  vm_block_h b = (vm_block_h)buf;
+  b->cfg.block_idx = block_idx;
+  b->cfg.block_type = VM_BLK_EXPR;
+  b->cfg.in_cnt = in_cnt;
+  b->cfg.q_cnt = 1;
+  b->cfg.custom_len = (uint16_t)vm_expr_size(k_cnt, code_len);
+  b->cfg.eno = s_expr_eno;
+
+  for (uint8_t i = 0; i < in_cnt; i++) vm_block_inputs(b)[i] = s_expr_acc[i];
+  vm_block_outputs(b)[0] = s_expr_out;
+
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  c->const_cnt = k_cnt;
+  c->code_len = code_len;
+  for (uint8_t i = 0; i < k_cnt; i++) c->consts[i].u = ks[i];
+  memcpy(&c->consts[k_cnt], code, code_len);
+  return b;
+}
+
 static bool setup(void) {
   /* 3 accessors per cell, plus one per row, plus the two selectors and the
      by-ref chain -- sized here so a shape change fails loudly at open rather
      than silently past the end of the registry. */
   const uint16_t counts[VM_REG_CNT] = {
       [VM_REG_OBJ] = 16,
-      [VM_REG_ACC] = CELLS * 3 + GRID_N + 3,
+      [VM_REG_ACC] = CELLS * 3 + GRID_N + 3 + EXPR_IN_CNT,
       [VM_REG_BLK] = 0,
   };
   /* 16 kB, not 8: the registries now come out of this same pool, and an
@@ -197,6 +264,59 @@ static bool setup(void) {
   vm_block_inputs(s_blk_tag)[0] = s_name_acc[1];
   vm_block_inputs(s_blk_tag)[1] = s_name_acc[9];
   vm_block_outputs(s_blk_tag)[0] = s_flat;
+
+  // 4. The expression blocks -- see the fixture note at the top of the file
+  OKC(mk(&s_expr_in, OBJ_EXPR_IN, VM_OBJ_F, EXPR_IN_CNT, NULL));
+  OKC(mk(&s_expr_out, OBJ_EXPR_OUT, VM_OBJ_F, 1, NULL));
+  OKC(mk(&s_expr_eno, OBJ_EXPR_ENO, VM_OBJ_B, 1, NULL));
+  if (!s_ok) return false;
+
+  // pin n holds n+1, so no pin is zero and a divisor can be picked freely
+  for (int i = 0; i < EXPR_IN_CNT; i++) ((float*)s_expr_in->payload)[i] = (float)(i + 1);
+
+  /* Fresh, and staying fresh: these blocks are update-driven, so an input
+     nothing has written reads as stale and every execution would measure the
+     stand-down path instead of the expression. Nothing clears it here -- the
+     end-of-pass sweep belongs to the supervisor, which the bench does not
+     run. */
+  s_expr_in->head.f.upd = 1;
+
+  for (int i = 0; i < EXPR_IN_CNT; i++) {
+    OKC(mk_acc(&s_expr_acc[i], OBJ_EXPR_IN, 1));
+    OKC(vm_accessor_set_literal(s_expr_acc[i], 0, (uint32_t)i));
+    (void)vm_accessor_cache_build(s_expr_acc[i]);
+  }
+  if (!s_ok) return false;
+
+  /* IN0 + IN1 */
+  static const uint8_t code_simple[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_ADD};
+  /* (IN0 + IN1) - (IN2 * IN3) */
+  static const uint8_t code_mid[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1,   VM_EXPR_ADD, VM_EXPR_IN,
+                                     2,          VM_EXPR_IN, 3, VM_EXPR_MUL, VM_EXPR_SUB};
+  /* Twenty operations over all eight pins and six literals, never deeper than
+     three on the stack. The tail (MAX/MIN against a literal, then SQUARE/ABS)
+     clamps the running value, which is what makes the expected result exactly
+     9.0 rather than something the check has to approximate -- every opcode
+     still executes, since nothing here is folded. */
+  static const uint8_t code_hard[] = {
+      VM_EXPR_IN, 1, VM_EXPR_IN, 2, VM_EXPR_ADD, VM_EXPR_K, 0, VM_EXPR_MUL,
+      VM_EXPR_IN, 3, VM_EXPR_IN, 4, VM_EXPR_MUL, VM_EXPR_ADD, VM_EXPR_ABS,
+      VM_EXPR_IN, 5, VM_EXPR_K, 1, VM_EXPR_MUL, VM_EXPR_ADD,
+      VM_EXPR_IN, 6, VM_EXPR_K, 2, VM_EXPR_DIV, VM_EXPR_SUB, VM_EXPR_ABS,
+      VM_EXPR_IN, 7, VM_EXPR_K, 3, VM_EXPR_ADD, VM_EXPR_SQUARE,
+      VM_EXPR_K, 4, VM_EXPR_DIV, VM_EXPR_ADD, VM_EXPR_NEG, VM_EXPR_ABS,
+      VM_EXPR_IN, 0, VM_EXPR_K, 5, VM_EXPR_MAX, VM_EXPR_MIN,
+      VM_EXPR_SQUARE, VM_EXPR_ABS};
+  // literals travel as the u32 the wire carries, so the float bits go in by union
+  uint32_t ks[6];
+  const float kv[6] = {2.0f, 0.5f, 10.0f, 1.0f, 100.0f, 3.0f};
+  for (int i = 0; i < 6; i++) {
+    vm_expr_k_t k = {.f = kv[i]};
+    ks[i] = k.u;
+  }
+  s_expr_simple = expr_fixture(s_expr_simple_buf, 11, 2, NULL, 0, code_simple, sizeof(code_simple));
+  s_expr_mid = expr_fixture(s_expr_mid_buf, 12, 4, NULL, 0, code_mid, sizeof(code_mid));
+  s_expr_hard = expr_fixture(s_expr_hard_buf, 13, EXPR_IN_CNT, ks, 6, code_hard, sizeof(code_hard));
 
   return s_ok;
 }
@@ -334,6 +454,38 @@ static float bench_block_tag(void) {
   return acc;
 }
 
+/* The expression blocks, through the palette function itself rather than
+   through a copy of it -- so what is timed includes everything a real pass
+   pays: the trigger scan, the custom_data check, the bytecode walk, the
+   publish and the ENO write. CELLS executions per call, like every other
+   block row, so the reported figure is cycles per *execution*. */
+static float bench_expr_simple(void) {
+  float acc = 0;
+  for (int i = 0; i < CELLS; i++) {
+    vm_blk_expr(s_expr_simple);
+    acc += *(float*)s_expr_out->payload;
+  }
+  return acc;
+}
+
+static float bench_expr_mid(void) {
+  float acc = 0;
+  for (int i = 0; i < CELLS; i++) {
+    vm_blk_expr(s_expr_mid);
+    acc += *(float*)s_expr_out->payload;
+  }
+  return acc;
+}
+
+static float bench_expr_hard(void) {
+  float acc = 0;
+  for (int i = 0; i < CELLS; i++) {
+    vm_blk_expr(s_expr_hard);
+    acc += *(float*)s_expr_out->payload;
+  }
+  return acc;
+}
+
 
 
 /* ==========================================================================
@@ -356,7 +508,28 @@ static void measure_cpu_mhz(void) {
   if (!s_cpu_mhz) s_cpu_mhz = 240;
 }
 
+/*
+Hand core 0 back for one tick, between measurements and never inside one.
+
+Everything here runs synchronously on `main`, which is priority 1 and blocks
+nowhere: no measurement waits on anything, and console logging does not yield
+either. So from the moment boot init finishes, IDLE0 -- priority 0 -- never
+runs again, and the task watchdog it feeds trips at
+CONFIG_ESP_TASK_WDT_TIMEOUT_S with `main` named as the CPU 0 hog. The self test
+and the benchmark together are well past that, so this is not a matter of one
+scenario being slow.
+
+One tick is enough because the watchdog only needs IDLE0 to run at all. It
+costs nothing measurable: it lands outside the timed region, each scenario
+already warms the icache with a discarded call, and the reported figure is the
+best of TRIALS runs.
+*/
+static void yield_to_idle(void) {
+  vTaskDelay(1);
+}
+
 static void run(const char* name, bench_fn_t fn, float expect) {
+  yield_to_idle();
   float got = fn();  // warm the icache, and prove the scenario actually works
   bool correct = (got > expect - 0.5f) && (got < expect + 0.5f);
 
@@ -410,6 +583,7 @@ static float __attribute__((noinline)) depth_trampoline(int n, bench_fn_t fn) {
 static void run_depth_sweep(const char* name, bench_fn_t fn) {
   ESP_LOGI(TAG, "  window probe -- %s, same work from 8 call depths:", name);
   for (int d = 0; d < 8; d++) {
+    yield_to_idle();
     uint32_t best = UINT32_MAX;
     for (int t = 0; t < TRIALS; t++) {
       float sum = 0;
@@ -449,6 +623,14 @@ void vm_bench_run(void) {
   run("block_add (scalar in/out)", bench_block_scalar, 2080.0f);
   run("block_add (1D array arr[2]+arr[3])", bench_block_array, 320.0f);
   run("block_add (tag \"r0\"+\"r1\")", bench_block_tag, 640.0f);
+
+  /* Per *execution*, not per access -- as for the block_add rows above, so the
+     "vs raw" column is a scale marker rather than a like-for-like ratio. Three
+     sizes on one machine: the difference between them is what an added pin and
+     an added opcode actually cost. */
+  run("EXPR  2 pins,  1 op", bench_expr_simple, 192.0f);
+  run("EXPR  4 pins,  3 ops", bench_expr_mid, -576.0f);
+  run("EXPR  8 pins, 20 ops + 6 literals", bench_expr_hard, 576.0f);
 
 
 

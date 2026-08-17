@@ -301,6 +301,50 @@ err_h vm_obj_set_scalar(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_
 err_h vm_obj_not_scalar_err(vm_obj_h owner, vm_obj_t_e actual, uint16_t id);
 
 /*
+Two write paths, because `mutable` and `usr_mutable` guard different things.
+
+`mutable` is "may be written at all" -- a constant is not. `usr_mutable` is the
+narrower one: "may be written by *user logic*". A block's own ENO or result is
+mutable, because the block that owns it writes it every pass, and not
+usr_mutable, because a Set block the user drew must not be able to reach in and
+forge another block's flow.
+
+The flag has existed in the header and travelled over the wire
+(VM_LOAD_F_USR_MUTABLE) since objects did; what was missing was anyone reading
+it. Enforcing it means the write path has to know who is asking, which is
+exactly what these two entry points are: internal writes (a block publishing
+its own output) keep going through vm_obj_set_scalar() and check `mutable`
+only, while user-authored and remote writes go through the _usr forms and
+check both.
+
+Not inlined, and not fast: a live patch or a user-drawn Set block runs once,
+not once per element, so the extra load is free where it lands.
+*/
+
+/** @brief Cold arm of the user-write check. Out of line for the ambient OWNER. */
+err_h vm_obj_not_usr_mutable_err(vm_obj_h obj, uint16_t id);
+
+/** @brief vm_obj_set_scalar() for a user-authored or remote write: rejects a
+ *  target the program marked off-limits to user logic. */
+err_h vm_obj_set_scalar_usr(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type);
+
+/** @brief vm_obj_copy_content() for a user-authored or remote write. */
+err_h vm_obj_copy_content_usr(const vm_accessor_t* source, const vm_accessor_t* target);
+
+/**
+ * @brief Zero an object's payload without touching its header.
+ *
+ * The "quiet write" the non-activation path needs: a clear that set `upd`
+ * would look like new data to any update-driven block downstream, and one
+ * event would ripple outward for a second pass. Nothing here reads or writes
+ * head.f at all, so there is no window in which it briefly says otherwise.
+ *
+ * Refuses VM_OBJ_PTR: its payload is a link, not a value, and zeroing one
+ * would drop a reference vm_obj_dyn_release() never sees.
+ */
+void vm_obj_clear_quiet(vm_obj_h obj);
+
+/*
 Direct-object write path, for a block publishing to an output it owns: an
 output is bound once at load and never moves, so the output slot holds the
 vm_obj_h itself and skips the accessor walk. Still checks mutable, still sets
@@ -644,6 +688,19 @@ static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t ind
  * @endcode
  */
 #define VM_OBJ_SET_VAL_AT(source, obj, index) vm_obj_set_scalar_direct((obj), (index), VM_VAL_OF(source), VM_TYPE_OF(source))
+
+/** @brief VM_OBJ_SET_VAL() for a user-authored or remote write -- checks
+ *  `usr_mutable` on top of `mutable`. See the note above vm_obj_set_scalar_usr(). */
+#define VM_OBJ_SET_VAL_USR(source, target) vm_obj_set_scalar_usr((target), VM_VAL_OF(source), VM_TYPE_OF(source))
+
+/** @brief VM_OBJ_SET_VAL_AT() for a user-authored or remote write. */
+static __always_inline err_h vm_obj_set_scalar_direct_usr(vm_obj_h obj, uint16_t index, vm_val_t v, vm_obj_t_e src_type) {
+  if (unlikely(obj == NULL)) return vm_obj_null_obj_err();
+  if (unlikely(!obj->head.f.usr_mutable)) return vm_obj_not_usr_mutable_err(obj, 0);
+  return vm_obj_set_scalar_direct(obj, index, v, src_type);
+}
+
+#define VM_OBJ_SET_VAL_AT_USR(source, obj, index) vm_obj_set_scalar_direct_usr((obj), (index), VM_VAL_OF(source), VM_TYPE_OF(source))
 
 /** @brief Read one converted scalar out of an already-resolved payload --
  *  the array-iteration counterpart to VM_OBJ_GET_VAL, no chain walk. */
