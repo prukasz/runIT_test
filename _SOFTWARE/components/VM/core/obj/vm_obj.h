@@ -108,12 +108,12 @@ typedef struct __attribute__((aligned(4))) vm_obj_head_t {
   } d;
   struct {
     uint8_t mutable : 1;        // is value editable by any one
-    uint8_t usr_mutable : 1;    // is editable by user-code
     uint8_t upd : 1;            // has value been updated / refreshed lately
     uint8_t upd_resetable : 1;  // can flag be reset
     uint8_t tagged : 1;         // is name field populated
     uint8_t retentive : 1;      // should be stored in nvs - requires type of non-prt
     uint8_t dynamic : 1;        // heap-allocated behind a vm_dyn_hdr_t, freed at refcount zero -- see vm_obj_dyn.h
+    uint8_t _pad : 2;
   } f;
 } vm_obj_head_t;
 
@@ -139,12 +139,10 @@ _Static_assert(offsetof(vm_obj_t, payload) == 4, "payload must follow the head w
  * @brief Object creation and descriptor flags
  */
 #define VM_OBJ_F_MUTABLE 0x01
-#define VM_OBJ_F_USR_MUTABLE 0x02
-#define VM_OBJ_F_UPD_RESETABLE 0x04
-#define VM_OBJ_F_RETENTIVE 0x08
+#define VM_OBJ_F_UPD_RESETABLE 0x02
+#define VM_OBJ_F_RETENTIVE 0x04
 
 #define VM_LOAD_F_MUTABLE VM_OBJ_F_MUTABLE
-#define VM_LOAD_F_USR_MUTABLE VM_OBJ_F_USR_MUTABLE
 #define VM_LOAD_F_UPD_RESETABLE VM_OBJ_F_UPD_RESETABLE
 #define VM_LOAD_F_RETENTIVE VM_OBJ_F_RETENTIVE
 
@@ -155,7 +153,7 @@ _Static_assert(offsetof(vm_obj_t, payload) == 4, "payload must follow the head w
  *
  * @param type vm_obj_t_e element type (e.g. VM_OBJ_F, VM_OBJ_U32, VM_OBJ_PTR).
  * @param item_count Number of elements (scalar is 1).
- * @param flags Flag bits (VM_OBJ_F_MUTABLE, VM_OBJ_F_USR_MUTABLE, etc.).
+ * @param flags Flag bits (VM_OBJ_F_MUTABLE, etc.).
  * @param name_len Length of tag (0..15).
  */
 static __always_inline vm_obj_head_t vm_obj_head(vm_obj_t_e type, uint16_t item_count, uint8_t flags,
@@ -165,7 +163,6 @@ static __always_inline vm_obj_head_t vm_obj_head(vm_obj_t_e type, uint16_t item_
   h.d.obj_t = (uint8_t)type;
   h.d.name_size = (uint8_t)(name_len > VM_OBJ_NAME_MAX ? VM_OBJ_NAME_MAX : name_len);
   h.f.mutable = (flags & VM_OBJ_F_MUTABLE) != 0;
-  h.f.usr_mutable = (flags & VM_OBJ_F_USR_MUTABLE) != 0;
   h.f.upd_resetable = (flags & VM_OBJ_F_UPD_RESETABLE) != 0;
   h.f.retentive = (flags & VM_OBJ_F_RETENTIVE) != 0;
   return h;

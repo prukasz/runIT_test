@@ -96,21 +96,21 @@ static __attribute__((noinline)) uint32_t index_from_float(const void* src) {
   return (uint32_t)vm_f_to_i(*(const float*)src);
 }
 
-// read a resolved payload back as an integer, for use as the next index
 static __always_inline uint32_t payload_as_index(vm_payload_t p) {
   if (unlikely(!p.ptr)) return 0;
-  vm_val_t v = vm_payload_read(p);
   switch (p.type) {
     case VM_OBJ_U8:
     case VM_OBJ_B:
     case VM_OBJ_STR:
-      return v.u8;
+      return *(const uint8_t*)p.ptr;
     case VM_OBJ_U32:
-      return v.u32;
     case VM_OBJ_I32:
-      return (uint32_t)v.i32;
-    case VM_OBJ_U64:
-      return (uint32_t)v.u64;
+      return *(const uint32_t*)p.ptr;
+    case VM_OBJ_U64: {
+      uint64_t v;
+      memcpy(&v, p.ptr, sizeof(v));
+      return (uint32_t)v;
+    }
     case VM_OBJ_F:
       return index_from_float(p.ptr);
     default:
@@ -324,40 +324,6 @@ err_h vm_obj_set_scalar(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_
   }
   SE_RET_IF_ERR(resolve_d(target, 0, true, &r));
   return vm_store_inline(r.owner, r.payload, v, src_type, target->id);
-}
-
-/*
-The user-authored / remote write path. Same resolve, one more gate: the write
-is refused unless the deepest object it lands on is `usr_mutable` as well as
-`mutable`.
-
-`usr_mutable` is checked on `r.owner` -- the object the bytes belong to, the
-same object `mutable` was checked on inside the resolve. Checking it anywhere
-else would let a chain through a permissive parent reach a guarded child, or
-the reverse.
-*/
-err_h vm_obj_set_scalar_usr(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type) {
-  vm_resolved_t r;
-  if (unlikely(!vm_resolve_fast(target, true, &r))) {
-    SE_RET_IF_ERR(resolve_d(target, 0, true, &r));
-  }
-  if (unlikely(!r.owner->head.f.usr_mutable)) {
-    SE_RET_ERR(ERR_VM_OBJ_NOT_USR_MUTABLE, .id = target->id, .obj = (void*)r.owner);
-  }
-  return vm_store_inline(r.owner, r.payload, v, src_type, target->id);
-}
-
-err_h vm_obj_copy_content_usr(const vm_accessor_t* source, const vm_accessor_t* target) {
-  vm_resolved_t dst;
-  SE_RET_IF_ERR(resolve_d(target, 0, true, &dst));
-  if (!dst.owner->head.f.usr_mutable) {
-    SE_RET_ERR(ERR_VM_OBJ_NOT_USR_MUTABLE, .id = target->id, .obj = (void*)dst.owner);
-  }
-  return vm_obj_copy_content(source, target);
-}
-
-err_h vm_obj_not_usr_mutable_err(vm_obj_h obj, uint16_t id) {
-  SE_RET_ERR(ERR_VM_OBJ_NOT_USR_MUTABLE, .id = id, .obj = (void*)obj);
 }
 
 void vm_obj_clear_quiet(vm_obj_h obj) {

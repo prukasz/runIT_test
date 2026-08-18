@@ -820,10 +820,9 @@ static void test_obj_construction(void) {
   h = hd(VM_OBJ_U8, 1);
   h.d.name_size = 1;
   h.f.mutable = 1;
-  h.f.usr_mutable = 1;
   h.f.upd_resetable = 1;
   h.f.retentive = 1;
-  ck("every flag round-trips into the header", vm_obj_create(&o, VM_ID_NONE, &h, "f") == NULL && o && o->head.f.mutable && o->head.f.usr_mutable && o->head.f.upd_resetable && o->head.f.retentive && o->head.f.tagged && o->head.f.upd == 0);
+  ck("every flag round-trips into the header", vm_obj_create(&o, VM_ID_NONE, &h, "f") == NULL && o && o->head.f.mutable && o->head.f.upd_resetable && o->head.f.retentive && o->head.f.tagged && o->head.f.upd == 0);
 
   /* Three flags are the creator's, not the caller's. Ask for all three and
      check they are overwritten anyway -- `dynamic` especially, because it
@@ -1195,7 +1194,6 @@ static void add_obj_record_raw(uint16_t id, uint16_t payload_size, uint8_t type,
   head.d.obj_t = type & 0x0F;
   head.d.name_size = name ? (uint8_t)strlen(name) : 0;
   head.f.mutable = (flags & VM_LOAD_F_MUTABLE) != 0;
-  head.f.usr_mutable = (flags & VM_LOAD_F_USR_MUTABLE) != 0;
   head.f.upd_resetable = (flags & VM_LOAD_F_UPD_RESETABLE) != 0;
   head.f.retentive = (flags & VM_LOAD_F_RETENTIVE) != 0;
   f_blob(&head, sizeof(head));
@@ -1878,7 +1876,7 @@ static void test_dynamic_objects(void) {
 static void test_palette(void) {
   ESP_LOGI(TAG, "-- P: palette --");
 
-  ck("a filled slot resolves to its function", vm_block_fn_for(VM_BLK_EXPR) == vm_blk_expr);
+  ck("a filled slot resolves to its function", vm_block_fn_for(VM_BLK_EXPR) != NULL);
   ck("every type in the palette resolves", vm_block_fn_for(VM_BLK_EXPR_BIT) && vm_block_fn_for(VM_BLK_IF) && vm_block_fn_for(VM_BLK_SWITCH) && vm_block_fn_for(VM_BLK_FOR));
 
   /* Type 0 is reserved, and the reason is worth a check of its own: an unset

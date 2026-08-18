@@ -49,7 +49,6 @@
   X(ERR_VM_BLK_BAD_SHAPE, struct { uint16_t blk_id; uint8_t in_cnt; uint8_t q_cnt; })                                 \
   X(ERR_VM_BLK_BAD_REF, struct { uint16_t blk_id; uint16_t ref_id; uint8_t slot; uint8_t kind; })                      \
   X(ERR_VM_DYN_FULL, struct { uint16_t limit; })                                                                      \
-  X(ERR_VM_OBJ_NOT_USR_MUTABLE, struct { uint16_t id; void* obj; })                                                   \
   X(ERR_VM_BLK_UNKNOWN_TYPE, struct { uint16_t blk_id; uint8_t block_type; })                                         \
   X(ERR_VM_SEC_BAD_RANGE, struct { uint16_t sec_id; uint16_t start; uint16_t end; uint16_t blk_cnt; })                \
   X(ERR_VM_SEC_OVERLAP, struct { uint16_t sec_id; uint16_t other_id; uint16_t start; uint16_t end; })                 \
@@ -98,7 +97,6 @@
   X(ERR_VM_BLK_BAD_SHAPE)          \
   X(ERR_VM_BLK_BAD_REF)            \
   X(ERR_VM_DYN_FULL)               \
-  X(ERR_VM_OBJ_NOT_USR_MUTABLE)    \
   X(ERR_VM_BLK_UNKNOWN_TYPE)       \
   X(ERR_VM_SEC_BAD_RANGE)          \
   X(ERR_VM_SEC_OVERLAP)            \
@@ -183,8 +181,6 @@
                             : "ENO",                                                                                                                                         \
            (p)->slot, (p)->ref_id)
 
-#define LOG_BODY_ERR_VM_OBJ_NOT_USR_MUTABLE(p, out, out_size) \
-  snprintf((out), (out_size), "object %u: write rejected, user logic may not write this object (obj=%p)", (p)->id, (p)->obj)
 #define LOG_BODY_ERR_VM_BLK_UNKNOWN_TYPE(p, out, out_size) \
   snprintf((out), (out_size), "block %u: nothing in the palette runs type %u", (p)->blk_id, (p)->block_type)
 #define LOG_BODY_ERR_VM_SEC_BAD_RANGE(p, out, out_size)                                                  \
