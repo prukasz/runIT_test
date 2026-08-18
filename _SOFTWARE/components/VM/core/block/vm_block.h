@@ -189,3 +189,12 @@ static inline void vm_block_set_ENO(vm_block_h b, bool state) {
       SE_push_to_handler(SE_WRAP_ERR_OWNED(OWNER_VM_BLOCK, __bc_e, ERR_VM_BLOCK_FAILED, .block_idx = (block)->cfg.block_idx, .block_type = (block)->cfg.block_type)); \
     }                                                                                                                                                                 \
   } while (0)
+
+#define VM_BLK_ERR_NEW(tag_name, ...)                                                               \
+  ({                                                                                                 \
+    err_h __e = SE_alloc_bytes(sizeof(err_payload_##tag_name##_t), tag_name, OWNER_VM_BLOCK);         \
+    *((err_payload_##tag_name##_t*)__e->payload) = (err_payload_##tag_name##_t){__VA_ARGS__};        \
+    __e;                                                                                             \
+  })
+
+#define VM_BLK_EMIT_ERR(tag_name, ...) SE_push_to_handler(VM_BLK_ERR_NEW(tag_name, __VA_ARGS__))

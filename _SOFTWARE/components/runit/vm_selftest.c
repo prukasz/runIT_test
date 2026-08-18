@@ -69,50 +69,16 @@ static vm_obj_h mk(uint16_t id, vm_obj_t_e type, uint16_t items, const char* nam
   return o;
 }
 
-/* ==========================================================================
-   Reading the placeholder blocks
-
-   The exec stages dispatch through the real palette (blocks/vm_blocks.h) --
-   there is one, compiled in, and nothing can swap it. The placeholder blocks
-   there each keep two counters in their private state: `calls`, bumped every
-   time the supervisor dispatched to them, and `acts`, bumped when the block
-   decided to do something. The gap between the two is the whole of activation.
-   ========================================================================== */
-
-/* The type check is not belt-and-braces, it is the actual identification.
-   vm_dummy_state() only checks that custom_data is *big enough* to hold a
-   vm_dummy_state_t, and a real block's private state can easily be bigger while
-   meaning something completely different -- vm_for_code_t is 24 bytes against
-   the placeholder's 16, so `calls` and `acts` land on the loop's end and step.
-   Types 1..7 are the placeholders; everything from VM_BLK_EXPR up is real. */
-static vm_dummy_state_t* blk_state(uint16_t blk_id) {
-  vm_block_h b = vm_block_by_id(blk_id);
-  if (!b || b->cfg.block_type > VM_BLK_ON_EVENT) return NULL;
-  return vm_dummy_state(b);
+/* A float literal as the u32 the wire carries. The union is the format's, not
+   a trick of the test: see vm_expr_k_t. */
+static uint32_t kf(float f) {
+  vm_expr_k_t k = {.f = f};
+  return k.u;
 }
 
-static uint32_t blk_calls(uint16_t blk_id) {
-  vm_dummy_state_t* s = blk_state(blk_id);
-  return s ? s->calls : 0;
+static bool near_f(float a, float b) {
+  return fabsf(a - b) < 1e-4f;
 }
-
-static uint32_t blk_acts(uint16_t blk_id) {
-  vm_dummy_state_t* s = blk_state(blk_id);
-  return s ? s->acts : 0;
-}
-
-// counters only -- a span block's range lives in the same struct and must stay,
-// and blk_state() is what keeps this off blocks that are not placeholders at all
-static void blk_counters_reset(uint16_t first, uint16_t last) {
-  for (uint16_t i = first; i <= last; i++) {
-    vm_dummy_state_t* s = blk_state(i);
-    if (s) {
-      s->calls = 0;
-      s->acts = 0;
-    }
-  }
-}
-
 
 /* ==========================================================================
    A -- header helpers and the type tables
@@ -1672,17 +1638,18 @@ static void test_block_upload(void) {
   uint16_t outs[1] = {1};
   uint8_t custom[4] = {0xDE, 0xAD, 0xBE, 0xEF};
 
-  /* VM_BLK_GATE rather than VM_BLK_GATE: custom_len is
-     checked against the descriptor exactly now, so a block carrying four bytes
-     of private state has to be a type that declares four bytes. */
-  add_block_record(0, 100, VM_BLK_GATE, ins, 2, outs, 1, 2, 2, custom, sizeof(custom));
+  /* Any registered type does here -- this stage is about the record, not the
+     block. Nothing describes what a type's private state should look like, so
+     four arbitrary bytes load for any of them; VM_BLK_EXPR is used because it
+     is the type whose custom_data has a documented meaning to contrast with. */
+  add_block_record(0, 100, VM_BLK_EXPR, ins, 2, outs, 1, 2, 2, custom, sizeof(custom));
   ck("0x45 creates a block", f_send() == NULL);
 
   vm_block_h b = vm_block_by_id(0);
   ck("block is bound to its id", b != NULL);
   if (!b) return;
 
-  ck("block header round-trips", b->cfg.block_idx == 100 && b->cfg.block_type == VM_BLK_GATE && b->cfg.in_cnt == 2 && b->cfg.q_cnt == 1 && b->cfg.custom_len == 4 && b->cfg.on_error == VM_BLK_ERR_STOP);
+  ck("block header round-trips", b->cfg.block_idx == 100 && b->cfg.block_type == VM_BLK_EXPR && b->cfg.in_cnt == 2 && b->cfg.q_cnt == 1 && b->cfg.custom_len == 4 && b->cfg.on_error == VM_BLK_ERR_STOP);
   ck("ids resolved to pointers, not kept as ids", vm_block_inputs(b)[0] == vm_accessor_by_id(0) && vm_block_inputs(b)[1] == vm_accessor_by_id(1) && vm_block_outputs(b)[0] == vm_obj_by_id(1));
   ck("EN and ENO resolved", b->cfg.en_cnt == 1 && vm_block_en_list(b)[0] == vm_accessor_by_id(2) && b->cfg.eno == vm_obj_by_id(2));
   ck("private state arrived", memcmp(vm_block_custom_data(b), custom, sizeof(custom)) == 0);
@@ -1702,26 +1669,26 @@ static void test_block_upload(void) {
   ck("uploaded block writes its output", vm_block_get_out(&q, b, 0) == NULL && VM_OBJ_SET_VAL_AT(6.5f, q, 0) == NULL && VM_OBJ_GET_VAL(c, vm_accessor_by_id(1)) == NULL);
 
   // references are the whole risk with blocks: every one of these must refuse
-  add_block_record(1, 101, VM_BLK_GATE, (uint16_t[]){99}, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_EXPR, (uint16_t[]){99}, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("unknown input accessor id -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, VM_BLK_GATE, ins, 2, (uint16_t[]){99}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_EXPR, ins, 2, (uint16_t[]){99}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("unknown output object id -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, VM_BLK_GATE, ins, 2, outs, 1, 99, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_EXPR, ins, 2, outs, 1, 99, VM_BLOCK_NO_ID, NULL, 0);
   ck("unknown EN accessor id -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, VM_BLK_GATE, ins, 2, outs, 1, VM_BLOCK_NO_ID, 99, NULL, 0);
+  add_block_record(1, 101, VM_BLK_EXPR, ins, 2, outs, 1, VM_BLOCK_NO_ID, 99, NULL, 0);
   ck("unknown ENO object id -> BAD_REF", f_send() != NULL);
 
   ck("a refused block leaves its id unbound", vm_block_by_id(1) == NULL);
 
   /* NO_ID is legal on an input (the pin stays unwired and the block falls back
      to its own constant), on EN and on ENO -- but never on an output. */
-  add_block_record(1, 101, VM_BLK_GATE, ins, 2, (uint16_t[]){VM_BLOCK_NO_ID}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_EXPR, ins, 2, (uint16_t[]){VM_BLOCK_NO_ID}, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("NO_ID output -> BAD_REF", f_send() != NULL);
 
-  add_block_record(1, 101, VM_BLK_GATE, (uint16_t[]){0, VM_BLOCK_NO_ID}, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 101, VM_BLK_EXPR, (uint16_t[]){0, VM_BLOCK_NO_ID}, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("NO_ID input leaves the pin unwired", f_send() == NULL && vm_block_by_id(1) && vm_block_inputs(vm_block_by_id(1))[0] == vm_accessor_by_id(0) && vm_block_inputs(vm_block_by_id(1))[1] == NULL);
   const vm_accessor_t* unwired = NULL;
   ck("an unwired pin reports PIN_UNLINKED, not garbage", vm_block_get_in(&unwired, vm_block_by_id(1), 1) != NULL && unwired == NULL);
@@ -1733,7 +1700,7 @@ static void test_block_upload(void) {
      float, which is non-zero and so reads as enabled too. */
   f_begin(VM_LOADER_CLASS_HEADER, 0x45);
   f_u16(2); f_u16(106);
-  f_u8(VM_BLK_GATE); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
+  f_u8(VM_BLK_EXPR); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
   f_u16(0); f_u16(1);  // inputs
   f_u16(1);            // output
   f_u16(2); f_u16(0);  // two enable sources
@@ -1756,28 +1723,28 @@ static void test_block_upload(void) {
   ck("ALL disabled again as soon as one source drops", !vm_block_is_enabled(vm_block_by_id(2)));
   ((float*)vm_obj_by_id(0)->payload)[0] = 2.5f;
 
-  add_block_record(1, 102, VM_BLK_GATE, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 102, VM_BLK_EXPR, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("duplicate block id -> TABLE_DUP", f_send() != NULL);
 
-  add_block_record(9, 103, VM_BLK_GATE, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(9, 103, VM_BLK_EXPR, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("block id past the table -> TABLE_OOB", f_send() != NULL);
 
   // in_cnt past the connected_in mask cannot be represented, so it is refused
   uint16_t many[VM_BLOCK_MAX_IN + 1] = {0};
-  add_block_record(1, 104, VM_BLK_GATE, many, VM_BLOCK_MAX_IN + 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(1, 104, VM_BLK_EXPR, many, VM_BLOCK_MAX_IN + 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("in_cnt past VM_BLOCK_MAX_IN -> BAD_SHAPE", f_send() != NULL);
 
   // truncation: the record claims two inputs but carries one id
   f_begin(VM_LOADER_CLASS_HEADER, 0x45);
   f_u16(5); f_u16(105);
-  f_u8(VM_BLK_GATE); f_u8(2); f_u8(1); f_u8(0); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
+  f_u8(VM_BLK_EXPR); f_u8(2); f_u8(1); f_u8(0); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
   f_u16(0);  // only one of the two promised ids
   ck("truncated 0x45 -> SHORT_RECORD", f_send() != NULL);
 
   // ...and the same for a promised enable list that is not there
   f_begin(VM_LOADER_CLASS_HEADER, 0x45);
   f_u16(5); f_u16(107);
-  f_u8(VM_BLK_GATE); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
+  f_u8(VM_BLK_EXPR); f_u8(2); f_u8(1); f_u8(2); f_u8(VM_BLK_EN_ANY); f_u8(VM_BLK_ERR_STOP); f_u16(0); f_u16(VM_BLOCK_NO_ID);
   f_u16(0); f_u16(1);  // inputs
   f_u16(1);            // output
   f_u16(2);            // only one of the two promised enable ids
@@ -1911,8 +1878,8 @@ static void test_dynamic_objects(void) {
 static void test_palette(void) {
   ESP_LOGI(TAG, "-- P: palette --");
 
-  ck("a filled slot resolves to its function", vm_block_fn_for(VM_BLK_ON_UPDATE) == vm_blk_on_update);
-  ck("every placeholder type resolves", vm_block_fn_for(VM_BLK_NOP) && vm_block_fn_for(VM_BLK_GATE) && vm_block_fn_for(VM_BLK_HOLD) && vm_block_fn_for(VM_BLK_ON_EVENT) && vm_block_fn_for(VM_BLK_REPEAT) && vm_block_fn_for(VM_BLK_FAULT));
+  ck("a filled slot resolves to its function", vm_block_fn_for(VM_BLK_EXPR) == vm_blk_expr);
+  ck("every type in the palette resolves", vm_block_fn_for(VM_BLK_EXPR_BIT) && vm_block_fn_for(VM_BLK_IF) && vm_block_fn_for(VM_BLK_SWITCH) && vm_block_fn_for(VM_BLK_FOR));
 
   /* Type 0 is reserved, and the reason is worth a check of its own: an unset
      `block_type` is zero, and it must not resolve to something runnable. */
@@ -1946,13 +1913,13 @@ static void test_palette(void) {
   ck("a block_type nothing registered -> UNKNOWN_TYPE", f_send() != NULL && vm_block_by_id(0) == NULL);
   ck("a refused block costs no arena", vm_block_by_id(0) == NULL);
 
-  add_block_record(0, 0, VM_BLK_ON_UPDATE, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
+  add_block_record(0, 0, VM_BLK_EXPR, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("a registered type is accepted", f_send() == NULL && vm_block_by_id(0) != NULL);
 
   /* Private state is the type's own business, so any length loads. The block
      is the only thing that knows what those bytes mean. */
   uint8_t custom[4] = {1, 2, 3, 4};
-  add_block_record(1, 1, VM_BLK_ON_UPDATE, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, custom, 4);
+  add_block_record(1, 1, VM_BLK_EXPR, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, custom, 4);
   ck("private state of any length loads -- nothing describes it yet", f_send() == NULL && vm_block_by_id(1) != NULL);
 }
 
@@ -1975,7 +1942,7 @@ static void test_sections(void) {
   for (uint16_t i = 0; i < 3; i++) {
     vm_block_h b = NULL;
     (void)vm_block_create(&b, i,
-                          &(vm_block_cfg_t){.block_idx = i, .block_type = VM_BLK_GATE, .q_cnt = 1, .out_obj_ids = outs, .eno_obj_id = VM_BLOCK_NO_ID});
+                          &(vm_block_cfg_t){.block_idx = i, .block_type = VM_BLK_EXPR, .q_cnt = 1, .out_obj_ids = outs, .eno_obj_id = VM_BLOCK_NO_ID});
   }
   ck("three blocks to section", q && vm_block_by_id(2) != NULL);
 
@@ -1999,17 +1966,45 @@ static void test_sections(void) {
    Builds a small program by the direct API and runs passes over it
    synchronously, so every assertion is about a pass that has already finished
    rather than about one happening on the other core.
+
+   It is built out of the shipping palette -- EXPR, SWITCH and FOR -- because
+   there is nothing else left to build it out of, and that is the point: there
+   is no test-only block type and no test-only seam anywhere in the exec layer.
+   What the supervisor promises is asserted through blocks a client could have
+   compiled.
+
+   Counting is the one thing the palette does not hand over for free. The
+   placeholders used to keep a `calls` counter in their private state; the
+   replacement is ex_counter() below, an EXPR that reads the object it writes
+   and adds one to it. Because that object is not `upd_resetable` and starts
+   life `upd`, the end-of-pass sweep never withdraws its freshness -- so the
+   block triggers on every dispatch and its value is exactly how many times the
+   supervisor called it.
    ========================================================================== */
 
-// registry id == block_idx throughout this stage, so a run counter reads as
-// "block N ran", and the id is also its position in the execution order
-#define EX_ALWAYS 0
+// registry id == block_idx == position in the execution order, so an id reads
+// as "block N" in an assertion and is also where the walk finds it
+#define EX_TICK 0
 #define EX_GATED 1
-#define EX_TRIGGERED 2
-#define EX_HOLD 3
-#define EX_SPAN 4
-#define EX_IN_SPAN 5
-#define EX_FAULT 6
+#define EX_TRIG 2
+#define EX_SPAN 3
+#define EX_INNER 4
+#define EX_FAULT 5
+
+// objects
+#define EX_O_GATE 0   // the enable source; upd_resetable, so the sweep is visible
+#define EX_O_TRIG 1   // the trigger source; likewise
+#define EX_O_TICK 2   // EX_TICK's counter
+#define EX_O_HELD 3   // what EX_TRIG published, and holds when nothing arrives
+#define EX_O_INNER 4  // EX_INNER's counter -- turns of the span, not passes
+#define EX_O_KEPT 5   // what EX_FAULT published before it failed
+#define EX_O_DIV 6    // EX_FAULT's divisor, taken to zero on pass 2
+#define EX_O_BR0 7    // EX_GATED's two branches
+#define EX_O_BR1 8
+#define EX_ENO_GATED 9
+#define EX_ENO_TRIG 10
+#define EX_ENO_SPAN 11
+#define EX_ENO_FAULT 12
 
 static vm_accessor_t* ex_acc(uint16_t acc_id, uint16_t root_obj) {
   vm_accessor_t* a = NULL;
@@ -2018,23 +2013,136 @@ static vm_accessor_t* ex_acc(uint16_t acc_id, uint16_t root_obj) {
   return a;
 }
 
-static bool ex_block(uint16_t id, uint8_t type, const uint16_t* ins, uint8_t in_cnt, const uint16_t* outs, uint8_t q_cnt,
-                     const uint16_t* ens, uint8_t en_cnt, uint16_t eno, uint8_t on_error) {
+/* out = out + 1, wired to read the object it writes. `acc` must be an accessor
+   rooted at `obj` -- the self-reference is the whole mechanism. Priming `upd`
+   is what makes the first pass trigger; nothing clears it afterwards, because
+   an object built by mk() is not upd_resetable. */
+static const uint8_t c_inc[] = {VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_ADD};
+
+static bool ex_counter(uint16_t id, uint16_t acc, uint16_t obj) {
   vm_block_h b = NULL;
   err_h e = vm_block_create(&b, id,
                             &(vm_block_cfg_t){.block_idx = id,
-                                              .block_type = type,
+                                              .block_type = VM_BLK_EXPR,
+                                              .in_cnt = 1,
+                                              .q_cnt = 1,
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = (uint16_t)vm_expr_size(1, sizeof(c_inc)),
+                                              .in_acc_ids = (const uint16_t[]){acc},
+                                              .out_obj_ids = (const uint16_t[]){obj},
+                                              .eno_obj_id = VM_BLOCK_NO_ID});
+  if (e != NULL || b == NULL) return false;
+
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  c->const_cnt = 1;
+  c->code_len = sizeof(c_inc);
+  c->consts[0].f = 1.0f;
+  memcpy(&c->consts[1], c_inc, sizeof(c_inc));
+
+  vm_obj_h o = vm_obj_by_id(obj);
+  if (!o) return false;
+  o->head.f.upd = 1;
+  return true;
+}
+
+// how many times the supervisor called the counter writing `obj`
+static uint32_t ex_count(uint16_t obj) {
+  vm_obj_h o = vm_obj_by_id(obj);
+  return o ? (uint32_t)*(float*)o->payload : 0xFFFFFFFFu;
+}
+
+static void ex_count_reset(uint16_t obj) {
+  vm_obj_h o = vm_obj_by_id(obj);
+  if (o) *(float*)o->payload = 0.0f;
+}
+
+static bool ex_b(uint16_t obj) {
+  vm_obj_h o = vm_obj_by_id(obj);
+  return o && *(uint8_t*)o->payload != 0;
+}
+
+static uint8_t ex_upd(uint16_t obj) {
+  vm_obj_h o = vm_obj_by_id(obj);
+  return o ? o->head.f.upd : 0xFFu;
+}
+
+static float ex_f(uint16_t obj) {
+  vm_obj_h o = vm_obj_by_id(obj);
+  return o ? *(float*)o->payload : -1.0f;
+}
+
+/* One EXPR of the caller's choosing -- inputs, output object, ENO and code all
+   given. Stage T has a builder of its own that fixes the output and ENO by
+   convention; the exec stages need to point one anywhere, which is what makes
+   an accumulator and a counter expressible at all. */
+static bool ex_expr(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t out_obj, uint16_t eno,
+                    const uint32_t* ks, uint8_t k_cnt, const uint8_t* code, uint16_t code_len) {
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = VM_BLK_EXPR,
+                                              .in_cnt = in_cnt,
+                                              .q_cnt = 1,
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = (uint16_t)vm_expr_size(k_cnt, code_len),
+                                              .in_acc_ids = ins,
+                                              .out_obj_ids = (const uint16_t[]){out_obj},
+                                              .eno_obj_id = eno});
+  if (e != NULL || b == NULL) return false;
+
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  c->const_cnt = k_cnt;
+  c->code_len = code_len;
+  for (uint8_t i = 0; i < k_cnt; i++) c->consts[i].u = ks[i];
+  memcpy(&c->consts[k_cnt], code, code_len);
+  return true;
+}
+
+/* The loop itself, spelled the way the editor would show it:
+   for (i = start; i <cmp> end; i = i <op> step), and a turn budget. */
+typedef struct {
+  float start, end, step;
+  uint16_t budget;
+  uint8_t op, cmp;
+} for_loop_t;
+
+/* A FOR owning [span_start, span_end). `custom_len` is the program's word, so
+   it is a parameter rather than a sizeof: stage V needs a FOR whose span fits
+   and whose loop does not. */
+static bool ex_for(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop_t lp, const uint16_t* ins,
+                   uint8_t in_cnt, const uint16_t* outs, uint8_t q_cnt, const uint16_t* ens, uint8_t en_cnt,
+                   uint16_t eno, uint16_t custom_len) {
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = VM_BLK_FOR,
                                               .in_cnt = in_cnt,
                                               .q_cnt = q_cnt,
                                               .en_cnt = en_cnt,
                                               .en_mode = VM_BLK_EN_ANY,
-                                              .on_error = on_error,
-                                              .custom_len = sizeof(vm_dummy_state_t),
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = custom_len,
                                               .in_acc_ids = ins,
                                               .out_obj_ids = outs,
                                               .en_acc_ids = ens,
                                               .eno_obj_id = eno});
-  return e == NULL && b != NULL;
+  if (e != NULL || b == NULL) return false;
+
+  if (custom_len >= sizeof(vm_span_t)) {
+    vm_span_t* sp = (vm_span_t*)vm_block_custom_data(b);
+    sp->start = span_start;
+    sp->end = span_end;
+  }
+  if (custom_len >= sizeof(vm_for_code_t)) {
+    vm_for_code_t* c = (vm_for_code_t*)vm_block_custom_data(b);
+    c->k_start = lp.start;
+    c->k_end = lp.end;
+    c->k_step = lp.step;
+    c->max_turns = lp.budget;
+    c->op = lp.op;
+    c->cmp = lp.cmp;
+  }
+  return true;
 }
 
 static void test_exec_pass(void) {
@@ -2042,123 +2150,162 @@ static void test_exec_pass(void) {
   vm_loader_reset();
   direct_arena_reset();
 
-  /* obj 0 gate (the enable source), obj 1 trigger source, objs 2..7 outputs.
-     The gate and the trigger are upd_resetable, because the end-of-pass sweep
+  /* The gate and the trigger are upd_resetable, because the end-of-pass sweep
      is one of the things under test and a non-resettable object is deliberately
-     exempt from it. */
+     exempt from it. Nothing else is, so what one pass wrote is still standing
+     when the next starts -- which is what the counters rely on and what the
+     "outputs stand" assertions are about. */
   vm_obj_head_t gh = hd(VM_OBJ_B, 1);
   gh.f.mutable = 1;
   gh.f.upd_resetable = 1;
   vm_obj_h gate = NULL, trig = NULL;
-  bool built = vm_obj_create(&gate, 0, &gh, NULL) == NULL;
+  bool built = vm_obj_create(&gate, EX_O_GATE, &gh, NULL) == NULL;
   vm_obj_head_t th = hd(VM_OBJ_U32, 1);
   th.f.mutable = 1;
   th.f.upd_resetable = 1;
-  built = built && vm_obj_create(&trig, 1, &th, NULL) == NULL;
-  // 2..7 outputs, 8 the gated block's ENO, 9 the failing block's -- separate,
-  // so an assertion about one cannot be satisfied by the other
-  for (uint16_t i = 2; i < 10; i++) built = built && mk(i, VM_OBJ_B, 1, NULL, true) != NULL;
+  built = built && vm_obj_create(&trig, EX_O_TRIG, &th, NULL) == NULL;
+
+  built = built && mk(EX_O_TICK, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(EX_O_HELD, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(EX_O_INNER, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(EX_O_KEPT, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(EX_O_DIV, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(EX_O_BR0, VM_OBJ_B, 1, NULL, true) != NULL;
+  built = built && mk(EX_O_BR1, VM_OBJ_B, 1, NULL, true) != NULL;
+  for (uint16_t i = EX_ENO_GATED; i <= EX_ENO_FAULT; i++) built = built && mk(i, VM_OBJ_B, 1, NULL, true) != NULL;
   ck("objects built", built);
 
-  built = ex_acc(0, 0) != NULL && ex_acc(1, 1) != NULL;
-  ck("accessors built", built);
+  // 0 gate, 1 trig, 2 the tick counter's own output, 3 the inner one's, 4 the divisor
+  bool accs = true;
+  accs = accs && ex_acc(0, EX_O_GATE) != NULL;
+  accs = accs && ex_acc(1, EX_O_TRIG) != NULL;
+  accs = accs && ex_acc(2, EX_O_TICK) != NULL;
+  accs = accs && ex_acc(3, EX_O_INNER) != NULL;
+  accs = accs && ex_acc(4, EX_O_DIV) != NULL;
+  ck("accessors built", accs);
 
-  const uint16_t acc_gate[1] = {0};
-  const uint16_t acc_trig[1] = {1};
+  *(float*)vm_obj_by_id(EX_O_DIV)->payload = 2.0f;
+  vm_obj_by_id(EX_O_DIV)->head.f.upd = 1;  // never swept, so EX_FAULT runs every pass
+
+  /* 6.0 / divisor -- a program that succeeds on pass 1 and divides by zero on
+     pass 2, which is how on_error is exercised now that there is no block
+     whose whole job is to fail. */
+  static const uint8_t c_div6[] = {VM_EXPR_K, 0, VM_EXPR_IN, 0, VM_EXPR_DIV};
+  static const uint8_t c_pass1[] = {VM_EXPR_IN, 0};
+  const uint32_t k_six[] = {kf(6.0f)};
+  const for_loop_t twice = {.start = 0, .end = 2, .step = 1, .budget = 8, .op = VM_FOR_OP_ADD, .cmp = VM_FOR_CMP_LT};
 
   bool blocks = true;
-  blocks = blocks && ex_block(EX_ALWAYS, VM_BLK_NOP, NULL, 0, (uint16_t[]){2}, 1, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
-  blocks = blocks && ex_block(EX_GATED, VM_BLK_GATE, NULL, 0, (uint16_t[]){3}, 1, acc_gate, 1, 8, VM_BLK_ERR_STOP);
-  blocks = blocks && ex_block(EX_TRIGGERED, VM_BLK_ON_UPDATE, acc_trig, 1, (uint16_t[]){4}, 1, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
-  blocks = blocks && ex_block(EX_HOLD, VM_BLK_HOLD, NULL, 0, (uint16_t[]){5}, 1, acc_gate, 1, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
-  blocks = blocks && ex_block(EX_SPAN, VM_BLK_REPEAT, NULL, 0, NULL, 0, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
-  blocks = blocks && ex_block(EX_IN_SPAN, VM_BLK_NOP, NULL, 0, (uint16_t[]){6}, 1, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
-  blocks = blocks && ex_block(EX_FAULT, VM_BLK_FAULT, NULL, 0, (uint16_t[]){7}, 1, NULL, 0, 9, VM_BLK_ERR_STOP);
+  blocks = blocks && ex_counter(EX_TICK, 2, EX_O_TICK);
+  // enable-driven: the router decides only while its EN says so
+  {
+    vm_block_h b = NULL;
+    err_h e = vm_block_create(&b, EX_GATED,
+                              &(vm_block_cfg_t){.block_idx = EX_GATED,
+                                                .block_type = VM_BLK_SWITCH,
+                                                .in_cnt = 1,
+                                                .q_cnt = 2,
+                                                .en_cnt = 1,
+                                                .en_mode = VM_BLK_EN_ANY,
+                                                .on_error = VM_BLK_ERR_STOP,
+                                                .in_acc_ids = (const uint16_t[]){1},
+                                                .out_obj_ids = (const uint16_t[]){EX_O_BR0, EX_O_BR1},
+                                                .en_acc_ids = (const uint16_t[]){0},
+                                                .eno_obj_id = EX_ENO_GATED});
+    blocks = blocks && e == NULL && b != NULL;
+  }
+  // update-driven: publishes what arrived, holds it when nothing does
+  blocks = blocks && ex_expr(EX_TRIG, (const uint16_t[]){1}, 1, EX_O_HELD, EX_ENO_TRIG, NULL, 0, c_pass1, sizeof(c_pass1));
+  // the span owner, claiming exactly the block that follows it
+  blocks = blocks && ex_for(EX_SPAN, EX_INNER, EX_INNER + 1, twice, NULL, 0, NULL, 0, NULL, 0, EX_ENO_SPAN,
+                            sizeof(vm_for_code_t));
+  blocks = blocks && ex_counter(EX_INNER, 3, EX_O_INNER);
+  blocks = blocks && ex_expr(EX_FAULT, (const uint16_t[]){4}, 1, EX_O_KEPT, EX_ENO_FAULT, k_six, 1, c_div6, sizeof(c_div6));
   ck("blocks built in execution order", blocks);
   if (!blocks) return;
 
-  // the span owner claims exactly the block that follows it
-  vm_span_t* sp = &blk_state(EX_SPAN)->span;
-  sp->start = EX_IN_SPAN;
-  sp->end = EX_IN_SPAN + 1;
-
-  /* ---- pass 1: gate open, trigger fresh ---- */
+  /* ---- pass 1: gate open, trigger fresh, divisor sound ---- */
   *(uint8_t*)gate->payload = 1;
   gate->head.f.upd = 1;
+  *(uint32_t*)trig->payload = 1u;
   trig->head.f.upd = 1;
 
   vm_exec_reset_stats();
   vm_exec_pass();
 
   ck("a pass counts", vm_exec_pass_count() == 1);
-  ck("an ungated block was called and acted", blk_calls(EX_ALWAYS) == 1 && blk_acts(EX_ALWAYS) == 1);
-  ck("an enabled block acted", blk_acts(EX_GATED) == 1);
-  ck("a block asking what arrived acted on a fresh input", blk_acts(EX_TRIGGERED) == 1);
-  ck("...and latched that it was triggered", (vm_block_by_id(EX_TRIGGERED)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
-  ck("a block that acted published its output", *(uint8_t*)vm_obj_by_id(2)->payload == 1);
+  ck("an ungated block was called and acted", ex_count(EX_O_TICK) == 1);
+  ck("an enabled router decided", ex_b(EX_O_BR1) && !ex_b(EX_O_BR0) && ex_b(EX_ENO_GATED));
+  ck("a block asking what arrived acted on a fresh input", near_f(ex_f(EX_O_HELD), 1.0f) && ex_b(EX_ENO_TRIG));
+  ck("...and latched that it was triggered", (vm_block_by_id(EX_TRIG)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
 
-  /* The span owner ran its range twice, and the outer walk jumped over it --
-     three would mean the walk fell into the span as well. */
-  ck("a span owner ran, once", blk_calls(EX_SPAN) == 1);
-  ck("the outer walk jumped over the span", blk_calls(EX_IN_SPAN) == 2);
+  /* Twice, not three times. Three would mean the outer walk ran the body as
+     well as the owner running it -- which is the whole reason a claim exists. */
+  ck("a span owner ran its range, and only it did", ex_count(EX_O_INNER) == 2 && ex_b(EX_ENO_SPAN));
 
-  /* on_error STOP: the block published a true output and a true ENO, then
-     failed. It is the *flow* that stops -- the output stands, exactly as it
-     does for a block that simply chose not to act, and the false ENO is what
-     keeps anything below from acting on it. */
-  ck("a failing block ran", blk_calls(EX_FAULT) == 1 && blk_acts(EX_FAULT) == 1);
-  ck("on_error STOP publishes a false ENO", *(uint8_t*)vm_obj_by_id(9)->payload == 0);
-  ck("...and leaves what was published standing", *(uint8_t*)vm_obj_by_id(7)->payload == 1);
-  ck("a block that succeeded kept its true ENO", *(uint8_t*)vm_obj_by_id(8)->payload == 1);
+  ck("a block that succeeded published and kept its true ENO", near_f(ex_f(EX_O_KEPT), 3.0f) && ex_b(EX_ENO_FAULT));
 
   /* ---- the end-of-pass sweep ---- */
   ck("upd is cleared at the end of the pass", gate->head.f.upd == 0 && trig->head.f.upd == 0);
+  ck("...and a non-resetable object is left alone", ex_upd(EX_O_TICK) == 1);
 
-  /* ---- pass 2: gate shut, trigger stale ----
+  /* ---- pass 2: gate shut, trigger stale, divisor zero ----
      These outputs are not upd_resetable, so the end-of-pass sweep left their
      `upd` standing from when they were written. Cleared by hand here, because
      what the next pass has to show is that nothing *sets* it -- a stand-down
      that is loud would read as an arrival to everything below. */
-  vm_obj_by_id(3)->head.f.upd = 0;   // the gated block's output
-  vm_obj_by_id(8)->head.f.upd = 0;   // its ENO
+  vm_obj_by_id(EX_O_HELD)->head.f.upd = 0;
+  vm_obj_by_id(EX_ENO_TRIG)->head.f.upd = 0;
+  vm_obj_by_id(EX_ENO_FAULT)->head.f.upd = 0;
+  vm_obj_by_id(EX_O_BR1)->head.f.upd = 0;
   *(uint8_t*)gate->payload = 0;
+  *(float*)vm_obj_by_id(EX_O_DIV)->payload = 0.0f;
 
   vm_exec_pass();
 
   /* Every block is *called* every pass -- that is the whole of the
      supervisor's policy. What changes is whether the block acts. */
-  ck("every block is called again regardless", blk_calls(EX_TRIGGERED) == 2 && blk_calls(EX_GATED) == 2);
-  ck("a stale trigger means the block does not act", blk_acts(EX_TRIGGERED) == 1);
-  ck("a shut gate means the block does not act", blk_acts(EX_GATED) == 1);
+  ck("every block is called again regardless", ex_count(EX_O_TICK) == 2 && ex_count(EX_O_INNER) == 4);
 
   /* Standing down keeps the data and withdraws the flow. The output holds
      last pass's answer -- nothing changed, so it is still the right one --
      while ENO drops so everything below stands down in turn. */
-  ck("a block that stood down kept its output", *(uint8_t*)vm_obj_by_id(3)->payload == 1);
-  ck("...and left it alone entirely, upd included", vm_obj_by_id(3)->head.f.upd == 0);
-  ck("...its ENO being the only thing it touched", *(uint8_t*)vm_obj_by_id(8)->payload == 0);
-  ck("...taken false quietly, so the drop is not itself an arrival", vm_obj_by_id(8)->head.f.upd == 0);
+  ck("a stale trigger means the block does not act", !ex_b(EX_ENO_TRIG));
+  ck("...and it holds what it last published", near_f(ex_f(EX_O_HELD), 1.0f));
+  ck("...having left it alone entirely, upd included", ex_upd(EX_O_HELD) == 0);
+  ck("...with the ENO taken false quietly", ex_upd(EX_ENO_TRIG) == 0);
 
-  /* `when inactive: Hold` needs no support from anywhere: the block is called
-     like every other, and simply stands down at all. */
-  ck("a holding block is called while inactive", blk_calls(EX_HOLD) == 2 && blk_acts(EX_HOLD) == 1);
-  ck("...and holds what it last commanded", *(uint8_t*)vm_obj_by_id(5)->payload == 1);
+  /* A router is the one shape that does *not* leave its outputs standing, and
+     this is why: they feed enable lists, so a branch left high behind a closed
+     gate is a whole subtree still running. Quietly, though -- stage U is where
+     that rule is actually pinned down. */
+  ck("a shut gate means the router decides nothing", !ex_b(EX_O_BR0) && !ex_b(EX_O_BR1) && !ex_b(EX_ENO_GATED));
+  ck("...quietly, so nothing below reads it as an arrival", ex_upd(EX_O_BR1) == 0);
+
+  /* on_error STOP: the block published a true value and a true ENO last pass,
+     and failed this one. It is the *flow* that stops -- what was published
+     stands, exactly as it does for a block that simply chose not to act, and
+     the false ENO is what keeps anything below from acting on it. */
+  ck("on_error STOP publishes a false ENO", !ex_b(EX_ENO_FAULT));
+  ck("...and leaves what was published standing", near_f(ex_f(EX_O_KEPT), 3.0f));
+  ck("...taken false quietly, like every other stand-down", ex_upd(EX_ENO_FAULT) == 0);
 
   /* ---- sections partition the same order, and change nothing about it ---- */
-  ck("sections over the whole order", vm_section_create(0, 0, 3) == NULL && vm_section_create(1, 3, 7) == NULL);
-  blk_counters_reset(EX_ALWAYS, EX_FAULT);
+  ck("sections over the whole order", vm_section_create(0, EX_TICK, EX_SPAN) == NULL && vm_section_create(1, EX_SPAN, EX_FAULT + 1) == NULL);
+  ex_count_reset(EX_O_TICK);
+  ex_count_reset(EX_O_INNER);
   vm_exec_pass();
-  ck("every section runs every pass", blk_calls(EX_ALWAYS) == 1 && blk_calls(EX_HOLD) == 1 && blk_calls(EX_FAULT) == 1);
-  ck("a span inside a section still runs from its owner only", blk_calls(EX_IN_SPAN) == 2);
+  ck("every section runs every pass", ex_count(EX_O_TICK) == 1);
+  ck("a span inside a section still runs from its owner only", ex_count(EX_O_INNER) == 2);
 
   /* That the pass timer records something, and nothing about how long.
      This stage runs a block that deliberately fails, and reporting that
      failure goes out over UART from the error handler -- which can preempt
-     mid-pass and costs milliseconds per line, dwarfing the seven blocks it is
+     mid-pass and costs milliseconds per line, dwarfing the six blocks it is
      supposedly timing. The 10 ms floor is a property of the supervisor loop
      (one tick per pass), not of a pass measured with a logger in it; vm_bench.c
      is where per-access cost is actually measured. */
-  ESP_LOGI(TAG, "  last pass: %lu us over 7 blocks", (unsigned long)vm_exec_last_pass_us());
+  ESP_LOGI(TAG, "  last pass: %lu us over 6 blocks", (unsigned long)vm_exec_last_pass_us());
   ck("the pass timer records a duration", vm_exec_last_pass_us() > 0);
 }
 
@@ -2260,17 +2407,6 @@ static void test_events(void) {
 
 #define EXPR_OUT(n) ((uint16_t)(10 + (n)))  // block n's result object
 #define EXPR_ENO(n) ((uint16_t)(30 + (n)))  // block n's ENO
-
-/* A float literal as the u32 the wire carries. The union is the format's, not
-   a trick of the test: see vm_expr_k_t. */
-static uint32_t kf(float f) {
-  vm_expr_k_t k = {.f = f};
-  return k.u;
-}
-
-static bool near_f(float a, float b) {
-  return fabsf(a - b) < 1e-4f;
-}
 
 static float out_f(uint16_t n) {
   vm_obj_h o = vm_obj_by_id(EXPR_OUT(n));
@@ -2670,41 +2806,53 @@ static void test_branch(void) {
    Stage V -- FOR, the span owner
 
    The one block that runs other blocks, so this is as much about the walk as
-   about the block. Everything here is counted rather than sampled: the bodies
-   are `VM_BLK_NOP` placeholders and the assertion is how many times each was
-   *called*, because that is the only way to tell "the owner ran it three times"
-   from "the owner ran it three times and the walk ran it again".
+   about the block. Everything here is counted rather than sampled, because the
+   only way to tell "the owner ran it three times" from "the owner ran it three
+   times and the walk ran it again" is to count -- and the counter is itself a
+   block out of the palette (ex_counter(), stage R): an EXPR reading the object
+   it writes and adding one to it, once per dispatch.
 
    Registry id == block_idx == position in the execution order, and here that is
    load-bearing rather than a convention: a span must start at the block
    immediately after its owner or the walk rejects the claim.
 
-     0  FOR  i=0; i<3; i+=1            1  NOP   3 calls
-     2  FOR  same, gated off           3  NOP   0 calls
-     4  FOR  i=0; i<END(pin); i+=1     5  NOP   budget 5 -- the pin drives it
-     6  FOR  i=0; i<2; i+=1            7  NOP   2 calls -- once per outer turn
-                                       8  FOR  i=0; i<3; i+=1
-                                       9  NOP   2*3 = 6 calls
-    10  FOR  i=0; i<2; i+=1           11  FAULT fails on every call
-    12  FOR  custom_len 4             13  NOP   0 calls -- claimable, unreadable
-    14  FOR  i=0; i<4; i+=1           15  EXPR  acc = acc + i
-    16  FOR  i=10; i>0; i-=2          17  NOP   5 calls -- descending
-    18  FOR  i=1; i<100; i*=2         19  NOP   7 calls -- geometric
-    20  FOR  i=0; i<3; i+=0           21  NOP   4 calls -- never ends; the budget does
+     0  FOR  i=0; i<3; i+=1             1  CNT   3 calls
+     2  FOR  same, gated off            3  CNT   0 calls
+     4  FOR  i=0; i<END(pin); i+=1      5  CNT   the pin drives it, budget 5
+     6  FOR  i=0; i<2; i+=1             7  CNT   2 calls -- once per outer turn
+                                        8  FOR   i=0; i<3; i+=1
+                                        9  CNT   2*3 = 6 calls
+    10  FOR  i=0; i<2; i+=1            11  CNT   2 calls
+                                       12  EXPR  bad opcode -- fails every call
+    13  FOR  custom_len 4              14  CNT   0 calls -- claimable, unreadable
+    15  FOR  i=0; i<4; i+=1            16  EXPR  acc = acc + i
+    17  FOR  i=10; i>0; i-=2           18  CNT   5 calls -- descending
+    19  FOR  i=1; i<100; i*=2          20  CNT   7 calls -- geometric
+    21  FOR  i=0; i<3; i+=0            22  CNT   4 calls -- never ends; the budget does
 
    The outer span at 6 holds a plain block *and* a nested loop, which is both the
    realistic shape and the only way to count outer turns: a FOR carries
-   vm_for_code_t rather than vm_dummy_state_t, so it has no counters of its own.
+   vm_for_code_t and publishes only its iterator, so it cannot count itself.
+
+   The span at 10 holds two blocks for the same reason: a body block that fails
+   never publishes, so the failure and the count have to be separate blocks.
    ========================================================================== */
 
-#define FOR_ENO(n) ((uint16_t)(20 + (n)))
-#define FOR_IDX0 50u   // block 0's iterator
-#define FOR_IDX14 51u  // block 14's, which the fold reads
-#define FOR_ACC 52u    // the accumulator block 15 folds into
-#define FOR_END 53u    // the live end value block 4 reads
-#define FOR_GATE 54u   // block 2's enable, held false
-#define FOR_IDXD 55u   // block 16's, descending
-#define FOR_IDXM 56u   // block 18's, geometric
+#define FOR_ENO(n) ((uint16_t)(20 + (n)))  // one per block, 20..42
+#define FOR_CNT(n) ((uint16_t)(43 + (n)))  // the body counters, sparse by design
+#define FOR_IDX0 70u   // block 0's iterator
+#define FOR_IDX15 71u  // block 15's, which the fold reads
+#define FOR_ACC 72u    // the accumulator block 16 folds into
+#define FOR_END 73u    // the live end value block 4 reads
+#define FOR_GATE 74u   // block 2's enable, held false
+#define FOR_IDXD 75u   // block 17's, descending
+#define FOR_IDXM 76u   // block 19's, geometric
+#define FOR_SINK 77u   // block 12's output, which it never reaches
+
+/* Every block in the table above that is a counter. Its accessor id is its
+   position here plus 4 -- accessors 0..3 belong to the loops themselves. */
+static const uint8_t s_for_bodies[] = {1, 3, 5, 7, 9, 11, 14, 18, 20, 22};
+#define FOR_BODY_CNT ((uint8_t)(sizeof(s_for_bodies) / sizeof(s_for_bodies[0])))
 
 static bool for_eno(uint16_t n) {
   vm_obj_h o = vm_obj_by_id(FOR_ENO(n));
@@ -2716,6 +2864,15 @@ static uint32_t for_idx(uint16_t obj_id) {
   return o ? *(uint32_t*)o->payload : 0xFFFFFFFFu;
 }
 
+// how many times the supervisor called body block `n`
+static uint32_t for_cnt(uint16_t n) {
+  return ex_count(FOR_CNT(n));
+}
+
+static void for_counters_reset(void) {
+  for (uint8_t i = 0; i < FOR_BODY_CNT; i++) ex_count_reset(FOR_CNT(s_for_bodies[i]));
+}
+
 // the block's own view of its bad-loop episode -- VM_FOR_RT_BAD
 static uint8_t for_rt(uint16_t n) {
   vm_block_h b = vm_block_by_id(n);
@@ -2723,107 +2880,49 @@ static uint8_t for_rt(uint16_t n) {
   return ((const vm_for_code_t*)vm_block_custom_data(b))->rt;
 }
 
-/* The loop itself, spelled the way the editor would show it:
-   for (i = start; i <cmp> end; i = i <op> step), and a turn budget. */
-typedef struct {
-  float start, end, step;
-  uint16_t budget;
-  uint8_t op, cmp;
-} for_loop_t;
-
-/* `custom_len` is the program's word, so it is a parameter rather than a
-   sizeof: stage V needs a FOR whose span fits and whose loop does not. */
-static bool for_block(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop_t lp, const uint16_t* ins,
-                      uint8_t in_cnt, const uint16_t* outs, uint8_t q_cnt, const uint16_t* ens, uint8_t en_cnt,
-                      uint16_t custom_len) {
-  vm_block_h b = NULL;
-  err_h e = vm_block_create(&b, id,
-                            &(vm_block_cfg_t){.block_idx = id,
-                                              .block_type = VM_BLK_FOR,
-                                              .in_cnt = in_cnt,
-                                              .q_cnt = q_cnt,
-                                              .en_cnt = en_cnt,
-                                              .en_mode = VM_BLK_EN_ANY,
-                                              .on_error = VM_BLK_ERR_STOP,
-                                              .custom_len = custom_len,
-                                              .in_acc_ids = ins,
-                                              .out_obj_ids = outs,
-                                              .en_acc_ids = ens,
-                                              .eno_obj_id = FOR_ENO(id)});
-  if (e != NULL || b == NULL) return false;
-  if (custom_len >= sizeof(vm_span_t)) {
-    vm_span_t* sp = (vm_span_t*)vm_block_custom_data(b);
-    sp->start = span_start;
-    sp->end = span_end;
-  }
-  if (custom_len >= sizeof(vm_for_code_t)) {
-    vm_for_code_t* c = (vm_for_code_t*)vm_block_custom_data(b);
-    c->k_start = lp.start;
-    c->k_end = lp.end;
-    c->k_step = lp.step;
-    c->max_turns = lp.budget;
-    c->op = lp.op;
-    c->cmp = lp.cmp;
-  }
-  return true;
+// a loop with no pins and no iterator output, which most of the table is
+static bool for_plain(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop_t lp) {
+  return ex_for(id, span_start, span_end, lp, NULL, 0, NULL, 0, NULL, 0, FOR_ENO(id), sizeof(vm_for_code_t));
 }
 
-// one EXPR publishing into an object of the caller's choosing, which stage T's
-// builder cannot do -- the fold needs its output and one of its inputs to be
-// the same object
-static bool for_expr(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t out_obj, const uint8_t* code,
-                     uint16_t code_len) {
-  vm_block_h b = NULL;
-  err_h e = vm_block_create(&b, id,
-                            &(vm_block_cfg_t){.block_idx = id,
-                                              .block_type = VM_BLK_EXPR,
-                                              .in_cnt = in_cnt,
-                                              .q_cnt = 1,
-                                              .on_error = VM_BLK_ERR_STOP,
-                                              .custom_len = (uint16_t)vm_expr_size(0, code_len),
-                                              .in_acc_ids = ins,
-                                              .out_obj_ids = (const uint16_t[]){out_obj},
-                                              .eno_obj_id = FOR_ENO(id)});
-  if (e != NULL || b == NULL) return false;
-  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
-  c->const_cnt = 0;
-  c->code_len = code_len;
-  memcpy(&c->consts[0], code, code_len);
-  return true;
-}
-
-static bool for_dummy(uint16_t id, uint8_t type) {
-  return ex_block(id, type, NULL, 0, NULL, 0, NULL, 0, VM_BLOCK_NO_ID, VM_BLK_ERR_STOP);
+// ...and one that publishes its iterator, so the body has something to read
+static bool for_idxed(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop_t lp, uint16_t idx_obj) {
+  return ex_for(id, span_start, span_end, lp, NULL, 0, (const uint16_t[]){idx_obj}, 1, NULL, 0, FOR_ENO(id),
+                sizeof(vm_for_code_t));
 }
 
 static void test_for(void) {
   ESP_LOGI(TAG, "-- V: FOR and the span walk --");
   vm_loader_reset();
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 64, [VM_REG_ACC] = 8, [VM_REG_BLK] = 24, [VM_REG_SEC] = 2};
-  (void)vm_store_open(DIRECT_POOL, counts);
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 80, [VM_REG_ACC] = 16, [VM_REG_BLK] = 24, [VM_REG_SEC] = 2};
+  (void)vm_store_open(8192, counts);
 
   bool built = true;
-  for (uint16_t n = 0; n <= 21; n++) built = built && mk(FOR_ENO(n), VM_OBJ_B, 1, NULL, true) != NULL;
+  for (uint16_t n = 0; n <= 22; n++) built = built && mk(FOR_ENO(n), VM_OBJ_B, 1, NULL, true) != NULL;
+  for (uint8_t i = 0; i < FOR_BODY_CNT; i++) built = built && mk(FOR_CNT(s_for_bodies[i]), VM_OBJ_F, 1, NULL, true) != NULL;
   built = built && mk(FOR_IDX0, VM_OBJ_U32, 1, NULL, true) != NULL;
-  built = built && mk(FOR_IDX14, VM_OBJ_U32, 1, NULL, true) != NULL;
+  built = built && mk(FOR_IDX15, VM_OBJ_U32, 1, NULL, true) != NULL;
   built = built && mk(FOR_ACC, VM_OBJ_F, 1, NULL, true) != NULL;
   built = built && mk(FOR_END, VM_OBJ_U32, 1, NULL, true) != NULL;
   built = built && mk(FOR_GATE, VM_OBJ_B, 1, NULL, true) != NULL;
   built = built && mk(FOR_IDXD, VM_OBJ_U32, 1, NULL, true) != NULL;
   built = built && mk(FOR_IDXM, VM_OBJ_U32, 1, NULL, true) != NULL;
+  built = built && mk(FOR_SINK, VM_OBJ_F, 1, NULL, true) != NULL;
   ck("objects built", built);
 
   bool accs = true;
   accs = accs && ex_acc(0, FOR_END) != NULL;
   accs = accs && ex_acc(1, FOR_GATE) != NULL;
   accs = accs && ex_acc(2, FOR_ACC) != NULL;
-  accs = accs && ex_acc(3, FOR_IDX14) != NULL;
+  accs = accs && ex_acc(3, FOR_IDX15) != NULL;
+  for (uint8_t i = 0; i < FOR_BODY_CNT; i++) accs = accs && ex_acc((uint16_t)(4 + i), FOR_CNT(s_for_bodies[i])) != NULL;
   ck("accessors built", accs);
 
   *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 3u;
   *(uint8_t*)vm_obj_by_id(FOR_GATE)->payload = 0;  // block 2 stays shut
 
   static const uint8_t c_fold[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_ADD};  // acc + i
+  static const uint8_t c_badop[] = {VM_EXPR_IN, 0, 0xFE};                       // fails on every call
 
   // for (i = 0; i < 3; i += 1), and the shapes that differ from it
   const for_loop_t up3 = {.start = 0, .end = 3, .step = 1, .budget = 8, .op = VM_FOR_OP_ADD, .cmp = VM_FOR_CMP_LT};
@@ -2834,31 +2933,32 @@ static void test_for(void) {
   const for_loop_t geo = {.start = 1, .end = 100, .step = 2, .budget = 16, .op = VM_FOR_OP_MUL, .cmp = VM_FOR_CMP_LT};
   const for_loop_t stuck = {.start = 0, .end = 3, .step = 0, .budget = 4, .op = VM_FOR_OP_ADD, .cmp = VM_FOR_CMP_LT};
 
+  /* The bodies first -- creation order is free, since a block's id is both its
+     registry slot and its place in the walk. */
   bool blk = true;
-  blk = blk && for_block(0, 1, 2, up3, NULL, 0, (uint16_t[]){FOR_IDX0}, 1, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(1, VM_BLK_NOP);
-  blk = blk && for_block(2, 3, 4, up3, NULL, 0, NULL, 0, (uint16_t[]){1}, 1, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(3, VM_BLK_NOP);
+  for (uint8_t i = 0; i < FOR_BODY_CNT; i++) {
+    blk = blk && ex_counter(s_for_bodies[i], (uint16_t)(4 + i), FOR_CNT(s_for_bodies[i]));
+  }
+
+  blk = blk && for_idxed(0, 1, 2, up3, FOR_IDX0);
+  blk = blk && ex_for(2, 3, 4, up3, NULL, 0, NULL, 0, (const uint16_t[]){1}, 1, FOR_ENO(2), sizeof(vm_for_code_t));
   // start unwired (falls back to its constant), end wired -- both paths at once
-  blk = blk && for_block(4, 5, 6, pin, (uint16_t[]){VM_BLOCK_NO_ID, 0}, 2, NULL, 0, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(5, VM_BLK_NOP);
-  blk = blk && for_block(6, 7, 10, up2, NULL, 0, NULL, 0, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(7, VM_BLK_NOP);
-  blk = blk && for_block(8, 9, 10, up3, NULL, 0, NULL, 0, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(9, VM_BLK_NOP);
-  blk = blk && for_block(10, 11, 12, up2, NULL, 0, NULL, 0, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(11, VM_BLK_FAULT);
+  blk = blk && ex_for(4, 5, 6, pin, (const uint16_t[]){VM_BLOCK_NO_ID, 0}, 2, NULL, 0, NULL, 0, FOR_ENO(4),
+                      sizeof(vm_for_code_t));
+  blk = blk && for_plain(6, 7, 10, up2);
+  blk = blk && for_plain(8, 9, 10, up3);
+  blk = blk && for_plain(10, 11, 13, up2);
+  /* Reads block 11's counter only to have a fresh pin: an EXPR that never
+     triggers never evaluates, so a body that is supposed to fail every call
+     has to be given something to arrive. */
+  blk = blk && ex_expr(12, (const uint16_t[]){9}, 1, FOR_SINK, FOR_ENO(12), NULL, 0, c_badop, sizeof(c_badop));
   // room for the span, none for the loop -- claimable, unreadable
-  blk = blk && for_block(12, 13, 14, up2, NULL, 0, NULL, 0, NULL, 0, sizeof(vm_span_t));
-  blk = blk && for_dummy(13, VM_BLK_NOP);
-  blk = blk && for_block(14, 15, 16, up4, NULL, 0, (uint16_t[]){FOR_IDX14}, 1, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_expr(15, (uint16_t[]){2, 3}, 2, FOR_ACC, c_fold, sizeof(c_fold));
-  blk = blk && for_block(16, 17, 18, down, NULL, 0, (uint16_t[]){FOR_IDXD}, 1, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(17, VM_BLK_NOP);
-  blk = blk && for_block(18, 19, 20, geo, NULL, 0, (uint16_t[]){FOR_IDXM}, 1, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(19, VM_BLK_NOP);
-  blk = blk && for_block(20, 21, 22, stuck, NULL, 0, NULL, 0, NULL, 0, sizeof(vm_for_code_t));
-  blk = blk && for_dummy(21, VM_BLK_NOP);
+  blk = blk && ex_for(13, 14, 15, up2, NULL, 0, NULL, 0, NULL, 0, FOR_ENO(13), sizeof(vm_span_t));
+  blk = blk && for_idxed(15, 16, 17, up4, FOR_IDX15);
+  blk = blk && ex_expr(16, (const uint16_t[]){2, 3}, 2, FOR_ACC, FOR_ENO(16), NULL, 0, c_fold, sizeof(c_fold));
+  blk = blk && for_idxed(17, 18, 19, down, FOR_IDXD);
+  blk = blk && for_idxed(19, 20, 21, geo, FOR_IDXM);
+  blk = blk && for_plain(21, 22, 23, stuck);
   ck("loops and bodies built in execution order", blk);
   if (!blk) return;
 
@@ -2868,20 +2968,20 @@ static void test_for(void) {
 
   /* Three, not four. Four would mean the outer walk ran the body itself as well
      as the owner running it -- which is the whole reason a claim exists. */
-  ck("for (i=0; i<3; i+=1) runs its body three times", blk_calls(1) == 3);
+  ck("for (i=0; i<3; i+=1) runs its body three times", for_cnt(1) == 3);
   ck("...publishing the iterator, so it ends holding the last one", for_idx(FOR_IDX0) == 2u);
   ck("...with the flow asserted", for_eno(0));
 
   /* Zero, not one. A disabled FOR that returned before claiming would leave the
      walk about to run its body inline, and running a span zero times is not the
      same as letting somebody else run it once. */
-  ck("a disabled loop claims first, so its body runs no times", blk_calls(3) == 0 && !for_eno(2));
+  ck("a disabled loop claims first, so its body runs no times", for_cnt(3) == 0 && !for_eno(2));
 
-  ck("an unwired start reads its constant while a wired end drives the loop", blk_calls(5) == 3 && for_eno(4));
+  ck("an unwired start reads its constant while a wired end drives the loop", for_cnt(5) == 3 && for_eno(4));
   ck("...and a loop that ended on its own is not latched", (for_rt(4) & VM_FOR_RT_BAD) == 0);
 
-  ck("a plain block in a span runs once per turn", blk_calls(7) == 2);
-  ck("...and a loop nested beside it runs the product", blk_calls(9) == 6);
+  ck("a plain block in a span runs once per turn", for_cnt(7) == 2);
+  ck("...and a loop nested beside it runs the product", for_cnt(9) == 6);
 
   /* The engine's own bug, and the only block that could ever have found it:
      g_vm_block_fault is one global, and the body's blocks run through the same
@@ -2889,13 +2989,14 @@ static void test_for(void) {
      block in the span decides the owner's on_error -- so this FOR would lose
      its ENO because something it ran failed, after that block's own on_error
      had already handled it. */
-  ck("a failing body block does not withdraw its owner's flow", blk_calls(11) == 2 && for_eno(10));
+  ck("a failing body block does not withdraw its owner's flow", for_cnt(11) == 2 && for_eno(10));
+  ck("...though it does withdraw its own", !for_eno(12) && cfg_bad(12));
 
   /* Malformed, but claimable -- so it claims. For a body that drives actuators,
      running once uncontrolled is strictly worse than not running at all. */
-  ck("a malformed loop still claims, so its body stays put", blk_calls(13) == 0 && !for_eno(12));
-  ck("...and is latched, so it reports once", cfg_bad(12));
-  ck("...while the well-formed loops are not", !cfg_bad(0) && !cfg_bad(6) && !cfg_bad(16));
+  ck("a malformed loop still claims, so its body stays put", for_cnt(14) == 0 && !for_eno(13));
+  ck("...and is latched, so it reports once", cfg_bad(13));
+  ck("...while the well-formed loops are not", !cfg_bad(0) && !cfg_bad(6) && !cfg_bad(17));
 
   /* The point of the whole mechanism: a body that varies per turn, and a fold
      across turns. `upd` is swept at the end of the *pass*, not per turn, so the
@@ -2903,40 +3004,40 @@ static void test_for(void) {
   ck("a body accumulates across turns", near_f(*(float*)vm_obj_by_id(FOR_ACC)->payload, 6.0f));
 
   /* The three shapes a plain repeat count cannot say. */
-  ck("for (i=10; i>0; i-=2) counts down", blk_calls(17) == 5 && for_idx(FOR_IDXD) == 2u);
-  ck("for (i=1; i<100; i*=2) steps geometrically", blk_calls(19) == 7 && for_idx(FOR_IDXM) == 64u);
+  ck("for (i=10; i>0; i-=2) counts down", for_cnt(18) == 5 && for_idx(FOR_IDXD) == 2u);
+  ck("for (i=1; i<100; i*=2) steps geometrically", for_cnt(20) == 7 && for_idx(FOR_IDXM) == 64u);
 
   /* A step of zero never makes the condition false. On a scan-cycle task that is
      a hang, and the block watchdog cannot see it -- it names whichever body
      block is running, and those keep changing. The budget is what ends it. */
-  ck("a loop that cannot end runs its budget and no more", blk_calls(21) == 4);
-  ck("...and says so, once", (for_rt(20) & VM_FOR_RT_BAD) != 0);
+  ck("a loop that cannot end runs its budget and no more", for_cnt(22) == 4);
+  ck("...and says so, once", (for_rt(21) & VM_FOR_RT_BAD) != 0);
 
   /* ---- pass 2: the live end asks for more turns than the budget ---- */
-  blk_counters_reset(0, 21);
+  for_counters_reset();
   *(float*)vm_obj_by_id(FOR_ACC)->payload = 0.0f;
   *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 9u;
   vm_exec_pass();
 
-  ck("a pin asking past the budget gets the budget", blk_calls(5) == 5);
+  ck("a pin asking past the budget gets the budget", for_cnt(5) == 5);
   ck("...and is latched, so a stuck loop reports once", (for_rt(4) & VM_FOR_RT_BAD) != 0);
   ck("the fold repeats identically on the next pass", near_f(*(float*)vm_obj_by_id(FOR_ACC)->payload, 6.0f));
 
   /* ---- pass 3: back inside the budget ---- */
-  blk_counters_reset(0, 21);
+  for_counters_reset();
   *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 2u;
   vm_exec_pass();
 
-  ck("an end the loop can reach is honoured", blk_calls(5) == 2);
+  ck("an end the loop can reach is honoured", for_cnt(5) == 2);
   ck("...and ending properly re-arms the report", (for_rt(4) & VM_FOR_RT_BAD) == 0);
 
   /* ---- pass 4: the condition is false before the first turn ---- */
-  blk_counters_reset(0, 21);
+  for_counters_reset();
   *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 0u;
   vm_exec_pass();
 
-  ck("a condition false at the start runs the body no times", blk_calls(5) == 0 && !for_eno(4));
-  ck("...while the fixed loops are unaffected", blk_calls(1) == 3 && blk_calls(9) == 6);
+  ck("a condition false at the start runs the body no times", for_cnt(5) == 0 && !for_eno(4));
+  ck("...while the fixed loops are unaffected", for_cnt(1) == 3 && for_cnt(9) == 6);
 }
 
 void vm_selftest_run(void) {

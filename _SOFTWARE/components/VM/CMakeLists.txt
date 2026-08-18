@@ -9,7 +9,7 @@ idf_component_register(
          "core/block/vm_block_build.c" "core/block/vm_block_run.c"
          "core/exec/vm_section.c" "core/exec/vm_event.c" "core/exec/vm_exec.c"
          "core/loader/vm_loader.c"
-         "blocks/vm_blocks_dummy.c" "blocks/vm_block_expr.c" "blocks/vm_block_branch.c" "blocks/vm_block_for.c" "blocks/vm_blocks_table.c"
+         "blocks/vm_blocks_table.c"
     INCLUDE_DIRS "core/errors" "core/store" "core/obj" "core/block" "core/exec" "core/loader" "blocks"
     # exec/ is the first layer with anything outside the arena to talk to: the
     # supervisor is a FreeRTOS task pinned to core 1 (utils' R_TASK_* macros),

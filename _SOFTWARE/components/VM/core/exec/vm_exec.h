@@ -49,8 +49,8 @@ cycle, never mid" falls out automatically rather than needing a rule.
    registration:
 
      const vm_block_fn g_vm_blocks[] = {
-         [VM_BLK_NOP]  = vm_blk_nop,
-         [VM_BLK_GATE] = vm_blk_gate,
+         [VM_BLK_EXPR] = vm_blk_expr,
+         [VM_BLK_IF]   = vm_blk_if,
      };
 
    There was a registration API here, on the argument that a central table

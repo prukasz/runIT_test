@@ -1,67 +1,80 @@
 #pragma once
+#include "esp_compiler.h"
 #include "vm_block.h"
 
+#define VM_BRANCH_CUSTOM_LEN 0u
+#define BR_NONE 0xFFu
+
 /*
-Flow routers -- VM_BLK_IF (two-way) and VM_BLK_SWITCH (up to sixteen).
-
-Both read one input and drive a one-hot set of boolean outputs meant to be read
-as *enable sources* by the blocks below them. They carry no custom_data at all:
-`in_cnt` names the selector pin, `q_cnt` names the branch count, and there is
-nothing else to say. That also makes them stateless -- the one-hot is recomputed
-from the input on every pass, and nothing is carried between them.
-
-  WHY THESE ARE ENABLE-DRIVEN, AND WHY THAT IS NOT A STYLE CHOICE
-
-  The one rule in core/block/vm_block_template.h is that a block which does not
-  act withdraws the *flow* and leaves its outputs standing -- because an output
-  holds data, and last pass's data is still the right answer.
-
-  A router has no data. Its outputs *are* the flow, so they follow the flow's
-  rule rather than the data's: rewritten on every pass the block is enabled,
-  cleared on every pass it is not. One that stood down leaving branch 3 high
-  would hold the whole subtree below it enabled through a closed gate -- and
-  because branch outputs feed enable lists, that leak propagates down the DAG
-  instead of stopping at one block.
-
-  The same reasoning is why these blocks retract their own outputs on a failure,
-  which no other block should do. `cfg.on_error` is the supervisor's to apply
-  and all it can reach is ENO (`run_block()` in vm_exec.c) -- the right and
-  sufficient net for every block whose outputs are data, and no net at all for
-  one whose outputs gate.
-
-  Clearing is *quiet*, exactly as vm_block_set_ENO(b, false) is: a loud false
-  reads as an arrival to an update-driven block below, which is the opposite of
-  standing down.
-
-  WHAT EACH ONE SELECTS
-
-  IF      reads the pin as a float and takes output 0 when it is non-zero,
-          output 1 otherwise. Truthiness is `!= 0.0f`, the same test the
-          expression palette's AND/OR/XOR/NOT use, so a condition computed in
-          an EXPR block and a condition tested here always agree. (A NaN is
-          therefore truthy. EXPR refuses to publish one -- VM_EXPR_MATH_NOT_FINITE
-          -- so it can only arrive from a directly written object.)
-
-  SWITCH  reads the pin as an int32 and takes the output of that index. A float
-          source therefore *rounds*, and saturates rather than overflowing --
-          vm_read_as_i32() does that for every float-to-integer pin read in the
-          VM, and a router that truncated instead would be the single pin in the
-          program that converts its own way. So 2.6 selects branch 3; a program
-          wanting the other thing puts an EXPR `TRUNC` in front. Case values are
-          dense -- branch index *is* the selector value -- because remapping a
-          sparse set onto 0..n-1 is one EXPR block and would otherwise cost every
-          switch in every program a 64-byte table it does not use.
-
-          A selector outside 0..q_cnt-1 takes no branch: every output clears and
-          ENO goes false. That is an ordinary runtime state rather than an error,
-          so it is not reported -- at scan rate it would bury the log. A program
-          wanting a default branch drives one from an EXPR range test.
+Flow routers -- VM_BLK_IF (two-way) and VM_BLK_SWITCH (up to 16-way).
+Enable-driven and stateless (custom_len = 0). Outputs act as enable gates for child blocks.
 */
 
-/** @brief Bytes of custom_data either router needs. Neither has private state:
- *  everything they read lives in `cfg` and the pin arrays. */
-#define VM_BRANCH_CUSTOM_LEN 0u
+static inline void vm_branch_drive(vm_block_h b, uint8_t taken) {
+  vm_obj_h* q = vm_block_outputs(b);
+  const uint8_t n = b->cfg.q_cnt;
+  for (uint8_t i = 0; i < n; i++) {
+    if (i == taken) {
+      uint8_t one = 1;
+      BLOCK_CALL(VM_OBJ_SET_VAL_AT(one, q[i], 0), b);
+    } else {
+      vm_obj_clear_quiet(q[i]);
+    }
+  }
+}
 
-// the bodies, so the palette table can name them
-void vm_blk_if(vm_block_h b);
-void vm_blk_switch(vm_block_h b);
+static inline const vm_accessor_t* vm_branch_selector(vm_block_h b, uint8_t min_q) {
+  const bool shape = (b->cfg.in_cnt >= 1) && (b->cfg.q_cnt >= min_q);
+  const vm_accessor_t* in0 = shape ? vm_block_inputs(b)[0] : NULL;
+  if (likely(in0 != NULL)) return in0;
+
+  g_vm_block_fault = true;
+  if (b->cfg.rt & VM_BLK_RT_CFG_BAD) return NULL;
+  b->cfg.rt |= VM_BLK_RT_CFG_BAD;
+
+  err_h e = shape ? vm_block_err_pin_unlinked(b->cfg.block_idx, 0, false)
+                  : VM_BLK_ERR_NEW(ERR_VM_BLK_BAD_SHAPE, .blk_id = b->cfg.block_idx, .in_cnt = b->cfg.in_cnt,
+                                   .q_cnt = b->cfg.q_cnt);
+  vm_block_report_error(e, b->cfg.block_idx, b->cfg.block_type);
+  return NULL;
+}
+
+static inline void vm_blk_if(vm_block_h b) {
+  const vm_accessor_t* in0 = vm_branch_selector(b, 2);
+  uint8_t taken = BR_NONE;
+
+  IF_BLOCK_ENABLED(b) {
+    if (likely(in0 != NULL)) {
+      float cond = 0.0f;
+      err_h e = VM_OBJ_GET_VAL(cond, in0);
+      if (unlikely(e)) {
+        vm_block_report_error(e, b->cfg.block_idx, b->cfg.block_type);
+      } else {
+        taken = (cond != 0.0f) ? 0u : 1u;
+      }
+    }
+  }
+
+  vm_branch_drive(b, taken);
+  vm_block_set_ENO(b, (taken != BR_NONE) && !g_vm_block_fault);
+}
+
+static inline void vm_blk_switch(vm_block_h b) {
+  const vm_accessor_t* in0 = vm_branch_selector(b, 1);
+  uint8_t taken = BR_NONE;
+
+  IF_BLOCK_ENABLED(b) {
+    if (likely(in0 != NULL)) {
+      int32_t sel = 0;
+      err_h e = VM_OBJ_GET_VAL(sel, in0);
+      if (unlikely(e)) {
+        vm_block_report_error(e, b->cfg.block_idx, b->cfg.block_type);
+      } else if (likely(sel >= 0 && sel < (int32_t)b->cfg.q_cnt)) {
+        taken = (uint8_t)sel;
+      }
+    }
+  }
+
+  vm_branch_drive(b, taken);
+  vm_block_set_ENO(b, (taken != BR_NONE) && !g_vm_block_fault);
+}
