@@ -36,11 +36,18 @@ static inline bool vm_obj_is_dynamic(vm_obj_h o) {
  *
  * Found by comparing pointers, which is why nothing is bolted onto the object
  * itself: a dynamic object is byte-for-byte an ordinary vm_obj_t, and free()
- * takes the handle directly. The scan is affordable because it runs on link and
- * unlink -- once per message -- and never inside the pass loop.
+ * takes the handle directly.
+ *
+ * The `dynamic` bit is tested first, and that test is what makes the register
+ * safe to consult from a block body. Every object in a loaded program is an
+ * arena object, so without it the common case is VM_DYN_MAX pointer compares
+ * to conclude "not here" -- and a block that links on every pass would pay
+ * that twice per call, inside the pass loop. With it, an arena object costs
+ * one bit and the scan runs only for objects that can actually be in the
+ * register.
  */
 static inline uint16_t vm_obj_dyn_id(vm_obj_h o) {
-  if (!o) return VM_DYN_NO_ID;
+  if (!o || !o->head.f.dynamic) return VM_DYN_NO_ID;
   for (uint16_t i = 0; i < VM_DYN_MAX; i++) {
     if (g_vm_dyn[i].obj == o) return i;
   }

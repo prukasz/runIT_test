@@ -98,9 +98,9 @@ static inline size_t vm_block_total_size(vm_block_h b) {
   return vm_block_size(b->cfg.in_cnt, b->cfg.q_cnt, b->cfg.en_cnt, b->cfg.custom_len);
 }
 
-// Out-of-line error helpers (vm_block_build.c)
-err_h vm_block_err_pin_missing(uint16_t block_idx, uint8_t pin_id, bool is_out);
-err_h vm_block_err_pin_unlinked(uint16_t block_idx, uint8_t pin_id, bool is_out);
+/* The pin builders moved to core/errors/vm_errors.h with every other cold
+   error arm; vm_obj_access.h above pulls it in. This one stays: it reports
+   rather than builds. */
 void vm_block_report_error(err_h cause, uint16_t block_idx, uint8_t block_type);
 
 /** @brief Latches failure reported by the executing block body; inspected by supervisor for on_error policy. */

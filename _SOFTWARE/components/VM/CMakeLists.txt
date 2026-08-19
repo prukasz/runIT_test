@@ -4,7 +4,8 @@
 # tree, and regrouping it again later should not touch a single #include line.
 # Each group therefore goes on the include path rather than into the paths.
 idf_component_register(
-    SRCS "core/store/vm_store.c"
+    SRCS "core/errors/vm_errors.c"
+         "core/store/vm_store.c"
          "core/obj/vm_obj_build.c" "core/obj/vm_obj_access.c" "core/obj/vm_obj_dyn.c"
          "core/block/vm_block_build.c" "core/block/vm_block_run.c"
          "core/exec/vm_section.c" "core/exec/vm_event.c" "core/exec/vm_exec.c"

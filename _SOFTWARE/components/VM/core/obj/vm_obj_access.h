@@ -6,6 +6,7 @@
 #include <string.h>
 #include "sys_error.h"
 #include "sys_error_vm.h"
+#include "vm_errors.h"
 #include "vm_obj.h"
 #include "vm_store.h"
 
@@ -168,16 +169,39 @@ static __always_inline bool vm_resolve_fast(const vm_accessor_t* acc, bool for_w
 err_h vm_obj_get_payload(vm_payload_t* target, const vm_accessor_t* source);
 err_h vm_get_obj(vm_obj_h* target, const vm_accessor_t* source);
 vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag);
+/* How deep a copy will follow a pointer tree, and why there is a cap at all:
+   a tree assembled from a packet is not guaranteed acyclic, so the bound is
+   what turns a cycle into an error instead of a stack overflow. Same reason
+   and same depth as VM_ACCESSOR_MAX_DEPTH. */
+#define VM_OBJ_COPY_MAX_DEPTH 8
+
+/* `reason` in ERR_VM_OBJ_COPY_SHAPE -- kept in step with VM_COPY_SHAPE_NAME()
+   in sys_error_vm.h, which renders them. */
+#define VM_COPY_SHAPE_DEPTH 0u      // ran out of depth, or the tree loops
+#define VM_COPY_SHAPE_SRC_EMPTY 1u  // source slot unwired, target holds an object
+#define VM_COPY_SHAPE_DST_EMPTY 2u  // target slot unwired, source holds an object
+
 err_h vm_obj_copy_content(const vm_accessor_t* source, const vm_accessor_t* target);
+
+/** @brief Do these two trees have the same shape -- same type and element
+ *  count at every level, and the same wired/unwired slots? True means
+ *  vm_obj_copy_content() can move values between them without building
+ *  anything, which is what lets a Clone allocate only when the shape changed. */
+bool vm_obj_shape_matches(vm_obj_h a, vm_obj_h b);
+
+/** @brief Build a dynamic tree shaped like `src`, values left zero.
+ *  Reference count zero -- owned by nothing until a pointer slot takes it, so
+ *  link it in the same call or release it. Tags are carried over, since a
+ *  by-name accessor onto the copy has to keep working. */
+err_h vm_obj_clone_shape(vm_obj_h* out, vm_obj_h src);
+
+/** @brief Copy `source` into the pointer cell `target` names, building the
+ *  destination first if what is there does not match. Allocates only on a
+ *  shape change; steady state is the same walk vm_obj_copy_content() does. */
+err_h vm_obj_clone_into(const vm_accessor_t* source, const vm_accessor_t* target);
 err_h vm_obj_link(const vm_accessor_t* to_join, const vm_accessor_t* owner);
 err_h vm_obj_set_scalar(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type);
-err_h vm_obj_not_scalar_err(vm_obj_h owner, vm_obj_t_e actual, uint16_t id);
 void vm_obj_clear_quiet(vm_obj_h obj);
-
-// Cold error helpers
-err_h vm_obj_null_obj_err(void);
-err_h vm_obj_not_mutable_err(vm_obj_h obj);
-err_h vm_obj_oob_err(vm_obj_h obj, uint16_t index);
 
 static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t index, vm_val_t v, vm_obj_t_e src_type);
 err_h vm_obj_link_direct(vm_obj_h cell, uint16_t index, vm_obj_h child);
@@ -354,7 +378,8 @@ static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t ind
   if (unlikely(!obj->head.f.mutable)) return vm_obj_not_mutable_err(obj);
   uint8_t* p = vm_obj_elem_ptr(obj, index);
   if (unlikely(p == NULL)) return vm_obj_oob_err(obj, index);
-  return vm_store_inline(obj, (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0}, v, src_type, 0);
+  // VM_ID_NONE, not 0: this path was handed a handle, and 0 is a real accessor id
+  return vm_store_inline(obj, (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0}, v, src_type, VM_ID_NONE);
 }
 
 #define VM_TYPE_OF(x) _Generic((x), uint8_t: VM_OBJ_U8, int8_t: VM_OBJ_I32, char: VM_OBJ_U8, uint16_t: VM_OBJ_U32, int16_t: VM_OBJ_I32, uint32_t: VM_OBJ_U32, int32_t: VM_OBJ_I32, uint64_t: VM_OBJ_U64, int64_t: VM_OBJ_U64, float: VM_OBJ_F, double: VM_OBJ_F, bool: VM_OBJ_B, default: VM_OBJ_NONE)

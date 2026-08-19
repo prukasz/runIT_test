@@ -23,3 +23,5 @@ not resolve to a runnable block.
 #define VM_BLK_IF 3        // two-way flow router             -- vm_block_branch.h
 #define VM_BLK_SWITCH 4    // n-way flow router               -- vm_block_branch.h
 #define VM_BLK_FOR 5       // span owner: repeats the range after it -- vm_block_for.h
+#define VM_BLK_SET 6       // copies a payload, source -> target      -- vm_block_set.h
+#define VM_BLK_CLONE 7     // copies, building the destination first  -- vm_block_clone.h

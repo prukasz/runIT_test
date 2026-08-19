@@ -1,6 +1,7 @@
 #include "vm_obj_access.h"
 #include <string.h>
 #include "esp_compiler.h"
+#include "vm_obj_dyn.h"
 
 #define OWNER OWNER_VM_ACCESSOR
 
@@ -152,57 +153,6 @@ vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag) {
   return ((vm_obj_h*)parent->payload)[idx];
 }
 
-// ---------------------------------------------------------------------------
-// resolve_d's error arms, kept out of its body: eight inlined SE_ERR_NEW
-// sites gave the walk a 160-byte stack frame -- multiplied by
-// VM_ACCESSOR_MAX_DEPTH on a by-ref chain -- none of which runs on a working
-// program. SE_ERR_NEW records no file/line, so moving them here costs the
-// trace nothing (tag + OWNER + payload already identify the site).
-// ---------------------------------------------------------------------------
-
-static __attribute__((noinline)) err_h err_depth(uint16_t id) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_DEPTH_EXCEEDED, .id = id);
-}
-
-static __attribute__((noinline)) err_h err_unknown_id(uint16_t id) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_UNKNOWN_ID, .id = id);
-}
-
-// serves both the by-name parent check and the mid-chain step: both expect PTR
-static __attribute__((noinline)) err_h err_expected_ptr(uint16_t id, uint8_t pos, uint8_t actual, vm_obj_h obj) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_TYPE_MISMATCH, .id = id, .chain_pos = pos, .expected = VM_OBJ_PTR, .actual = actual, .obj = (void*)obj);
-}
-
-static __attribute__((noinline)) err_h err_oob(uint16_t id, uint8_t pos, uint32_t index, vm_obj_h obj) {
-  // saturate the 16-bit payload field so a huge index still reads as
-  // "past the end" rather than a wrapped small number
-  SE_RET_ERR(ERR_VM_ACCESSOR_OOB, .id = id, .chain_pos = pos, .index = (uint16_t)(index > UINT16_MAX ? UINT16_MAX : index), .obj = (void*)obj);
-}
-
-static __attribute__((noinline)) err_h err_null_obj(uint16_t id, uint8_t pos, vm_obj_h parent) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_NULL_OBJ, .id = id, .chain_pos = pos, .parent_obj = (void*)parent);
-}
-
-static __attribute__((noinline)) err_h err_not_mutable(uint16_t id, uint8_t pos, vm_obj_h obj) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_NOT_MUTABLE, .id = id, .chain_pos = pos, .obj = (void*)obj);
-}
-
-static __attribute__((noinline)) err_h err_index_failed(err_h cause, uint16_t id, uint8_t pos) {
-  return SE_WRAP_ERR(cause, ERR_VM_ACCESSOR_INDEX_FAILED, .id = id, .chain_pos = pos);
-}
-
-// built by hand, not SE_RET_ERR: the payload carries a copied string, and
-// designated initialisers can't fill a char array
-static __attribute__((noinline)) err_h name_not_found_err(uint16_t id, uint8_t chain_pos, const char* name) {
-  err_h e = SE_ERR_NEW(ERR_VM_ACCESSOR_NAME_NOT_FOUND, .id = id, .chain_pos = chain_pos);
-  err_payload_ERR_VM_ACCESSOR_NAME_NOT_FOUND_t* pl = (err_payload_ERR_VM_ACCESSOR_NAME_NOT_FOUND_t*)e->payload;
-  size_t n = strlen(name);
-  if (n >= sizeof(pl->name)) n = sizeof(pl->name) - 1;
-  memcpy(pl->name, name, n);
-  pl->name[n] = '\0';
-  return e;
-}
-
 // `for_write` gates the mutability check (reads never need it); lives here,
 // not in the SET entry points, because this is the last place still holding
 // the owning object's header.
@@ -210,10 +160,10 @@ static err_h resolve_d(const vm_accessor_t* acc, uint8_t depth, bool for_write, 
   out->payload = (vm_payload_t){.ptr = NULL, .count = 0, .type = VM_OBJ_NONE, ._pad = 0};
   out->owner = NULL;
 
-  if (unlikely(depth >= VM_ACCESSOR_MAX_DEPTH)) return err_depth(acc->id);
+  if (unlikely(depth >= VM_ACCESSOR_MAX_DEPTH)) return vm_err_depth(acc->id);
 
   vm_obj_h obj = vm_obj_by_id(acc->id);
-  if (unlikely(!obj)) return err_unknown_id(acc->id);
+  if (unlikely(!obj)) return vm_err_unknown_id(acc->id);
 
   vm_payload_t p = vm_obj_as_payload(obj);
   for (uint8_t i = 0; i < acc->count; i++) {
@@ -233,7 +183,7 @@ static err_h resolve_d(const vm_accessor_t* acc, uint8_t depth, bool for_write, 
           break;
         }
         err_h e = resolve_d(idx->ref, depth + 1, false, &sub);
-        if (unlikely(e)) return err_index_failed(e, acc->id, i);
+        if (unlikely(e)) return vm_err_index_failed(e, acc->id, i);
         index = payload_as_index(sub.payload);
         break;
       }
@@ -242,11 +192,11 @@ static err_h resolve_d(const vm_accessor_t* acc, uint8_t depth, bool for_write, 
         // describes the previous element, while `obj` is what's about to
         // be indexed, and only a PTR array has tagged children
         if (unlikely((vm_obj_t_e)obj->head.d.obj_t != VM_OBJ_PTR)) {
-          return err_expected_ptr(acc->id, i, obj->head.d.obj_t, obj);
+          return vm_err_expected_ptr(acc->id, i, obj->head.d.obj_t, obj);
         }
         int32_t found = find_child_by_name(obj, idx->name, idx->name_len);
         if (unlikely(found < 0)) {
-          return name_not_found_err(acc->id, i, idx->name);  // routine for variable-shape messages, not necessarily a bug
+          return vm_err_name_not_found(acc->id, i, idx->name);  // routine for variable-shape messages, not necessarily a bug
         }
         index = (uint32_t)found;
         break;
@@ -258,29 +208,23 @@ static err_h resolve_d(const vm_accessor_t* acc, uint8_t depth, bool for_write, 
     }
 
     p = obj_elem(obj, index);
-    if (unlikely(!p.ptr)) return err_oob(acc->id, i, index, obj);
+    if (unlikely(!p.ptr)) return vm_err_chain_oob(acc->id, i, index, obj);
 
     if (i + 1 < acc->count) {
-      if (unlikely(p.type != VM_OBJ_PTR)) return err_expected_ptr(acc->id, i, (uint8_t)p.type, obj);
+      if (unlikely(p.type != VM_OBJ_PTR)) return vm_err_expected_ptr(acc->id, i, (uint8_t)p.type, obj);
       vm_obj_h child = *(vm_obj_h*)p.ptr;
       if (unlikely(!child)) {
-        return err_null_obj(acc->id, i, obj);  // untrusted-input counterpart to TYPE_MISMATCH: a packet-sourced tree isn't guaranteed fully wired
+        return vm_err_null_obj(acc->id, i, obj);  // untrusted-input counterpart to TYPE_MISMATCH: a packet-sourced tree isn't guaranteed fully wired
       }
       obj = child;
     }
   }
 
-  if (unlikely(for_write && !obj->head.f.mutable)) return err_not_mutable(acc->id, acc->count, obj);
+  if (unlikely(for_write && !obj->head.f.mutable)) return vm_err_chain_not_mutable(acc->id, acc->count, obj);
 
   out->payload = p;
   out->owner = obj;
   return NULL;
-}
-
-// cold half of vm_store_inline() (see header): built here, where there's an
-// ambient OWNER, since it never runs on a working program
-err_h vm_obj_not_scalar_err(vm_obj_h owner, vm_obj_t_e actual, uint16_t id) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_TYPE_MISMATCH, .id = id, .chain_pos = 0, .expected = VM_OBJ_NONE, .actual = actual, .obj = (void*)owner);
 }
 
 err_h vm_obj_get_payload(vm_payload_t* target, const vm_accessor_t* source) {
@@ -331,56 +275,210 @@ void vm_obj_clear_quiet(vm_obj_h obj) {
   if (obj->head.payload_size) memset(obj->payload, 0, obj->head.payload_size);
 }
 
-// cold arms of the direct write path -- see vm_obj_set_scalar_direct() in the header
-err_h vm_obj_null_obj_err(void) {
-  SE_RET_ERR(ERR_NULL_PTR, 0);
-}
+/*
+A pointer slot is the only place an object is *owned*, so it is the only place
+a reference count moves -- which is why both link entry points write through
+here rather than storing the handle themselves.
 
-err_h vm_obj_not_mutable_err(vm_obj_h obj) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_NOT_MUTABLE, .id = 0, .chain_pos = 0, .obj = (void*)obj);
-}
+The new child is retained before the old one is released. A program re-linking
+a cell to something that lives inside the tree it is replacing would otherwise
+free the subtree the new handle points into, one statement before installing
+it. Both calls fall straight out on an arena object (one bit -- see
+vm_obj_dyn_id), so a program's whole load-time wiring pays nothing for this.
+*/
+static __always_inline void slot_store(vm_obj_h owner, vm_obj_h* cell, vm_obj_h child) {
+  vm_obj_h prev = *cell;
+  if (prev == child) return;  // already there: no churn, and no news to publish
 
-err_h vm_obj_oob_err(vm_obj_h obj, uint16_t index) {
-  SE_RET_ERR(ERR_VM_ACCESSOR_OOB, .id = 0, .chain_pos = 0, .index = index, .obj = (void*)obj);
+  vm_obj_dyn_retain(child);
+  *cell = child;
+  vm_obj_dyn_release(prev);
+
+  owner->head.f.upd = 1;
 }
 
 err_h vm_obj_link_direct(vm_obj_h cell, uint16_t index, vm_obj_h child) {
   SE_CHECK_NOT_NULL(cell);
   SE_CHECK_NOT_NULL(child);
-  if (!cell->head.f.mutable) {
-    SE_RET_ERR(ERR_VM_ACCESSOR_NOT_MUTABLE, .id = 0, .chain_pos = 0, .obj = (void*)cell);
-  }
+  if (!cell->head.f.mutable) return vm_obj_not_mutable_err(cell);
   vm_payload_t slot = obj_elem(cell, index);
-  if (!slot.ptr) {
-    SE_RET_ERR(ERR_VM_ACCESSOR_OOB, .id = 0, .chain_pos = 0, .index = index, .obj = (void*)cell);
-  }
-  if (slot.type != VM_OBJ_PTR) {
-    SE_RET_ERR(ERR_VM_ACCESSOR_TYPE_MISMATCH, .id = 0, .chain_pos = 0, .expected = VM_OBJ_PTR, .actual = slot.type, .obj = (void*)cell);
-  }
-  *(vm_obj_h*)slot.ptr = child;
-  cell->head.f.upd = 1;
+  if (!slot.ptr) return vm_obj_oob_err(cell, index);
+  if (slot.type != VM_OBJ_PTR) return vm_obj_not_ptr_err(cell, slot.type);
+  slot_store(cell, (vm_obj_h*)slot.ptr, child);
   return NULL;
+}
+
+/* One payload of plain values. `s.ptr == d.ptr` is a copy onto itself, which
+   is a no-op rather than an error -- and skipping it also keeps memcpy() off
+   a source and destination that are the same bytes. */
+static err_h copy_values(vm_payload_t s, vm_payload_t d, vm_obj_h d_owner) {
+  uint8_t w = vm_type_width((vm_obj_t_e)s.type);
+  if (unlikely(s.type != d.type || s.count != d.count || w == 0)) {
+    SE_RET_ERR(ERR_VM_OBJ_COPY_MISMATCH, .src_type = s.type, .dst_type = d.type, .src_size = s.count, .dst_size = d.count);
+  }
+  if (likely(s.ptr != d.ptr)) memcpy(d.ptr, s.ptr, (size_t)w * s.count);
+  d_owner->head.f.upd = 1;
+  return NULL;
+}
+
+/*
+A pointer array is copied by walking it, never by copying its bytes. Those
+bytes are addresses into this program's arena, so duplicating them would leave
+both trees sharing one set of children -- and an edit made through the copy
+would then show up in the original, at some unrelated point in the program,
+which is the kind of bug nobody traces back to a Copy block. Nothing below
+ever writes a pointer, so that cannot happen: the two trees keep their own
+children and only values move between them.
+
+The destination supplies the shape. Its children must already exist and match
+the source's, which is what lets a deep copy allocate nothing -- it is a walk
+over two structures that are already there, not a clone. A destination shaped
+differently from its source is a wiring error and says so.
+*/
+static err_h copy_tree(vm_payload_t s, vm_payload_t d, vm_obj_h d_owner, uint8_t depth) {
+  if (likely(s.type != VM_OBJ_PTR && d.type != VM_OBJ_PTR)) return copy_values(s, d, d_owner);
+
+  if (unlikely(s.type != d.type || s.count != d.count)) {
+    SE_RET_ERR(ERR_VM_OBJ_COPY_MISMATCH, .src_type = s.type, .dst_type = d.type, .src_size = s.count, .dst_size = d.count);
+  }
+  if (unlikely(depth >= VM_OBJ_COPY_MAX_DEPTH)) {
+    SE_RET_ERR(ERR_VM_OBJ_COPY_SHAPE, .index = 0, .depth = depth, .reason = VM_COPY_SHAPE_DEPTH);
+  }
+
+  vm_obj_h* sc = (vm_obj_h*)s.ptr;
+  vm_obj_h* dc = (vm_obj_h*)d.ptr;
+  for (uint16_t i = 0; i < s.count; i++) {
+    if (sc[i] == dc[i]) continue;  // both unwired, or literally the same child
+    if (unlikely(!sc[i] || !dc[i])) {
+      SE_RET_ERR(ERR_VM_OBJ_COPY_SHAPE, .index = i, .depth = depth, .reason = sc[i] ? VM_COPY_SHAPE_DST_EMPTY : VM_COPY_SHAPE_SRC_EMPTY);
+    }
+    // checked per child: the walk writes into each of them, and mutability is
+    // a property of the object, not of the accessor that reached its root
+    if (unlikely(!dc[i]->head.f.mutable)) return vm_obj_not_mutable_err(dc[i]);
+    SE_RET_IF_ERR(copy_tree(vm_obj_as_payload(sc[i]), vm_obj_as_payload(dc[i]), dc[i], (uint8_t)(depth + 1)));
+  }
+
+  /* The parent's own bytes did not change, but what hangs under it did, and a
+     block whose accessor names the whole table has no other place to see that. */
+  d_owner->head.f.upd = 1;
+  return NULL;
+}
+
+/* Same walk as copy_tree, asking only whether the two structures agree.
+   payload_size carries the element count for a known type, so one compare
+   covers both. Unwired slots must line up too: a source child with no
+   destination child to receive it is a different shape, not a copy. */
+static bool shape_matches(vm_obj_h a, vm_obj_h b, uint8_t depth) {
+  if (!a || !b) return a == b;
+  if (a->head.d.obj_t != b->head.d.obj_t || a->head.payload_size != b->head.payload_size) return false;
+  if ((vm_obj_t_e)a->head.d.obj_t != VM_OBJ_PTR) return true;
+  if (unlikely(depth >= VM_OBJ_COPY_MAX_DEPTH)) return false;
+
+  vm_obj_h* ka = (vm_obj_h*)a->payload;
+  vm_obj_h* kb = (vm_obj_h*)b->payload;
+  uint16_t n = vm_obj_items_cnt(a);
+  for (uint16_t i = 0; i < n; i++) {
+    if (!shape_matches(ka[i], kb[i], (uint8_t)(depth + 1))) return false;
+  }
+  return true;
 }
 
 err_h vm_obj_copy_content(const vm_accessor_t* source, const vm_accessor_t* target) {
   vm_resolved_t src, dst;
   SE_RET_IF_ERR(resolve_d(source, 0, false, &src));
   SE_RET_IF_ERR(resolve_d(target, 0, true, &dst));
+  return copy_tree(src.payload, dst.payload, dst.owner, 0);
+}
 
-  // PTR payloads are addresses into this program's arena -- copying the
-  // bytes would alias two graphs onto one child; use vm_obj_link() instead.
-  if (src.payload.type == VM_OBJ_PTR || dst.payload.type == VM_OBJ_PTR) {
-    SE_RET_ERR(ERR_VM_OBJ_COPY_MISMATCH, .src_type = src.payload.type, .dst_type = dst.payload.type, .src_size = src.payload.count, .dst_size = dst.payload.count);
+bool vm_obj_shape_matches(vm_obj_h a, vm_obj_h b) {
+  return shape_matches(a, b, 0);
+}
+
+/*
+Build a tree shaped like `src` with its values left zero.
+
+Every object it makes is dynamic, because the arena cannot free and this one
+has to be replaceable -- a Clone whose source changes shape drops the previous
+tree, and a bump allocator has no way to take it back. That is the whole reason
+vm_obj_dyn exists, and this is its first caller outside the self test.
+
+Three flags are the clone's own rather than the source's. `mutable`, because a
+destination that cannot be written is useless. `retentive` cleared, because
+this lives on the heap and is gone at the next load, so NVS has no business
+with it. `upd_resetable` set, so the sweep withdraws its freshness at the end
+of the pass that filled it -- a snapshot is news once, not forever.
+*/
+static err_h clone_shape(vm_obj_h* out, vm_obj_h src, uint8_t depth) {
+  *out = NULL;
+  if (unlikely(depth >= VM_OBJ_COPY_MAX_DEPTH)) {
+    SE_RET_ERR(ERR_VM_OBJ_COPY_SHAPE, .index = 0, .depth = depth, .reason = VM_COPY_SHAPE_DEPTH);
   }
 
-  uint8_t w = vm_type_width(src.payload.type);
-  if (src.payload.type != dst.payload.type || src.payload.count != dst.payload.count || w == 0) {
-    SE_RET_ERR(ERR_VM_OBJ_COPY_MISMATCH, .src_type = src.payload.type, .dst_type = dst.payload.type, .src_size = src.payload.count, .dst_size = dst.payload.count);
+  vm_obj_head_t h = src->head;
+  h.f.mutable = 1;
+  h.f.retentive = 0;
+  h.f.upd_resetable = 1;
+
+  uint8_t name_len = 0;
+  const char* name = vm_obj_tag(src, &name_len);
+
+  vm_obj_h o = NULL;
+  SE_RET_IF_ERR(vm_obj_dyn_create(&o, &h, name));
+
+  if ((vm_obj_t_e)h.d.obj_t == VM_OBJ_PTR) {
+    vm_obj_h* sk = (vm_obj_h*)src->payload;
+    vm_obj_h* dk = (vm_obj_h*)o->payload;
+    uint16_t n = vm_obj_items_cnt(src);
+    for (uint16_t i = 0; i < n; i++) {
+      if (!sk[i]) continue;  // unwired in the source, unwired in the copy
+      vm_obj_h kid = NULL;
+      err_h e = clone_shape(&kid, sk[i], (uint8_t)(depth + 1));
+      if (unlikely(e)) {
+        /* Half-built, and owned by nothing: releasing the root takes every
+           child with it, so a rejected clone leaks neither a slot nor a byte
+           -- the same rule vm_obj_create() follows for a rejected shape. */
+        vm_obj_dyn_release(o);
+        return e;
+      }
+      dk[i] = kid;
+      vm_obj_dyn_retain(kid);
+    }
   }
 
-  memcpy(dst.payload.ptr, src.payload.ptr, (size_t)w * src.payload.count);
-  dst.owner->head.f.upd = 1;
+  *out = o;
   return NULL;
+}
+
+err_h vm_obj_clone_shape(vm_obj_h* out, vm_obj_h src) {
+  SE_CHECK_NOT_NULL(out);
+  SE_CHECK_NOT_NULL(src);
+  return clone_shape(out, src, 0);
+}
+
+err_h vm_obj_clone_into(const vm_accessor_t* source, const vm_accessor_t* target) {
+  /* vm_get_obj(), not a payload resolve: a Clone wants the object behind the
+     source, header and all, because the header is the shape it has to match. */
+  vm_obj_h src = NULL;
+  SE_RET_IF_ERR(vm_get_obj(&src, source));
+
+  vm_resolved_t slot;
+  SE_RET_IF_ERR(resolve_d(target, 0, true, &slot));
+  if (unlikely(slot.payload.type != VM_OBJ_PTR || !slot.payload.ptr)) {
+    return vm_err_expected_ptr(target->id, target->count, (uint8_t)slot.payload.type, slot.owner);
+  }
+  vm_obj_h* cell = (vm_obj_h*)slot.payload.ptr;
+
+  /* The allocation-free case, and the one a running program is normally in:
+     the destination already has the right shape, so nothing is built and this
+     is exactly what a Set does. Allocation happens on the first pass, and
+     afterwards only when the source's shape actually changes. */
+  if (unlikely(!shape_matches(src, *cell, 0))) {
+    vm_obj_h fresh = NULL;
+    SE_RET_IF_ERR(clone_shape(&fresh, src, 0));
+    slot_store(slot.owner, cell, fresh);  // retains the new tree, releases the old
+  }
+
+  return copy_tree(vm_obj_as_payload(src), vm_obj_as_payload(*cell), *cell, 0);
 }
 
 err_h vm_obj_link(const vm_accessor_t* to_join, const vm_accessor_t* owner) {
@@ -391,10 +489,9 @@ err_h vm_obj_link(const vm_accessor_t* to_join, const vm_accessor_t* owner) {
   SE_RET_IF_ERR(resolve_d(owner, 0, true, &slot));
 
   if (slot.payload.type != VM_OBJ_PTR || !slot.payload.ptr) {
-    SE_RET_ERR(ERR_VM_ACCESSOR_TYPE_MISMATCH, .id = owner->id, .chain_pos = owner->count, .expected = VM_OBJ_PTR, .actual = slot.payload.type, .obj = (void*)slot.owner);
+    return vm_err_expected_ptr(owner->id, owner->count, (uint8_t)slot.payload.type, slot.owner);
   }
 
-  *(vm_obj_h*)slot.payload.ptr = child;
-  slot.owner->head.f.upd = 1;
+  slot_store(slot.owner, (vm_obj_h*)slot.payload.ptr, child);
   return NULL;
 }

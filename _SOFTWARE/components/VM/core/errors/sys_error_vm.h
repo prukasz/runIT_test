@@ -33,6 +33,10 @@
   X(ERR_VM_BLOCK_PIN_UNLINKED, struct { uint16_t block_idx; uint8_t pin_id; uint8_t is_out; })                        \
   X(ERR_VM_BLOCK_FAILED, struct { uint16_t block_idx; uint8_t block_type; })                                          \
   X(ERR_VM_OBJ_COPY_MISMATCH, struct { uint8_t src_type; uint8_t dst_type; uint16_t src_size; uint16_t dst_size; })   \
+  X(ERR_VM_OBJ_COPY_SHAPE, struct { uint16_t index; uint8_t depth; uint8_t reason; })                                 \
+  X(ERR_VM_OBJ_NOT_MUTABLE, struct { void* obj; })                                                                    \
+  X(ERR_VM_OBJ_OOB, struct { uint16_t index; void* obj; })                                                            \
+  X(ERR_VM_OBJ_NOT_PTR, struct { uint8_t actual; void* obj; })                                                        \
   X(ERR_VM_OBJ_BAD_TYPE, struct { uint8_t type; })                                                                    \
   X(ERR_VM_OBJ_EMPTY, struct { uint8_t type; })                                                                       \
   X(ERR_VM_OBJ_BAD_SIZE, struct { uint8_t type; uint16_t payload_size; uint8_t width; })                              \
@@ -81,6 +85,10 @@
   X(ERR_VM_BLOCK_PIN_UNLINKED)     \
   X(ERR_VM_BLOCK_FAILED)           \
   X(ERR_VM_OBJ_COPY_MISMATCH)      \
+  X(ERR_VM_OBJ_COPY_SHAPE)         \
+  X(ERR_VM_OBJ_NOT_MUTABLE)        \
+  X(ERR_VM_OBJ_OOB)                \
+  X(ERR_VM_OBJ_NOT_PTR)            \
   X(ERR_VM_OBJ_BAD_TYPE)           \
   X(ERR_VM_OBJ_EMPTY)              \
   X(ERR_VM_OBJ_BAD_SIZE)           \
@@ -137,6 +145,27 @@
 #define LOG_BODY_ERR_VM_OBJ_COPY_MISMATCH(p, out, out_size)                                                  \
   snprintf((out), (out_size), "object copy mismatch: src type %u size %u, dst type %u size %u", (p)->src_type, \
            (p)->src_size, (p)->dst_type, (p)->dst_size)
+/* The two trees disagreed about their *structure* rather than about a value:
+   COPY_MISMATCH already says "these two payloads do not match", so this one
+   only has to say where the walk gave up. `reason` is a VM_COPY_SHAPE_* code
+   from vm_obj_access.h. */
+#define VM_COPY_SHAPE_NAME(r) ((r) == 0 ? "tree deeper than the cap, or a cycle" : (r) == 1 ? "source slot empty, target holds an object" : "target slot empty, source holds an object")
+#define LOG_BODY_ERR_VM_OBJ_COPY_SHAPE(p, out, out_size)                                                    \
+  snprintf((out), (out_size), "object copy: %s at depth %u, slot %u", VM_COPY_SHAPE_NAME((p)->reason),      \
+           (p)->depth, (p)->index)
+/* The object-level halves of three accessor errors. An accessor id and a chain
+   position are only meaningful when a chain was walked, and the direct entry
+   points -- vm_obj_set_scalar_direct(), vm_obj_link_direct(), and the walk
+   inside vm_obj_copy_content() once it is below where the chain ended -- were
+   handed a raw handle instead. They used to fill both fields with 0, which is
+   not a sentinel: VM_ID_NONE is 0xFFFF, so every one of those traces named
+   accessor 0, an innocent bystander. */
+#define LOG_BODY_ERR_VM_OBJ_NOT_MUTABLE(p, out, out_size) \
+  snprintf((out), (out_size), "object is not mutable (obj=%p)", (p)->obj)
+#define LOG_BODY_ERR_VM_OBJ_OOB(p, out, out_size) \
+  snprintf((out), (out_size), "object index %u is past the end of its payload (obj=%p)", (p)->index, (p)->obj)
+#define LOG_BODY_ERR_VM_OBJ_NOT_PTR(p, out, out_size) \
+  snprintf((out), (out_size), "object holds type %u; a link needs VM_OBJ_PTR (obj=%p)", (p)->actual, (p)->obj)
 #define LOG_BODY_ERR_VM_OBJ_BAD_TYPE(p, out, out_size) \
   snprintf((out), (out_size), "object create: type %u has no defined width", (p)->type)
 #define LOG_BODY_ERR_VM_OBJ_EMPTY(p, out, out_size) \

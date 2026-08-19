@@ -8,6 +8,8 @@
 #include "vm_block_branch.h"
 #include "vm_block_expr.h"
 #include "vm_block_for.h"
+#include "vm_block_clone.h"
+#include "vm_block_set.h"
 #include "vm_event.h"
 #include "vm_exec.h"
 #include "vm_blocks.h"
@@ -548,9 +550,13 @@ static void test_mutation(void) {
   ck("copy_content count mismatch -> COPY_MISMATCH", vm_obj_copy_content(&w_a, &w_small) != NULL);
   ck("copy_content type mismatch -> COPY_MISMATCH", vm_obj_copy_content(&w_a, &w_other) != NULL);
   ck("copy_content into non-mutable -> NOT_MUTABLE", vm_obj_copy_content(&w_a, &w_ro) != NULL);
-  /* Copying pointer payloads would alias two graphs onto one child, so it is
-     refused on either side rather than producing a shared subtree. */
-  ck("copy_content refuses VM_OBJ_PTR source", vm_obj_copy_content(&w_cell, &w_cell) != NULL);
+  /* A pointer payload is walked rather than copied, so two trees never come to
+     share a child. A cell copied onto itself has nothing to move and says so
+     quietly; a pointer against a value is still a mismatch. Stage W covers the
+     walk itself, where there is a tree to walk. */
+  ck("copy_content on a cell copied onto itself is a no-op", vm_obj_copy_content(&w_cell, &w_cell) == NULL);
+  ck("copy_content still refuses a pointer against a value",
+     vm_obj_copy_content(&w_cell, &w_a) != NULL && vm_obj_copy_content(&w_a, &w_cell) != NULL);
 
   // link
   ck("link_direct points cell at leaf", vm_obj_link_direct(cell, 0, leaf) == NULL && *(vm_obj_h*)cell->payload == leaf);
@@ -1877,7 +1883,7 @@ static void test_palette(void) {
   ESP_LOGI(TAG, "-- P: palette --");
 
   ck("a filled slot resolves to its function", vm_block_fn_for(VM_BLK_EXPR) != NULL);
-  ck("every type in the palette resolves", vm_block_fn_for(VM_BLK_EXPR_BIT) && vm_block_fn_for(VM_BLK_IF) && vm_block_fn_for(VM_BLK_SWITCH) && vm_block_fn_for(VM_BLK_FOR));
+  ck("every type in the palette resolves", vm_block_fn_for(VM_BLK_EXPR_BIT) && vm_block_fn_for(VM_BLK_IF) && vm_block_fn_for(VM_BLK_SWITCH) && vm_block_fn_for(VM_BLK_FOR) && vm_block_fn_for(VM_BLK_SET) && vm_block_fn_for(VM_BLK_CLONE));
 
   /* Type 0 is reserved, and the reason is worth a check of its own: an unset
      `block_type` is zero, and it must not resolve to something runnable. */
@@ -3038,6 +3044,738 @@ static void test_for(void) {
   ck("...while the fixed loops are unaffected", for_cnt(1) == 3 && for_cnt(9) == 6);
 }
 
+/* ==========================================================================
+   Stage W -- the Set block
+
+   The first block whose *target* is an input pin, and everything here follows
+   from that. A Set has no data output: what it produces is named by the wire
+   drawn into IN1, so ENO is the only thing it publishes and it says one thing
+   -- the copy happened this pass.
+
+   The assertion that matters most is the fresh-target one at the end. Reading
+   freshness off IN0 alone rather than through vm_block_triggered() is what
+   stops a Set from re-firing on the object it just wrote, and since every copy
+   refreshes the target, getting that wrong is not a one-pass glitch but a copy
+   that never stops.
+   ========================================================================== */
+
+#define SET_SRC 0    // F, arrives fresh -- the common source
+#define SET_DST 1    // F, the common target
+#define SET_DST2 2   // F, target of the gated Set
+#define SET_GATE 3   // B, enable source, held shut
+#define SET_BAD 4    // U32, the wrong type to take a float
+#define SET_ARRS 5   // F[4] source
+#define SET_ARRD 6   // F[4] target
+#define SET_PTRS 7   // PTR source -- an alias, not a copy
+#define SET_PTRD 8   // PTR target
+#define SET_SRC1 9   // F, goes stale for pass 2
+#define SET_DST1 10  // F, and whose target goes stale with it
+#define SET_SRC8 11  // F, goes stale for pass 2
+#define SET_DST8 12  // F, but whose target stays fresh
+
+#define SET_T_SRC 13  // PTR[2] source table -- the 2D case
+#define SET_T_DST 14  // PTR[2] target table, with rows of its own
+#define SET_R_S0 15   // F[3] source rows
+#define SET_R_S1 16
+#define SET_R_D0 17   // F[3] target rows
+#define SET_R_D1 18
+#define SET_T_BAD 19  // PTR[2] whose second slot was never wired
+#define SET_PL_S 20   // F leaf under SET_PTRS -- the one-level deep copy
+#define SET_PL_D 21   // F leaf under SET_PTRD
+
+/* Shapes the walk has to refuse rather than follow. Each is reachable from a
+   program the loader would accept, which is why they are worth building. */
+#define SET_CYC_A 22      // src cycle: A -> B -> A
+#define SET_CYC_B 23
+#define SET_CYC_C 24      // dst cycle: C -> D -> C, same shape all the way down
+#define SET_CYC_D 25
+#define SET_T_SEMPTY 26   // PTR[2] whose slot 1 was never wired
+#define SET_T_ROMUT 27    // PTR[2] whose row 0 cannot be written
+#define SET_R_RO 28       // that row
+#define SET_T_NARROW 29   // PTR[2] whose row 0 is F[2] where the source has F[3]
+#define SET_R_NARROW 30
+#define SET_T_SHARE 31    // two tables that already share row 0
+#define SET_T_SHARE2 32
+#define SET_R_SHARE 33    // row 1 of SHARE2, the only one with copying to do
+#define SET_L3_S 34       // PTR[1] -> SET_T_SRC : three levels, not two
+#define SET_L3_D 35       // PTR[1] -> SET_T_DST
+
+#define SET_GATE_OPEN 36  // an enable that is actually on
+#define SET_DST3 37       // its target
+#define SET_RO_DST 38     // a target the block may not write
+#define SET_ELEM_DST 39   // F[4]; block 13 targets element 2 of it
+
+#define SET_ENO(n) ((uint16_t)(60 + (n)))
+
+/* A source with a real arrival: mutable, upd_resetable and primed fresh, so
+   pass 1 sees news and the end-of-pass sweep takes it away again. That second
+   part is what makes a second pass a genuine stale case -- an mk() object is
+   not resetable, so its upd would stand for the rest of the run. */
+static vm_obj_h mk_ev(uint16_t id, vm_obj_t_e type, uint16_t items) {
+  vm_obj_head_t h = hd(type, items);
+  h.f.mutable = 1;
+  h.f.upd_resetable = 1;
+  vm_obj_h o = NULL;
+  if (vm_obj_create(&o, id, &h, NULL) != NULL) return NULL;
+  o->head.f.upd = 1;
+  return o;
+}
+
+// accessor ids run 1:1 with object ids in this stage, so a pin names its object
+/* `eno` is a parameter rather than SET_ENO(id): stage Y builds Set blocks too,
+   with an object numbering of its own, and a helper that picks the ENO for its
+   caller silently names an object that stage does not have. */
+static bool set_blk(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t en_acc, uint16_t eno) {
+  const bool gated = (en_acc != VM_BLOCK_NO_ID);
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = VM_BLK_SET,
+                                              .in_cnt = in_cnt,
+                                              .q_cnt = 0,
+                                              .en_cnt = gated ? 1 : 0,
+                                              .en_mode = VM_BLK_EN_ALL,
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = VM_SET_CUSTOM_LEN,
+                                              .in_acc_ids = ins,
+                                              .en_acc_ids = gated ? &en_acc : NULL,
+                                              .eno_obj_id = eno});
+  return e == NULL && b != NULL;
+}
+
+static float set_f(uint16_t obj) {
+  vm_obj_h o = vm_obj_by_id(obj);
+  return o ? *(float*)o->payload : -1.0f;
+}
+
+static float set_at(uint16_t obj, uint8_t i) {
+  vm_obj_h o = vm_obj_by_id(obj);
+  return o ? ((const float*)o->payload)[i] : -1.0f;
+}
+
+static bool set_eno(uint16_t n) {
+  vm_obj_h o = vm_obj_by_id(SET_ENO(n));
+  return o && *(uint8_t*)o->payload != 0;
+}
+
+static void test_set(void) {
+  ESP_LOGI(TAG, "-- W: the Set block --");
+  vm_loader_reset();
+  /* Accessor ids track object ids in this stage, so the accessor registry has
+     to reach as far as the highest object an accessor is rooted at, not merely
+     as far as the number of accessors. */
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 80, [VM_REG_ACC] = 48, [VM_REG_BLK] = 20, [VM_REG_SEC] = 2};
+  (void)vm_store_open(16384, counts);
+
+  bool built = true;
+  built = built && mk_ev(SET_SRC, VM_OBJ_F, 1) != NULL;
+  built = built && mk(SET_DST, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(SET_DST2, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(SET_GATE, VM_OBJ_B, 1, NULL, true) != NULL;
+  built = built && mk(SET_BAD, VM_OBJ_U32, 1, NULL, true) != NULL;
+  built = built && mk_ev(SET_ARRS, VM_OBJ_F, 4) != NULL;
+  built = built && mk(SET_ARRD, VM_OBJ_F, 4, NULL, true) != NULL;
+  built = built && mk_ev(SET_PTRS, VM_OBJ_PTR, 1) != NULL;
+  built = built && mk(SET_PTRD, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk_ev(SET_SRC1, VM_OBJ_F, 1) != NULL;
+  built = built && mk(SET_DST1, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk_ev(SET_SRC8, VM_OBJ_F, 1) != NULL;
+  built = built && mk(SET_DST8, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk_ev(SET_T_SRC, VM_OBJ_PTR, 2) != NULL;
+  built = built && mk(SET_T_DST, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(SET_R_S0, VM_OBJ_F, 3, NULL, true) != NULL;
+  built = built && mk(SET_R_S1, VM_OBJ_F, 3, NULL, true) != NULL;
+  built = built && mk(SET_R_D0, VM_OBJ_F, 3, NULL, true) != NULL;
+  built = built && mk(SET_R_D1, VM_OBJ_F, 3, NULL, true) != NULL;
+  built = built && mk(SET_T_BAD, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(SET_PL_S, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(SET_PL_D, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk_ev(SET_CYC_A, VM_OBJ_PTR, 1) != NULL;
+  built = built && mk(SET_CYC_B, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(SET_CYC_C, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(SET_CYC_D, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(SET_T_SEMPTY, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(SET_T_ROMUT, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(SET_R_RO, VM_OBJ_F, 3, NULL, false) != NULL;
+  built = built && mk(SET_T_NARROW, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(SET_R_NARROW, VM_OBJ_F, 2, NULL, true) != NULL;
+  built = built && mk(SET_T_SHARE, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(SET_T_SHARE2, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(SET_R_SHARE, VM_OBJ_F, 3, NULL, true) != NULL;
+  built = built && mk(SET_L3_S, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(SET_L3_D, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(SET_GATE_OPEN, VM_OBJ_B, 1, NULL, true) != NULL;
+  built = built && mk(SET_DST3, VM_OBJ_F, 1, NULL, true) != NULL;
+  built = built && mk(SET_RO_DST, VM_OBJ_F, 1, NULL, false) != NULL;
+  built = built && mk(SET_ELEM_DST, VM_OBJ_F, 4, NULL, true) != NULL;
+  for (uint16_t n = 0; n <= 13; n++) built = built && mk(SET_ENO(n), VM_OBJ_B, 1, NULL, true) != NULL;
+  ck("objects built", built);
+
+  /* Two 2 x 3 tables, each with its own rows -- which is the shape a deep copy
+     needs and the whole reason it can allocate nothing. SET_T_BAD gets one row
+     and is left a slot short on purpose. */
+  bool wired = built;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SRC), 0, vm_obj_by_id(SET_R_S0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SRC), 1, vm_obj_by_id(SET_R_S1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_DST), 0, vm_obj_by_id(SET_R_D0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_DST), 1, vm_obj_by_id(SET_R_D1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_BAD), 0, vm_obj_by_id(SET_R_D0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_PTRS), 0, vm_obj_by_id(SET_PL_S)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_PTRD), 0, vm_obj_by_id(SET_PL_D)) == NULL;
+  // two cycles of equal shape -- the walk cannot tell them apart from a deep tree
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_A), 0, vm_obj_by_id(SET_CYC_B)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_B), 0, vm_obj_by_id(SET_CYC_A)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_C), 0, vm_obj_by_id(SET_CYC_D)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_D), 0, vm_obj_by_id(SET_CYC_C)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SEMPTY), 0, vm_obj_by_id(SET_R_S0)) == NULL;  // slot 1 left empty
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_ROMUT), 0, vm_obj_by_id(SET_R_RO)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_ROMUT), 1, vm_obj_by_id(SET_R_D1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_NARROW), 0, vm_obj_by_id(SET_R_NARROW)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_NARROW), 1, vm_obj_by_id(SET_R_D1)) == NULL;
+  // SHARE and SHARE2 already name the same row 0: nothing to move there
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE), 0, vm_obj_by_id(SET_R_S0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE), 1, vm_obj_by_id(SET_R_S1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE2), 0, vm_obj_by_id(SET_R_S0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE2), 1, vm_obj_by_id(SET_R_SHARE)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_L3_S), 0, vm_obj_by_id(SET_T_SRC)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_L3_D), 0, vm_obj_by_id(SET_T_DST)) == NULL;
+  ck("tables wired", wired);
+  for (uint8_t i = 0; i < 3; i++) {
+    ((float*)vm_obj_by_id(SET_R_S0)->payload)[i] = (float)(i + 1);  // 1 2 3
+    ((float*)vm_obj_by_id(SET_R_S1)->payload)[i] = (float)(i + 4);  // 4 5 6
+  }
+  vm_obj_by_id(SET_T_SRC)->head.f.upd = 1;  // link_direct already set it; say so out loud
+
+  *(uint8_t*)vm_obj_by_id(SET_GATE_OPEN)->payload = 1;  // block 11 is armed
+
+  bool accs = true;
+  for (uint16_t i = SET_SRC; i <= SET_T_BAD; i++) accs = accs && ex_acc(i, i) != NULL;
+  accs = accs && ex_acc(SET_GATE_OPEN, SET_GATE_OPEN) != NULL;
+  accs = accs && ex_acc(SET_DST3, SET_DST3) != NULL;
+  accs = accs && ex_acc(SET_RO_DST, SET_RO_DST) != NULL;
+  /* Element 2 of an array as a *destination* -- a Set target is an ordinary
+     accessor, so it can name one slot as readily as a whole object. */
+  vm_accessor_t* a_elem = NULL;
+  accs = accs && vm_accessor_create(&a_elem, SET_ELEM_DST, SET_ELEM_DST, 1) == NULL;
+  accs = accs && vm_accessor_set_literal(a_elem, 0, 2) == NULL;
+  if (accs) (void)vm_accessor_cache_build(a_elem);
+  ck("accessors built", accs);
+
+  *(float*)vm_obj_by_id(SET_SRC)->payload = 12.5f;
+  *(float*)vm_obj_by_id(SET_SRC1)->payload = 1.0f;
+  *(float*)vm_obj_by_id(SET_SRC8)->payload = 2.0f;
+  for (uint8_t i = 0; i < 4; i++) ((float*)vm_obj_by_id(SET_ARRS)->payload)[i] = (float)(i + 1);
+  *(uint8_t*)vm_obj_by_id(SET_GATE)->payload = 0;  // block 2 stays shut
+  *(float*)vm_obj_by_id(SET_PL_S)->payload = 8.5f;
+  vm_obj_by_id(SET_PTRS)->head.f.upd = 1;
+
+  bool blk = true;
+  blk = blk && set_blk(0, (const uint16_t[]){SET_SRC, SET_DST}, 2, VM_BLOCK_NO_ID, SET_ENO(0));
+  blk = blk && set_blk(1, (const uint16_t[]){SET_SRC1, SET_DST1}, 2, VM_BLOCK_NO_ID, SET_ENO(1));
+  blk = blk && set_blk(2, (const uint16_t[]){SET_SRC, SET_DST2}, 2, SET_GATE, SET_ENO(2));
+  blk = blk && set_blk(3, (const uint16_t[]){SET_SRC, SET_BAD}, 2, VM_BLOCK_NO_ID, SET_ENO(3));
+  blk = blk && set_blk(4, (const uint16_t[]){SET_ARRS, SET_ARRD}, 2, VM_BLOCK_NO_ID, SET_ENO(4));
+  blk = blk && set_blk(5, (const uint16_t[]){SET_PTRS, SET_PTRD}, 2, VM_BLOCK_NO_ID, SET_ENO(5));
+  blk = blk && set_blk(6, (const uint16_t[]){SET_SRC}, 1, VM_BLOCK_NO_ID, SET_ENO(6));
+  blk = blk && set_blk(7, (const uint16_t[]){SET_SRC, VM_BLOCK_NO_ID}, 2, VM_BLOCK_NO_ID, SET_ENO(7));
+  blk = blk && set_blk(8, (const uint16_t[]){SET_SRC8, SET_DST8}, 2, VM_BLOCK_NO_ID, SET_ENO(8));
+  blk = blk && set_blk(9, (const uint16_t[]){SET_T_SRC, SET_T_DST}, 2, VM_BLOCK_NO_ID, SET_ENO(9));
+  blk = blk && set_blk(10, (const uint16_t[]){SET_T_SRC, SET_T_BAD}, 2, VM_BLOCK_NO_ID, SET_ENO(10));
+  blk = blk && set_blk(11, (const uint16_t[]){SET_SRC, SET_DST3}, 2, SET_GATE_OPEN, SET_ENO(11));
+  blk = blk && set_blk(12, (const uint16_t[]){SET_SRC, SET_RO_DST}, 2, VM_BLOCK_NO_ID, SET_ENO(12));
+  blk = blk && set_blk(13, (const uint16_t[]){SET_SRC, SET_ELEM_DST}, 2, VM_BLOCK_NO_ID, SET_ENO(13));
+  ck("Set blocks built in execution order", blk);
+  if (!blk) return;
+
+  /* ---- pass 1 ---- */
+  vm_exec_pass();
+
+  ck("a fresh source copies into the target", near_f(set_f(SET_DST), 12.5f) && set_eno(0));
+  ck("...and the copy is loud, so a reader downstream sees news", vm_obj_by_id(SET_DST)->head.f.upd != 0);
+  ck("...and the block latched that it was triggered", (vm_block_by_id(0)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
+
+  /* A Set moves the whole payload, so an array arrives as an array. This is
+     the case a scalar store could not do at all. */
+  ck("a whole array moves, not just element 0",
+     near_f(set_at(SET_ARRD, 0), 1.0f) && near_f(set_at(SET_ARRD, 1), 2.0f) && near_f(set_at(SET_ARRD, 2), 3.0f) &&
+         near_f(set_at(SET_ARRD, 3), 4.0f) && set_eno(4));
+
+  // update-driven and enable-driven compose: fresh is necessary, not sufficient
+  ck("a gated Set does not copy however fresh the source", near_f(set_f(SET_DST2), 0.0f) && !set_eno(2));
+
+  /* Every refusal has the same shape: nothing published, flow withdrawn. */
+  ck("a type mismatch is refused", *(uint32_t*)vm_obj_by_id(SET_BAD)->payload == 0u && !set_eno(3));
+  ck("one pin is not a Set", !set_eno(6) && cfg_bad(6));
+  ck("an unwired target is not a Set", !set_eno(7) && cfg_bad(7));
+  ck("...and neither of those is latched on a well-formed Set", !cfg_bad(0) && !cfg_bad(4));
+  ck("the sweep clears a resetable source's upd", vm_obj_by_id(SET_SRC1)->head.f.upd == 0);
+
+  /* One pointer cell is the smallest deep copy there is: the value under the
+     source slot lands under the target slot, and the two slots still name
+     different objects afterwards. A byte copy would have made them one. */
+  ck("a pointer cell is walked, so the value under it moves", near_f(set_f(SET_PL_D), 8.5f) && set_eno(5));
+  ck("...and the two cells still point at objects of their own",
+     ((const vm_obj_h*)vm_obj_by_id(SET_PTRS)->payload)[0] != ((const vm_obj_h*)vm_obj_by_id(SET_PTRD)->payload)[0]);
+
+  /* ---- the 2D case ---- */
+  ck("a 2D table copies row by row",
+     near_f(set_at(SET_R_D0, 0), 1.0f) && near_f(set_at(SET_R_D0, 2), 3.0f) && near_f(set_at(SET_R_D1, 0), 4.0f) &&
+         near_f(set_at(SET_R_D1, 2), 6.0f) && set_eno(9));
+  ck("...marking both the rows written and the table above them fresh",
+     vm_obj_by_id(SET_R_D0)->head.f.upd != 0 && vm_obj_by_id(SET_T_DST)->head.f.upd != 0);
+
+  /* The whole reason the walk exists. A shallow copy of the pointer bytes
+     would have left both tables naming the same rows, and this edit would
+     show up in the source -- somewhere else entirely in the program, long
+     after the Set ran. */
+  ck("the two tables kept their own rows",
+     ((const vm_obj_h*)vm_obj_by_id(SET_T_SRC)->payload)[0] != ((const vm_obj_h*)vm_obj_by_id(SET_T_DST)->payload)[0]);
+  ((float*)vm_obj_by_id(SET_R_D0)->payload)[0] = -1.0f;
+  ck("...so editing the copy does not reach the original", near_f(set_at(SET_R_S0, 0), 1.0f));
+
+  ck("a target slot with no object is a shape error, not a crash", !set_eno(10) && near_f(set_at(SET_R_S1, 0), 4.0f));
+
+  /* ---- the rest of the block's activation surface ---- */
+  ck("an enable that is on lets the copy through", near_f(set_f(SET_DST3), 12.5f) && set_eno(11));
+  ck("a target the block may not write is refused", !set_eno(12));
+  /* A Set target is an ordinary accessor, so it can name one element as
+     readily as a whole object -- and only that element moves. */
+  ck("a Set can target a single element", near_f(set_at(SET_ELEM_DST, 2), 12.5f) && set_eno(13));
+  ck("...leaving its neighbours alone", near_f(set_at(SET_ELEM_DST, 1), 0.0f) && near_f(set_at(SET_ELEM_DST, 3), 0.0f));
+
+  /* ---- the walk's limits, called directly. These are shapes a loaded program
+          can genuinely hold, so the walk has to refuse them rather than follow
+          them; static accessors because the subject is vm_obj_copy_content(),
+          not a block. ---- */
+  static const vm_accessor_t w_cyc_s = {.id = SET_CYC_A, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_cyc_d = {.id = SET_CYC_C, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_tsrc = {.id = SET_T_SRC, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_sempty = {.id = SET_T_SEMPTY, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_tdst = {.id = SET_T_DST, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_romut = {.id = SET_T_ROMUT, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_narrow = {.id = SET_T_NARROW, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_share = {.id = SET_T_SHARE, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_share2 = {.id = SET_T_SHARE2, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_l3s = {.id = SET_L3_S, .count = 0, .indices = NULL};
+  static const vm_accessor_t w_l3d = {.id = SET_L3_D, .count = 0, .indices = NULL};
+
+  /* Two cycles of matching shape. Nothing about them is locally wrong -- every
+     level agrees with its opposite -- so only the depth cap ends the walk, and
+     ending it is the whole reason the cap exists. */
+  ck("a cycle is stopped by the depth cap rather than the stack", vm_obj_copy_content(&w_cyc_s, &w_cyc_d) != NULL);
+
+  ck("a source slot with no object is a shape error too", vm_obj_copy_content(&w_sempty, &w_tdst) != NULL);
+  ck("a row that cannot be written stops the walk", vm_obj_copy_content(&w_tsrc, &w_romut) != NULL);
+  /* Depth 0 agrees -- both are PTR[2] -- and the mismatch is a level down,
+     which is the case a non-recursive check would have missed. */
+  ck("a mismatch below the root is still caught", vm_obj_copy_content(&w_tsrc, &w_narrow) != NULL);
+  ck("...and the rows it could not take are untouched", near_f(set_at(SET_R_NARROW, 0), 0.0f));
+
+  /* Row 0 is already the same object on both sides: there is nothing to move
+     and copying it onto itself would be a memcpy over itself. Row 1 differs
+     and does move, so the skip cannot be the walk simply giving up. */
+  ck("a child both trees already share is skipped, not copied over itself",
+     vm_obj_copy_content(&w_share, &w_share2) == NULL && near_f(set_at(SET_R_SHARE, 2), 6.0f));
+
+  ck("three levels walk as readily as two", vm_obj_copy_content(&w_l3s, &w_l3d) == NULL);
+
+  /* ---- pass 2: nothing arrives. Both sources hold a value they would copy
+          if they ran, so a copy that happens anyway is visible. ---- */
+  *(float*)vm_obj_by_id(SET_SRC1)->payload = 99.0f;
+  *(float*)vm_obj_by_id(SET_SRC8)->payload = 99.0f;
+  vm_obj_by_id(SET_DST1)->head.f.upd = 0;  // block 1's target goes stale with its source
+  /* Pass 1's true ENO left `upd` standing: set_ENO(false) clears the payload
+     quietly and by design does not touch the flag, and an mk() object is not
+     upd_resetable so the sweep leaves it too. Clearing it here is what makes
+     the next assertion about *this* pass. */
+  vm_obj_by_id(SET_ENO(1))->head.f.upd = 0;
+  vm_exec_pass();
+
+  ck("a stale source does not copy", near_f(set_f(SET_DST1), 1.0f) && !set_eno(1));
+  ck("...with the ENO taken false quietly", vm_obj_by_id(SET_ENO(1))->head.f.upd == 0);
+
+  /* Block 8's target is still fresh from its own pass-1 copy, and its source
+     is not. A vm_block_triggered() over both pins would read the target as an
+     arrival and copy again -- and since each copy refreshes the target, it
+     would never stop. */
+  ck("a fresh target does not re-fire a Set", near_f(set_f(SET_DST8), 2.0f) && !set_eno(8));
+  ck("...and that really was source-stale, target-fresh",
+     vm_obj_by_id(SET_SRC8)->head.f.upd == 0 && vm_obj_by_id(SET_DST8)->head.f.upd != 0);
+}
+
+/* ==========================================================================
+   Stage X -- the Clone block
+
+   The first block that allocates, and the first thing outside stage O to put
+   vm_obj_dyn to work. Two properties carry the design, and everything here is
+   arranged to check them:
+
+     the steady state allocates nothing -- a destination that already matches
+     is filled in place, so a Clone running at scan rate is a Set
+
+     a shape change swaps the tree, and the tree it replaced is freed by the
+     pointer slot that stopped naming it
+
+   The second is only observable through the register, so most assertions here
+   are counts of live dynamic objects across passes rather than values.
+   ========================================================================== */
+
+#define CLN_HOLD 0     // PTR[1] -- the source holder; its child is what gets cloned
+#define CLN_A 1        // F[2], the first shape
+#define CLN_B 2        // F[5], the second
+#define CLN_CELL 3     // PTR[1] -- the cell the block owns its tree through
+#define CLN_HOLD2 4    // PTR[1] -- holder for the 2D source
+#define CLN_TBL 5      // PTR[2] source table
+#define CLN_R0 6       // F[3] rows
+#define CLN_R1 7
+#define CLN_TCELL 8    // PTR[1] -- destination cell for the table
+#define CLN_NOTCELL 9  // F[1] -- a target that is not a pointer cell at all
+
+#define CLN_ENO(n) ((uint16_t)(20 + (n)))
+
+static uint16_t dyn_live(void) {
+  uint16_t n = 0;
+  for (uint16_t i = 0; i < VM_DYN_MAX; i++) {
+    if (vm_obj_dyn_get(i)) n++;
+  }
+  return n;
+}
+
+// the object the block built, reached the way a downstream block would
+static vm_obj_h cln_built(uint16_t cell_obj) {
+  vm_obj_h c = vm_obj_by_id(cell_obj);
+  return c ? ((vm_obj_h*)c->payload)[0] : NULL;
+}
+
+/* source pin is `holder[0]`, so the *child* is what the block sees -- which is
+   how this stage changes a source's shape between passes without an arena
+   object ever changing shape. */
+static vm_accessor_t* cln_child_acc(uint16_t acc_id, uint16_t holder) {
+  vm_accessor_t* a = NULL;
+  if (vm_accessor_create(&a, acc_id, holder, 1) != NULL) return NULL;
+  if (vm_accessor_set_literal(a, 0, 0) != NULL) return NULL;
+  (void)vm_accessor_cache_build(a);
+  return a;
+}
+
+// same reason set_blk() takes one -- see there
+static bool clone_blk(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t eno) {
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = VM_BLK_CLONE,
+                                              .in_cnt = in_cnt,
+                                              .q_cnt = 0,
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = VM_CLONE_CUSTOM_LEN,
+                                              .in_acc_ids = ins,
+                                              .eno_obj_id = eno});
+  return e == NULL && b != NULL;
+}
+
+static bool cln_eno(uint16_t n) {
+  vm_obj_h o = vm_obj_by_id(CLN_ENO(n));
+  return o && *(uint8_t*)o->payload != 0;
+}
+
+static void test_clone(void) {
+  ESP_LOGI(TAG, "-- X: the Clone block --");
+  vm_obj_dyn_reset();  // before the loader: the parents holding these live in the pool
+  vm_loader_reset();
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 40, [VM_REG_ACC] = 16, [VM_REG_BLK] = 8, [VM_REG_SEC] = 2};
+  (void)vm_store_open(8192, counts);
+
+  bool built = true;
+  built = built && mk(CLN_HOLD, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(CLN_A, VM_OBJ_F, 2, "a", true) != NULL;
+  built = built && mk(CLN_B, VM_OBJ_F, 5, NULL, true) != NULL;
+  built = built && mk(CLN_CELL, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(CLN_HOLD2, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(CLN_TBL, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(CLN_R0, VM_OBJ_F, 3, NULL, true) != NULL;
+  built = built && mk(CLN_R1, VM_OBJ_F, 3, NULL, true) != NULL;
+  built = built && mk(CLN_TCELL, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(CLN_NOTCELL, VM_OBJ_F, 1, NULL, true) != NULL;
+  for (uint16_t n = 0; n <= 2; n++) built = built && mk(CLN_ENO(n), VM_OBJ_B, 1, NULL, true) != NULL;
+  ck("objects built", built);
+
+  bool wired = built;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_HOLD), 0, vm_obj_by_id(CLN_A)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_TBL), 0, vm_obj_by_id(CLN_R0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_TBL), 1, vm_obj_by_id(CLN_R1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_HOLD2), 0, vm_obj_by_id(CLN_TBL)) == NULL;
+  ck("sources wired", wired);
+  ck("linking arena objects took no dynamic references", dyn_live() == 0);
+
+  ((float*)vm_obj_by_id(CLN_A)->payload)[0] = 1.0f;
+  ((float*)vm_obj_by_id(CLN_A)->payload)[1] = 2.0f;
+  for (uint8_t i = 0; i < 5; i++) ((float*)vm_obj_by_id(CLN_B)->payload)[i] = (float)(10 + i);
+  for (uint8_t i = 0; i < 3; i++) {
+    ((float*)vm_obj_by_id(CLN_R0)->payload)[i] = (float)(i + 1);
+    ((float*)vm_obj_by_id(CLN_R1)->payload)[i] = (float)(i + 4);
+  }
+  /* Neither holder is upd_resetable, so both read fresh on every pass and the
+     blocks fire every time -- the stand-down cases belong to stage W. */
+  vm_obj_by_id(CLN_HOLD)->head.f.upd = 1;
+  vm_obj_by_id(CLN_HOLD2)->head.f.upd = 1;
+
+  bool accs = cln_child_acc(0, CLN_HOLD) != NULL;      // acc 0: the scalar source
+  accs = accs && ex_acc(1, CLN_CELL) != NULL;          // acc 1: its destination cell
+  accs = accs && cln_child_acc(2, CLN_HOLD2) != NULL;  // acc 2: the table source
+  accs = accs && ex_acc(3, CLN_TCELL) != NULL;         // acc 3: its destination cell
+  accs = accs && ex_acc(4, CLN_NOTCELL) != NULL;       // acc 4: not a cell
+
+  /* How a downstream block reads what a Clone built. A dynamic object has no
+     registry id -- nothing can be rooted at it -- so the accessor is rooted at
+     the arena *cell* and steps through the pointer slot. Two spellings of the
+     same reach: by position, and by the tag the clone carried over. */
+  vm_accessor_t* a_read = NULL;
+  accs = accs && vm_accessor_create(&a_read, 5, CLN_CELL, 2) == NULL;
+  accs = accs && vm_accessor_set_literal(a_read, 0, 0) == NULL;
+  accs = accs && vm_accessor_set_literal(a_read, 1, 1) == NULL;
+  vm_accessor_t* a_named = NULL;
+  accs = accs && vm_accessor_create(&a_named, 6, CLN_CELL, 2) == NULL;
+  accs = accs && vm_accessor_set_name(a_named, 0, "a", 1) == NULL;
+  accs = accs && vm_accessor_set_literal(a_named, 1, 1) == NULL;
+  if (accs) {
+    /* Neither may be cached, and cache_build is what refuses them: a chain
+       that crosses a link has to re-read the slot every pass, or it would go
+       on naming a tree the block has already replaced and freed. */
+    (void)vm_accessor_cache_build(a_read);
+    (void)vm_accessor_cache_build(a_named);
+  }
+  ck("accessors built", accs);
+  ck("a chain that crosses a link is never cached",
+     accs && !(a_read->flags & VM_ACC_F_CACHED) && !(a_named->flags & VM_ACC_F_CACHED));
+
+  bool blk = true;
+  blk = blk && clone_blk(0, (const uint16_t[]){0, 1}, 2, CLN_ENO(0));
+  blk = blk && clone_blk(1, (const uint16_t[]){2, 3}, 2, CLN_ENO(1));
+  blk = blk && clone_blk(2, (const uint16_t[]){0, 4}, 2, CLN_ENO(2));
+  ck("Clone blocks built in execution order", blk);
+  if (!blk) return;
+
+  /* ---- pass 1: nothing exists yet, so both Clones build ---- */
+  vm_exec_pass();
+
+  vm_obj_h c1 = cln_built(CLN_CELL);
+  ck("a Clone builds its destination and fills it", c1 && near_f(((const float*)c1->payload)[1], 2.0f) && cln_eno(0));
+  ck("...on the heap, registered, and marked dynamic", c1 && vm_obj_is_dynamic(c1) && vm_obj_dyn_id(c1) != VM_DYN_NO_ID);
+  ck("...shaped like its source, tag and all", c1 && vm_obj_items_cnt(c1) == 2 && c1->head.f.tagged && c1->head.d.name_size == 1);
+  ck("...and mutable, whatever the source was", c1 && c1->head.f.mutable);
+
+  /* A tree source clones as a tree: the rows are built too, and they are the
+     copy's own rows, not the source's. */
+  vm_obj_h t1 = cln_built(CLN_TCELL);
+  ck("a 2D source clones row by row", t1 && vm_obj_items_cnt(t1) == 2 && cln_eno(1) &&
+                                          near_f(((const float*)((vm_obj_h*)t1->payload)[1]->payload)[2], 6.0f));
+  ck("...and the rows belong to the copy", t1 && ((vm_obj_h*)t1->payload)[0] != vm_obj_by_id(CLN_R0) &&
+                                               vm_obj_is_dynamic(((vm_obj_h*)t1->payload)[0]));
+
+  // 1 scalar + 1 table + 2 rows
+  ck("the register holds exactly what was built", dyn_live() == 4);
+  ck("a target that is not a pointer cell is refused", !cln_eno(2));
+
+  /* Reading the clone the way a wired block would. */
+  float rd = 0.0f;
+  ck("a clone is read through the cell that holds it", VM_OBJ_GET_VAL(rd, a_read) == NULL && near_f(rd, 2.0f));
+  rd = 0.0f;
+  ck("...or by the tag it carried over from its source", VM_OBJ_GET_VAL(rd, a_named) == NULL && near_f(rd, 2.0f));
+  ck("the cell itself still reads as 0 -- a pointer is not a value",
+     VM_OBJ_GET_VAL(rd, vm_accessor_by_id(1)) == NULL && near_f(rd, 0.0f));
+
+  /* ---- pass 2: same shapes, new values. The whole point -- nothing new is
+          allocated and the destination objects are the same ones. ---- */
+  ((float*)vm_obj_by_id(CLN_A)->payload)[1] = 42.0f;
+  vm_exec_pass();
+
+  ck("a matching destination is refilled, not rebuilt", cln_built(CLN_CELL) == c1 && near_f(((const float*)c1->payload)[1], 42.0f));
+  ck("...so a Clone at scan rate allocates nothing", dyn_live() == 4);
+  ck("the table is likewise reused", cln_built(CLN_TCELL) == t1);
+
+  /* ---- pass 3: the source changes shape under the block ---- */
+  ck("re-point the holder at a differently shaped child", vm_obj_link_direct(vm_obj_by_id(CLN_HOLD), 0, vm_obj_by_id(CLN_B)) == NULL);
+  vm_obj_by_id(CLN_HOLD)->head.f.upd = 1;
+  vm_exec_pass();
+
+  vm_obj_h c2 = cln_built(CLN_CELL);
+  ck("a shape change builds a new destination", c2 && c2 != c1 && vm_obj_items_cnt(c2) == 5);
+  ck("...filled from the new source", c2 && near_f(((const float*)c2->payload)[4], 14.0f) && cln_eno(0));
+  /* The old tree was freed by the slot that stopped naming it -- if the link
+     path did not move the reference, this count would climb every time a
+     source changed shape, which is the leak the refcount exists to prevent. */
+  ck("...and the tree it replaced was released", dyn_live() == 4);
+
+  /* Independence, the same property stage W checks for Set: the clone holds
+     its own storage, so editing it cannot reach back into the source. */
+  ((float*)c2->payload)[0] = -1.0f;
+  ck("editing the clone does not reach the source", near_f(((const float*)vm_obj_by_id(CLN_B)->payload)[0], 10.0f));
+
+  /* The reason such a chain must not be cached: the tree it reached through
+     was freed two statements into this pass, and the same accessor now has to
+     find the one that replaced it. */
+  rd = 0.0f;
+  ck("a reader follows the swap without being rebuilt", VM_OBJ_GET_VAL(rd, a_read) == NULL && near_f(rd, 11.0f));
+  /* CLN_B carries no tag, so the clone of it carries none either -- the
+     by-name reach stops resolving rather than quietly finding something else. */
+  ck("...while a name the new tree does not have stops resolving", VM_OBJ_GET_VAL(rd, a_named) != NULL);
+
+  /* Teardown is the loader's job, and it has to happen before the pool goes:
+     every one of these is held by an arena cell. */
+  vm_obj_dyn_reset();
+  ck("reset frees every live clone", dyn_live() == 0);
+}
+
+/* ==========================================================================
+   Stage Y -- read a message, compute on the copy, write back into the copy
+
+   The pipeline the palette exists for, end to end and in one pass:
+
+     CLONE   takes a private copy of an arriving tree
+     EXPR    reads a field of that copy and computes
+     SET     writes the answer into another field of the same copy
+
+   Everything here is about one property: the original is never touched. A
+   program that mutated the message it was handed would be publishing changes
+   to whatever else that message is wired to, and the copy exists so it does
+   not have to.
+
+   The message is an arena tree rather than a parsed one, because a parser is
+   not the subject -- a Clone cannot tell the difference, and this way the
+   stage is about the wiring.
+   ========================================================================== */
+
+#define JS_CELL 0   // PTR[1] -- where a message arrives
+#define JS_ROOT 1   // PTR[2] -- its root; the fields below are its tagged children
+#define JS_TEMP 2   // F "temp"   -- the field read
+#define JS_RES 3    // F "result" -- the field written
+#define JS_COPY 4   // PTR[1] -- the cell the Clone owns its copy through
+#define JS_MATH 5   // F -- the expression's own output, an ordinary arena object
+
+#define JS_ENO(n) ((uint16_t)(10 + (n)))
+
+// the field `tag` of the copy, reached the way a wired block reaches it
+static vm_obj_h js_field(const char* tag) {
+  vm_obj_h cell = vm_obj_by_id(JS_COPY);
+  vm_obj_h copy = cell ? ((vm_obj_h*)cell->payload)[0] : NULL;
+  return copy ? vm_obj_find_child(copy, tag) : NULL;
+}
+
+static float js_field_f(const char* tag) {
+  vm_obj_h f = js_field(tag);
+  return f ? *(const float*)f->payload : -1.0f;
+}
+
+static bool js_eno(uint16_t n) {
+  vm_obj_h o = vm_obj_by_id(JS_ENO(n));
+  return o && *(uint8_t*)o->payload != 0;
+}
+
+/* copy_cell[0]["<tag>"][0] -- three steps, and every one of them earns its
+   place. [0] crosses the pointer slot into the copy; ["tag"] finds the field
+   by the name the clone carried over; [0] lands on the value inside it. */
+static bool js_field_acc(uint16_t acc_id, const char* tag) {
+  vm_accessor_t* a = NULL;
+  if (vm_accessor_create(&a, acc_id, JS_COPY, 3) != NULL) return false;
+  if (vm_accessor_set_literal(a, 0, 0) != NULL) return false;
+  if (vm_accessor_set_name(a, 1, tag, (uint8_t)strlen(tag)) != NULL) return false;
+  if (vm_accessor_set_literal(a, 2, 0) != NULL) return false;
+  (void)vm_accessor_cache_build(a);  // declines: the chain crosses a link
+  return true;
+}
+
+static void test_json_pipeline(void) {
+  ESP_LOGI(TAG, "-- Y: clone, compute, write back --");
+  vm_obj_dyn_reset();
+  vm_loader_reset();
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 24, [VM_REG_ACC] = 8, [VM_REG_BLK] = 4, [VM_REG_SEC] = 2};
+  (void)vm_store_open(8192, counts);
+
+  bool built = true;
+  built = built && mk(JS_CELL, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(JS_ROOT, VM_OBJ_PTR, 2, NULL, true) != NULL;
+  built = built && mk(JS_TEMP, VM_OBJ_F, 1, "temp", true) != NULL;
+  built = built && mk(JS_RES, VM_OBJ_F, 1, "result", true) != NULL;
+  built = built && mk(JS_COPY, VM_OBJ_PTR, 1, NULL, true) != NULL;
+  built = built && mk(JS_MATH, VM_OBJ_F, 1, NULL, true) != NULL;
+  for (uint16_t n = 0; n <= 2; n++) built = built && mk(JS_ENO(n), VM_OBJ_B, 1, NULL, true) != NULL;
+  ck("objects built", built);
+
+  bool wired = built;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(JS_ROOT), 0, vm_obj_by_id(JS_TEMP)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(JS_ROOT), 1, vm_obj_by_id(JS_RES)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_by_id(JS_CELL), 0, vm_obj_by_id(JS_ROOT)) == NULL;
+  ck("message wired", wired);
+
+  *(float*)vm_obj_by_id(JS_TEMP)->payload = 21.5f;
+  *(float*)vm_obj_by_id(JS_RES)->payload = 0.0f;
+
+  /* Both of these have to be resetable or the chain never stands down: the
+     cell would read as a message arriving on every pass, and the expression's
+     output as a fresh answer forever, so the last assertions in this stage
+     would be measuring a program that cannot stop rather than one that has.
+     The clone's own objects get the flag from clone_shape(). */
+  vm_obj_by_id(JS_CELL)->head.f.upd_resetable = 1;
+  vm_obj_by_id(JS_MATH)->head.f.upd_resetable = 1;
+  vm_obj_by_id(JS_CELL)->head.f.upd = 1;  // a message arrived
+
+  bool accs = true;
+  vm_accessor_t* a_msg = NULL;
+  accs = accs && vm_accessor_create(&a_msg, 0, JS_CELL, 1) == NULL;  // the tree behind the cell
+  accs = accs && vm_accessor_set_literal(a_msg, 0, 0) == NULL;
+  accs = accs && ex_acc(1, JS_COPY) != NULL;   // the Clone's destination cell
+  accs = accs && js_field_acc(2, "temp");      // what the expression reads
+  accs = accs && ex_acc(3, JS_MATH) != NULL;   // what it writes
+  accs = accs && js_field_acc(4, "result");    // where the answer lands
+  ck("accessors built", accs);
+
+  /* temp * 2. The output object is an ordinary arena F -- an expression cannot
+     publish into the copy directly, because a block output is a raw handle
+     bound at load and a clone does not exist then. Getting the answer into the
+     copy is the Set's job, one block further on. */
+  static const uint8_t c_double[] = {VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_MUL};
+  const uint32_t k2[] = {kf(2.0f)};
+
+  bool blk = true;
+  blk = blk && clone_blk(0, (const uint16_t[]){0, 1}, 2, JS_ENO(0));
+  blk = blk && ex_expr(1, (const uint16_t[]){2}, 1, JS_MATH, JS_ENO(1), k2, 1, c_double, sizeof(c_double));
+  blk = blk && set_blk(2, (const uint16_t[]){3, 4}, 2, VM_BLOCK_NO_ID, JS_ENO(2));
+  ck("clone -> expr -> set built in execution order", blk);
+  if (!blk) return;
+
+  /* ---- one pass carries the whole chain: each block's write is the next
+          block's arrival, and topological order is what makes that hold ---- */
+  vm_exec_pass();
+
+  ck("the clone took the message's shape and tags", js_field("temp") && js_field("result"));
+  ck("...and its values", near_f(js_field_f("temp"), 21.5f) && js_eno(0));
+  ck("the expression read the copy through three steps", near_f(*(const float*)vm_obj_by_id(JS_MATH)->payload, 43.0f) && js_eno(1));
+  ck("the Set wrote the answer into the copy", near_f(js_field_f("result"), 43.0f) && js_eno(2));
+
+  /* The point of the copy. Everything above happened to the clone, and the
+     message a client sent is byte-for-byte what it sent. */
+  ck("the original message is untouched", near_f(*(const float*)vm_obj_by_id(JS_RES)->payload, 0.0f));
+  ck("...and its fields are still its own objects", js_field("result") != vm_obj_by_id(JS_RES));
+
+  /* ---- a second message, same shape: the copy is refilled rather than
+          rebuilt, so a message rate is not an allocation rate ---- */
+  vm_obj_h first = ((vm_obj_h*)vm_obj_by_id(JS_COPY)->payload)[0];
+  uint16_t live = dyn_live();
+  *(float*)vm_obj_by_id(JS_TEMP)->payload = 10.0f;
+  vm_obj_by_id(JS_CELL)->head.f.upd = 1;
+  vm_exec_pass();
+
+  ck("a second message reuses the copy", ((vm_obj_h*)vm_obj_by_id(JS_COPY)->payload)[0] == first && dyn_live() == live);
+  ck("...and flows through to the answer", near_f(js_field_f("result"), 20.0f) && js_eno(2));
+
+  /* ---- nothing arrives: the chain stands down from the top ---- */
+  vm_exec_pass();
+  ck("no message means no clone, so nothing downstream runs", !js_eno(0) && !js_eno(1) && !js_eno(2));
+  ck("...and the last answer stands", near_f(js_field_f("result"), 20.0f));
+
+  vm_obj_dyn_reset();
+}
+
 void vm_selftest_run(void) {
   s_pass = 0;
   s_fail = 0;
@@ -3078,6 +3816,9 @@ void vm_selftest_run(void) {
   STAGE(test_expr);
   STAGE(test_branch);
   STAGE(test_for);
+  STAGE(test_set);
+  STAGE(test_clone);
+  STAGE(test_json_pipeline);
 #undef STAGE
 
   vm_obj_dyn_reset();  // before the loader: parents holding these live in the pool
