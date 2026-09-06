@@ -7,14 +7,9 @@
 #include "esp_compiler.h"  // likely()/unlikely()
 
 /*
-Object used in VM, it poses pseudo JSON functionalities. withy limited TAG (15 chars), and payload with different types.
-Object is suitable to store numerical values or other objects creating object tree.
-Object can store one item or array of items. Count of items stored is defined by payload size and itme size.
-Object support mixing  types in object tree creating JSON nested representation.
-Object is accesed using handle (pointer)
-Object data is stored as flexible array member, this means that object is required to poses size of Head (description) and space for all data and optional TAG
-Object is unaware of parent in tree, every object can be treated as standalone instance
-Object is accessed using accessor and id -> see related accessor files
+VM object: a head plus a flexible-array payload holding one value or an array
+of them, plus an optional 15-char tag. No parent pointer -- objects form a
+tree only through other objects' PTR elements, resolved via accessor + id.
 */
 
 // Longest tag a 4-bit name_size can describe. (4-bit size in obj head)
@@ -49,10 +44,9 @@ static const uint8_t vm_obj_type_sizes[] = {
     [VM_OBJ_U64] = sizeof(uint64_t),
 };
 
-/**
- * @brief Shift to get payload items count from payload size
- */
-static const uint8_t vm_obj_type_shifts[] = {
+/** @brief Shift to get payload item count from payload size, indexed by the
+ *  full 4-bit obj_t field; unused encodings read as 0. */
+static const uint8_t vm_obj_type_shifts[16] = {
     [VM_OBJ_NONE] = 0,
     [VM_OBJ_PTR] = 2,
     [VM_OBJ_U8] = 0,
@@ -65,34 +59,12 @@ static const uint8_t vm_obj_type_shifts[] = {
 };
 _Static_assert(sizeof(void*) == 4, "vm_obj_type_shifts assumes 4-byte pointers");
 
-/*
-The same shift table packed two bits per type into one immediate, because the
-array form costs a data load the hot path cannot afford.
-
-`vm_obj_type_shifts[t]` compiles to an `l32r` for the table address plus an
-`l8ui` -- and .rodata lives in flash, so that load goes through the data cache
-on every single element access. The packed form is a literal: it rides the
-instruction path with the code that uses it and never touches the data side.
-`vm_obj_type_sizes` disappears from the hot path too, since every valid width
-is exactly `1 << shift`.
-
-Both arrays stay for the cold paths and for the self test, which checks the
-pack against them entry by entry (stage A) -- an array element is not an
-integer constant expression, so this cannot be a _Static_assert.
-
-  type:  NONE PTR U8 U32 I32  F  B STR U64
-  shift:    0   2   0   2   2  2  0   0   3
-*/
-#define VM_OBJ_SHIFT_PACK 0x00030A88u
-
-/** @brief Element-size shift for a type id. Meaningless unless vm_type_ok(). */
+/** @brief Element-size shift for a type id; 0 if `t` is not a real type. */
 static __always_inline uint32_t vm_type_shift(uint8_t t) {
-  return (VM_OBJ_SHIFT_PACK >> (t << 1)) & 3u;
+  return vm_obj_type_shifts[t & 0x0Fu];
 }
 
-/** @brief Is `t` a real type with a width -- i.e. 1..VM_OBJ_U64, not NONE and
- *  not one of the unused 4-bit encodings. One compare, unsigned wrap doing
- *  both ends at once. */
+/** @brief True if `t` is a real type: VM_OBJ_PTR..VM_OBJ_U64. */
 static __always_inline bool vm_type_ok(uint8_t t) {
   return (uint8_t)(t - 1u) <= (uint8_t)(VM_OBJ_U64 - 1u);
 }
@@ -136,12 +108,13 @@ typedef vm_obj_t* vm_obj_h;
 _Static_assert(offsetof(vm_obj_t, payload) == 4, "payload must follow the head with no padding");
 
 /**
- * @brief Object creation and descriptor flags
+ * @brief Object creation and descriptor flags.
  */
-#define VM_OBJ_F_MUTABLE 0x01
-#define VM_OBJ_F_UPD_RESETABLE 0x02
-#define VM_OBJ_F_RETENTIVE 0x04
+#define VM_OBJ_F_MUTABLE (1u << 0)
+#define VM_OBJ_F_UPD_RESETABLE (1u << 1)
+#define VM_OBJ_F_RETENTIVE (1u << 2)
 
+// Same bits, wire-side names.
 #define VM_LOAD_F_MUTABLE VM_OBJ_F_MUTABLE
 #define VM_LOAD_F_UPD_RESETABLE VM_OBJ_F_UPD_RESETABLE
 #define VM_LOAD_F_RETENTIVE VM_OBJ_F_RETENTIVE
@@ -203,19 +176,8 @@ static __always_inline uint16_t vm_obj_items_cnt(vm_obj_h obj) {
 }
 
 /**
- * @brief Address of element `i`, or NULL if `i` is past the end or the object
- *        has no usable type.
- *
- * Works in byte offsets rather than item counts. `off = i << shift` gives the
- * address, and comparing that same `off` against payload_size gives the bounds
- * check -- so one shift does both. Deriving a count first and then multiplying
- * by the width costs an extra shift, a table load for the width, and a `mull`
- * (5 cycles on Xtensa) to arrive at the identical address.
- *
- * `i` is 32-bit: a by-ref index comes out of an object and can hold anything
- * the program put there. The >UINT16_MAX rejection is what keeps `i << 3` from
- * wrapping into a small offset and turning a wild index into a silent in-range
- * read -- payload_size is 16-bit, so nothing legitimate is lost.
+ * @brief Address of element `i`, or NULL if `i` is past the end, `t` is not a
+ *        real type, or `i` exceeds UINT16_MAX.
  */
 static __always_inline uint8_t* vm_obj_elem_ptr(vm_obj_h obj, uint32_t i) {
   uint8_t t = obj->head.d.obj_t;

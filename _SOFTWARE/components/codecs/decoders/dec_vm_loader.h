@@ -92,6 +92,7 @@
 #include "esp_log.h"
 #include "sys_error.h"
 #include "vm_loader.h"
+#include "vm_sub.h"
 
 #undef OWNER
 #define OWNER OWNER_DEC_VM_LOADER
@@ -112,6 +113,7 @@
 #define HEADER_packet_vm_add_acc 0x44
 #define HEADER_packet_vm_add_block 0x45
 #define HEADER_packet_vm_add_section 0x46
+#define HEADER_packet_vm_subscribe 0x47
 
 // little-endian readers -- the cursor is a raw byte stream, so nothing here
 // may assume the alignment a struct cast would imply
@@ -294,6 +296,16 @@ static inline err_h decoder_packet_vm_set_data(const uint8_t* body, size_t len) 
   return NULL;
 }
 
+/** @brief 0x47 -- subscribe to a list of object IDs for update telemetry. */
+static inline err_h decoder_packet_vm_subscribe(const uint8_t* body, size_t len) {
+  SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_subscribe, 0, len, 1));
+  uint8_t n = body[0];
+  if (n > 0) {
+    SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_subscribe, 1, len, (size_t)n * 2u));
+  }
+  return vm_sub_handle_packet(body, len);
+}
+
 /**
  * @brief Class handler for VM_LOADER_CLASS_HEADER (0x04).
  *
@@ -325,6 +337,8 @@ static inline err_h dec_vm_loader_decode(const uint8_t* data, size_t len) {
       return decoder_packet_vm_add_block(body, body_len);
     case HEADER_packet_vm_add_section:
       return decoder_packet_vm_add_section(body, body_len);
+    case HEADER_packet_vm_subscribe:
+      return decoder_packet_vm_subscribe(body, body_len);
     default:
       ESP_LOGW(DEC_VM_LOADER_TAG, "unknown packet header 0x%02X", data[0]);
       SE_RET_ERR(ERR_INTERFACE_UNKNOWN_PACKET, .class_header = VM_LOADER_CLASS_HEADER, .packet_header = data[0]);

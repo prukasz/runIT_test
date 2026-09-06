@@ -402,7 +402,7 @@ The fixes, in the order they matter:
 1. **`vm_resolve_fast()` moved into the header** (`__always_inline`). The three literal shapes resolve as straight-line code with the type and pointer live in registers. No call, no window rotation, no struct round-trip.
 2. **`VM_LOAD_CAST_TO()` fuses load and convert** into one dispatch, replacing read-then-cast. `vm_payload_read()` remains for callers that hold a value rather than an address.
 3. **`vm_obj_elem_ptr()` works in byte offsets.** `off = i << shift` is both the address and — compared against `payload_size` — the bounds check. No count, no width lookup, no multiply.
-4. **`VM_OBJ_SHIFT_PACK`** replaces the shift table with a literal. Two bits per type in one immediate, and every valid width is `1 << shift`, so the size table leaves the hot path too.
+4. ~~**`VM_OBJ_SHIFT_PACK`** replaces the shift table with a literal.~~ **Reverted.** Two bits per type in one immediate looked like it dodged a flash-mapped `.rodata` load, but `0x00030A88` does not fit a `movi` either — so the pack did its own `l32r` and the only thing it actually traded was one `l8ui` for `srl` + `extui` + a second `ssr`. Two more instructions and two SAR writes per shift. Re-measured on hardware after the revert: the table is **736 bytes** smaller *and* slightly faster on the bench, so the data-cache argument only bites on a cold line — nine bytes touched on every element access stay resident. `vm_obj_type_shifts[]` is back, widened to 16 entries so the lookup is total over the 4-bit `obj_t` field — which the pack was and a 9-entry table would not have been.
 
 A float read of `flat[i]` now ends in a single `lsi f0, a11, 0`, and the binary got *smaller* despite the inlining, because a fused switch is less code than two.
 

@@ -37,7 +37,7 @@ Pin configs and device id / adresses shall not be changed
    --------------------------------------------------------------------------- */
 #define RUNIT_SKIP_DEVICE_INIT 1
 #define RUNIT_ENABLE_VM_SELFTEST 1
-#define RUNIT_ENABLE_VM_BENCH 1
+#define RUNIT_ENABLE_VM_BENCH 0
 
 #define RUNIT_BOARD_POWER_LIMIT_MV 21000
 #define RUNIT_BOARD_POWER_LIMIT_MA 5500

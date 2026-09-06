@@ -18,16 +18,23 @@ Object Access & Resolution Layer:
   - Fast-write: VM_OBJ_SET_VAL() / VM_OBJ_SET_VAL_AT() stores directly with upd flag latching.
 */
 
+/** @brief vm_accessor_t.flags bit: a resolved payload is cached in c_owner/c_payload. */
+#define VM_ACC_F_CACHED 0x01u
+
+// ---------------------------------------------------------------------------
+// id -> object, and vm_payload_t: where a resolved value lives
+// ---------------------------------------------------------------------------
+
 static __always_inline vm_obj_h vm_obj_by_id(uint16_t id) {
   return (vm_obj_h)vm_store_get(VM_REG_OBJ, id);
 }
 
 /** @brief Where a value lives: address in arena, element count, type. (8 bytes). */
 typedef struct vm_payload_t {
-  void* ptr;       // NULL when unresolved (4 bytes)
-  uint16_t count;  // number of `type` elements available at ptr (2 bytes)
-  uint8_t type;    // vm_obj_t_e (1 byte)
-  uint8_t _pad;    // (1 byte)
+  void* ptr;       // NULL when unresolved
+  uint16_t count;  // number of `type` elements available at ptr
+  uint8_t type;    // vm_obj_t_e
+  uint8_t _pad;
 } vm_payload_t;
 
 _Static_assert(sizeof(vm_payload_t) == 8, "vm_payload_t must be 8 bytes");
@@ -60,7 +67,6 @@ static __always_inline vm_payload_t vm_obj_as_payload(vm_obj_h obj) {
       .ptr = obj->payload,
       .count = vm_obj_items_cnt(obj),
       .type = (uint8_t)obj->head.d.obj_t,
-      ._pad = 0,
   };
 }
 
@@ -87,8 +93,6 @@ typedef struct {
 } vm_index_t;
 
 #define VM_IDX_BY_NAME(str) {.kind = VM_IDX_NAME, .name_len = (uint8_t)(sizeof(str) - 1), .name = (str)}
-
-#define VM_ACC_F_CACHED 0x01u
 
 struct vm_accessor_t {
   uint16_t id;                // root object's id in registry
@@ -166,9 +170,14 @@ static __always_inline bool vm_resolve_fast(const vm_accessor_t* acc, bool for_w
 // Out-of-Line Entry Points (vm_obj_access.c)
 // ---------------------------------------------------------------------------
 
+// -- Read --
+
 err_h vm_obj_get_payload(vm_payload_t* target, const vm_accessor_t* source);
 err_h vm_get_obj(vm_obj_h* target, const vm_accessor_t* source);
 vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag);
+
+// -- Copy & Clone --
+
 /* How deep a copy will follow a pointer tree, and why there is a cap at all:
    a tree assembled from a packet is not guaranteed acyclic, so the bound is
    what turns a cycle into an error instead of a stack overflow. Same reason
@@ -199,16 +208,23 @@ err_h vm_obj_clone_shape(vm_obj_h* out, vm_obj_h src);
  *  destination first if what is there does not match. Allocates only on a
  *  shape change; steady state is the same walk vm_obj_copy_content() does. */
 err_h vm_obj_clone_into(const vm_accessor_t* source, const vm_accessor_t* target);
-err_h vm_obj_link(const vm_accessor_t* to_join, const vm_accessor_t* owner);
+
+// -- Scalar write --
+
 err_h vm_obj_set_scalar(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type);
+static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t index, vm_val_t v, vm_obj_t_e src_type);
 void vm_obj_clear_quiet(vm_obj_h obj);
 
-static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t index, vm_val_t v, vm_obj_t_e src_type);
+// -- Link --
+
+err_h vm_obj_link(const vm_accessor_t* to_join, const vm_accessor_t* owner);
 err_h vm_obj_link_direct(vm_obj_h cell, uint16_t index, vm_obj_h child);
 
 // ---------------------------------------------------------------------------
 // Value Conversion
 // ---------------------------------------------------------------------------
+
+// -- Read: raw scalar extraction --
 
 static __always_inline vm_val_t vm_payload_read(vm_payload_t p) {
   vm_val_t v = {0};
@@ -320,6 +336,8 @@ int64_t vm_read_as_i64(vm_obj_t_e type, const void* src);
     }                                                                                                                         \
   } while (0)
 
+// -- Write: store into a resolved slot --
+
 static __always_inline err_h vm_store_inline(vm_obj_h owner, vm_payload_t slot, vm_val_t v, vm_obj_t_e src_type, uint16_t err_id) {
   if (likely(slot.type == src_type)) {
     switch (src_type) {
@@ -381,6 +399,8 @@ static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t ind
   // VM_ID_NONE, not 0: this path was handed a handle, and 0 is a real accessor id
   return vm_store_inline(obj, (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0}, v, src_type, VM_ID_NONE);
 }
+
+// -- Public macros: one call to resolve, convert and read or write --
 
 #define VM_TYPE_OF(x) _Generic((x), uint8_t: VM_OBJ_U8, int8_t: VM_OBJ_I32, char: VM_OBJ_U8, uint16_t: VM_OBJ_U32, int16_t: VM_OBJ_I32, uint32_t: VM_OBJ_U32, int32_t: VM_OBJ_I32, uint64_t: VM_OBJ_U64, int64_t: VM_OBJ_U64, float: VM_OBJ_F, double: VM_OBJ_F, bool: VM_OBJ_B, default: VM_OBJ_NONE)
 

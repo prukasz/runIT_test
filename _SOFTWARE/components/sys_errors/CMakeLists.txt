@@ -24,6 +24,7 @@ idf_component_register(
                  # codecs is header-only and REQUIRES sys_errors, so pulling in the
                  # error encoder as a plain include dir avoids a component cycle.
                  "../codecs/encoders"
+                 "../devices/devices/include"
     REQUIRES esp_ringbuf
     PRIV_REQUIRES utils ble
 )

@@ -1,6 +1,8 @@
-idf_component_register(SRCS "runit.c" "vm_selftest.c" "vm_bench.c"
-                    INCLUDE_DIRS "include"
-                    REQUIRES freertos log device_gpio_esp device_pca9685 sys_i2c sys_device sys_io sys_errors sys_power device_tca6424a device_tps55289 device_ina3221 device_dac53202 device_ap33772s device_ads7128 ble sys_interface codecs sys_actions VM)
+file(GLOB SELFTEST_SRCS "${CMAKE_CURRENT_LIST_DIR}/selftest/*.c")
+
+idf_component_register(SRCS "runit.c" "vm_bench.c" ${SELFTEST_SRCS}
+                    INCLUDE_DIRS "include" "selftest"
+                    REQUIRES freertos log devices sys_i2c sys_device sys_io sys_errors sys_power ble sys_interface codecs sys_actions VM)
 
 # Matches the VM component's own -O2 (see components/VM/CMakeLists.txt). The
 # benchmark's raw-C baseline lives in this file, so compiling it at the

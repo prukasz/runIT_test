@@ -9,8 +9,13 @@
 #include "sys_interface.h"
 #include "vm_bench.h"
 #include "vm_selftest.h"
+#include "vm_sub.h"
 
 static const char* TAG = "runit_app";
+
+static err_h runit_sub_ble_sender(const uint8_t* data, size_t len) {
+  return sys_ble_char_send(SYS_BLE_CHR_RUNIT_TX, PACKET_HEADER_TX, data, len, true);
+}
 
 #if RUNIT_SKIP_DEVICE_INIT
 /* Stands in for runit_at_boot so action 0 still resolves -- see the switch's
@@ -64,7 +69,8 @@ void runit_start(void) {
   // recording tap are boot-only, not safe against a running RX pump.
   SE_ORIGIN_CALL(sys_actions_init());
   SE_ORIGIN_CALL(sys_interface_bind_ble_rx(SYS_BLE_CHR_RUNIT_RX, RUNIT_BLE_RX_FRAME_MAX));
-  // runit_test_pca9685_start();
+  SE_ORIGIN_CALL(vm_sub_init());
+  vm_sub_set_sender(runit_sub_ble_sender);
   ESP_LOGI(TAG, "runIT boot sequence complete");
 #if RUNIT_ENABLE_VM_SELFTEST
   /* After sys_interface_init() so class 0x04 is registered -- the test
