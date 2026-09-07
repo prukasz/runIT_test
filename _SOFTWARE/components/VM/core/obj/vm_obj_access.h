@@ -24,7 +24,6 @@ Object Access & Resolution Layer:
 // ---------------------------------------------------------------------------
 // id -> object, and vm_payload_t: where a resolved value lives
 // ---------------------------------------------------------------------------
-
 static __always_inline vm_obj_h vm_obj_by_id(uint16_t id) {
   return (vm_obj_h)vm_store_get(VM_REG_OBJ, id);
 }
@@ -390,7 +389,6 @@ static __always_inline err_h vm_store_inline(vm_obj_h owner, vm_payload_t slot, 
   owner->head.f.upd = 1;
   return NULL;
 }
-
 static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t index, vm_val_t v, vm_obj_t_e src_type) {
   if (unlikely(obj == NULL)) return vm_obj_null_obj_err();
   if (unlikely(!obj->head.f.mutable)) return vm_obj_not_mutable_err(obj);

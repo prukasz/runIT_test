@@ -1,7 +1,9 @@
 #pragma once
 
+//Add device owner code here 
 #include "devices_owners.h"
 
+//Include all devices headers here so they are globally available
 #include "device_ads7128.h"
 #include "device_ap33772s.h"
 #include "device_dac53202.h"

@@ -9,23 +9,27 @@ Linear block layout:
 Inputs use accessors (NULL if unwired constant); outputs hold direct vm_obj_h.
 */
 
+#define VM_BLOCK_MAX_IN  16
+#define VM_BLOCK_MAX_OUT 16
+#define VM_BLOCK_MAX_EN  16
+
 /** @brief How a block combines its enable sources. */
-#define VM_BLK_EN_ANY 0u  // Enabled if *any* source is (OR / branch merge)
-#define VM_BLK_EN_ALL 1u  // Enabled only if *every* source is (AND / conditions)
+#define VM_BLK_EN_ANY 0x00u  // OR / branch merge
+#define VM_BLK_EN_ALL 0x01u  // AND / conditions
 
 /** @brief What a failing block body does to the flow below it. */
-#define VM_BLK_ERR_STOP 0u      // Publish false ENO -- downstream self-skips
-#define VM_BLK_ERR_CONTINUE 1u  // Report and carry on
+#define VM_BLK_ERR_STOP     0x00u  // Publish false ENO, downstream self-skips
+#define VM_BLK_ERR_CONTINUE 0x01u  // Report and carry on
 
 /* Runtime flags (cfg.rt) latched per call (cleared before dispatch) or sticky. */
-#define VM_BLK_RT_TRIGGERED 0x01u  // Fresh data arrived on an input (latched by vm_block_triggered)
-#define VM_BLK_RT_SPAN      0x02u  // Block took over execution range (vm_block_claim_span)
+#define VM_BLK_RT_TRIGGERED (1u << 0u)  // Fresh data arrived on an input (latched by vm_block_triggered)
+#define VM_BLK_RT_SPAN      (1u << 1u)  // Block took over execution range (vm_block_claim_span)
 /* Sticky, and for any block type: the block's own custom_data is malformed for
    what its type expects. A standing condition -- the same bytes are wrong on
    every pass -- so the bit exists to report it once per load rather than at
    scan rate. The supervisor never reads it; the block that set it does. */
-#define VM_BLK_RT_CFG_BAD   0x40u
-#define VM_BLK_RT_SPAN_BAD  0x80u  // Sticky: malformed span reported once per load
+#define VM_BLK_RT_CFG_BAD   (1u << 6u)
+#define VM_BLK_RT_SPAN_BAD  (1u << 7u)  // Sticky: malformed span reported once per load
 
 #define VM_BLK_RT_PER_CALL (VM_BLK_RT_TRIGGERED | VM_BLK_RT_SPAN)
 
@@ -48,7 +52,7 @@ typedef struct vm_block_data_t {
     uint8_t  rt;          // [10]   Runtime status bits (VM_BLK_RT_*)
     /* [11] 1 byte alignment padding before pointer */
     vm_obj_h eno;         // [12..15] Output ENO object (NULL if none)
-  } cfg;
+  } cfg;  
   uint8_t data[];
 } vm_block_data_t;
 
@@ -58,10 +62,6 @@ typedef vm_block_data_t* vm_block_h;
 
 /** @brief Block execution handler signature. Indexed by block_type in g_vm_blocks table. */
 typedef void (*vm_block_fn)(vm_block_h);
-
-#define VM_BLOCK_MAX_IN  16
-#define VM_BLOCK_MAX_OUT 16
-#define VM_BLOCK_MAX_EN  16
 
 /** @brief Block by ID from registry (NULL past end). */
 static inline vm_block_h vm_block_by_id(uint16_t id) {

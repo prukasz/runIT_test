@@ -1,6 +1,9 @@
 #pragma once
+/*
+Add here device in style OWNER_DEVICE_<device_name>, keep id num prefix as 0xD0XX
+String in macro is for debug printfs
+*/
 
-// Owner-only map for provider components
 #define PROVIDER_OWNER_MAP(X)                               \
   X(OWNER_DEVICE_BASE, 0xD000, "OWNER_DEVICE_BASE")         \
   X(OWNER_DEVICE_GPIO_ESP, 0xD001, "OWNER_DEVICE_GPIO_ESP") \
