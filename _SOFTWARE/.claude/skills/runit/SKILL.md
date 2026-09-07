@@ -105,3 +105,12 @@ Run this command from the project root (`_SOFTWARE`), directly in PowerShell —
 ```powershell
 . C:\esp\v6.0.1\esp-idf\export.ps1; idf.py -p COM<X> flash monitor
 ```
+
+### clangd Setup (per machine)
+`.clangd` (tracked in git) configures the shared parts, but `.vscode/` is gitignored, so each machine needs its own `clangd.arguments` once:
+```json
+{
+    "clangd.arguments": ["--query-driver=C:/Espressif/tools/**"]
+}
+```
+Without this, clangd doesn't recognize `xtensa-esp32s3-elf-gcc.exe` and silently falls back to its native-host target (MSVC on Windows) instead of asking the real cross toolchain for its target triple, defines, and system include dirs. That mismatch is what produces spurious errors like `Unknown type name '__always_inline'` or `Use of undeclared identifier 'uint8_t'` in headers that pull in newlib/picolibc (`sys/cdefs.h`, `stdint.h`, ...) — those aren't real bugs, just clangd parsing under the wrong target. `C:/Espressif/tools/**` is the ESP-IDF installer's default Windows tools path and matches any toolchain version under it, so this one glob survives toolchain upgrades. After adding it, reload the clangd extension (or restart VS Code).

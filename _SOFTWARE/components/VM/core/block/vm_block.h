@@ -50,11 +50,10 @@ typedef struct vm_block_data_t {
     uint8_t  on_error;    // [7]    VM_BLK_ERR_STOP / _CONTINUE
     uint16_t custom_len;  // [8..9] Private custom_data byte length
     uint8_t  rt;          // [10]   Runtime status bits (VM_BLK_RT_*)
-    /* [11] 1 byte alignment padding before pointer */
     vm_obj_h eno;         // [12..15] Output ENO object (NULL if none)
   } cfg;  
   uint8_t data[];
-} vm_block_data_t;
+} vm_block_data_t;  
 
 _Static_assert(sizeof(struct vm_block_data_t) == 16, "custom_len and rt must stay inside the alignment padding before `eno`");
 
