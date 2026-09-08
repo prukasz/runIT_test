@@ -49,18 +49,17 @@ typedef enum vm_load_state_e {
 
 /* Flag bits for loader objects are defined in vm_obj.h (VM_OBJ_F_* / VM_LOAD_F_*). */
 
-/** @brief Tear down whatever is loaded. Safe to call at any time, including
- *  on a failed or abandoned upload -- it leaves the VM in the fail-closed
- *  state rather than half-built. */
+/** @brief Control-task lifecycle boundary: wait for execution to quiesce,
+ * clear runtime/subscriptions and both allocation domains, and leave stopped.
+ * Never call from a block or a telemetry sample callback. */
 void vm_loader_reset(void);
 
 /**
  * @brief Reserve storage for a program.
  *
- * Resets first, so an upload that starts over mid-stream cannot end up mixing
- * two programs. The arena is capped at @p total_size rather than the whole
- * pool, so a program that under-declares its own size fails at the object
- * that overruns instead of quietly borrowing space it never asked for.
+ * Quiesces execution, validates and reserves the new pool, then replaces the
+ * program and clears subscriptions/runtime state. On failure the old storage,
+ * loader state and run mode survive. On success execution remains stopped.
  *
  * @return err_h ERR_VM_LOAD_TOO_BIG if total_size exceeds the pool,
  *         ERR_BASE_NO_MEM if the id registries do not fit inside it.
@@ -83,6 +82,8 @@ err_h vm_loader_add_obj(uint16_t id, const vm_obj_head_t* head, const char* name
 
 /**
  * @brief Fill part of an object's payload.
+ * Load-time initialization only, with execution stopped. This can initialize
+ * immutable/protected values; it is not the user runtime mutation API.
  *
  * For a VM_OBJ_PTR parent, @p data is a list of little-endian uint16 child
  * ids -- never raw pointers, which mean nothing off-device -- and each is

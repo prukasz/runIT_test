@@ -81,7 +81,11 @@ err_h vm_block_create(vm_block_h* out, uint16_t id, const vm_block_cfg_t* cfg) {
   }
 
   vm_obj_h* outs = vm_block_outputs(b);
-  for (uint8_t i = 0; i < cfg->q_cnt; i++) outs[i] = vm_obj_by_id(cfg->out_obj_ids[i]);
+  for (uint8_t i = 0; i < cfg->q_cnt; i++) {
+    outs[i] = vm_obj_by_id(cfg->out_obj_ids[i]);
+    outs[i]->head.f.usr_protected = 1;
+  }
+  if (eno) eno->head.f.usr_protected = 1;
 
   const vm_accessor_t** ens = vm_block_en_list(b);
   for (uint8_t i = 0; i < cfg->en_cnt; i++) ens[i] = vm_accessor_by_id(cfg->en_acc_ids[i]);

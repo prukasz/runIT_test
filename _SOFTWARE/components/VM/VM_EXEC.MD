@@ -483,12 +483,11 @@ a corrupt declared size.
 Three enforcement points, all with the state already in place and the check
 missing.
 
-**`usr_mutable` guards objects user logic must not write** — a block's own ENO or
-result. The flag is set at load and stored in the header, but nothing reads it:
-`vm_resolve_fast()` and `resolve_d()` check `mutable` only, so a user-authored Set
-block can currently write another block's ENO. Enforcing it means the write path
-has to know who is asking — internal writes check `mutable`, user-authored and
-remote writes check `usr_mutable` as well.
+**`usr_protected` guards objects user logic must not write.** Block construction
+sets it on output objects and ENO. Internal APIs require `mutable`; SET and CLONE
+use the `_usr` mutation boundary, which also rejects protected destinations.
+Protection applies to each written object, with whole-copy validation before
+any writes. The reserved header bit preserves existing defined wire bits.
 
 **On-error behaviour is a per-block flag** — `cfg.on_error`, `VM_BLK_ERR_STOP`
 (publish a false ENO, so everything downstream self-skips) or
@@ -534,6 +533,19 @@ and outputs do not move.
 
 ### Lifecycle
 
+The implemented ownership and mutation rules are in
+[VM_OBJ_CONTRACTS.md](core/obj/VM_OBJ_CONTRACTS.md). Reset and open use a lifecycle
+barrier: stop admitting passes, release a frozen pass, and wait for the active
+pass to finish before reclaiming handles. Successful replacement clears dynamic
+objects, subscriptions, registries, and runtime state and leaves execution
+stopped. Failure to reserve a new pool preserves the prior program and run mode.
+Lifecycle calls belong to the control task, never to a block or sample hook.
+
+Clone publishes a replacement only after building and filling it. Matching
+schemas include field names and reuse storage after write-policy preflight.
+Field writes mark their owner; a producer explicitly publishes its containing
+message when the aggregate is complete. There is no implicit parent propagation.
+
 * **Live patch** of data-only objects while running — applied at the drain point,
   same as an override. Structural change is a full reload.
 * **Retention** is per-value, either automatic (simplified) or hand-picked.
@@ -555,7 +567,7 @@ and outputs do not move.
 | Sections | ~~do not exist~~ | **done** — `vm_section_t` = `[start, end)` over the global order, `VM_REG_SEC`, packet `0x46`; atomic units for freeze/resume, *not* schedules |
 | Non-activation | ~~nothing~~ | **done** — `vm_block_set_ENO(b, false)` and nothing else: outputs keep their values, ENO drops quietly, and the `upd` sweep withdraws freshness |
 | `block_type` | ~~copied, only used in error payloads~~ | **done** — `vm_exec_check_block_type()` at load refuses a type no function claims; nothing else is described yet |
-| `usr_mutable` | ~~set at load, read by nobody~~ | **done** — `vm_obj_set_scalar_usr()` / `_direct_usr()` / `vm_obj_copy_content_usr()` |
+| User write protection | reserved header bit | **done** — `usr_protected`, producer output protection, `_usr` scalar/copy/clone/link APIs |
 | Watchdog | ~~nothing~~ | **done** — volatile `(seq << 16) | block_id`, sampled by a 20 ms `esp_timer` (task-dispatch, not ISR — see [[VM.MD]]) |
 | Clock | ~~nothing references one~~ | **done** — in `vm_exec.h`: `vm_clock_us()` live, `vm_now_ms()` latched per pass so a pass is one instant |
 | Dispatch | ~~`block_type` stored, nothing reads it~~ | **done** — one `static const` table in flash, indexed by `block_type`; one `.c` per block type still to write |

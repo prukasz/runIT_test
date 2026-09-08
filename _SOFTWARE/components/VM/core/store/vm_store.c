@@ -2,6 +2,7 @@
 #include <string.h>
 #include "esp_compiler.h"
 #include "esp_heap_caps.h"
+#include "vm_obj_dyn.h"
 
 #define OWNER OWNER_VM_STORE
 
@@ -33,6 +34,9 @@ static void* arena_carve(vm_alloc_t* a, uint32_t size) {
 }
 
 void vm_store_reset(void) {
+  // The store owns both allocation domains. Never leave heap objects from an
+  // old program behind when arena handles and accessor caches are discarded.
+  vm_obj_dyn_reset();
   for (int r = 0; r < VM_REG_CNT; r++) {
     g_vm_store.reg[r].items = NULL;
     g_vm_store.reg[r].count = 0;
@@ -48,6 +52,12 @@ err_h vm_store_open(uint32_t total_size, const uint16_t counts[VM_REG_CNT]) {
 
   if (total_size == 0 || total_size > VM_STORE_MAX_POOL) {
     SE_RET_ERR(ERR_VM_LOAD_TOO_BIG, .requested = total_size, .available = VM_STORE_MAX_POOL);
+  }
+
+  uint32_t registry_bytes = 0;
+  for (int r = 0; r < VM_REG_CNT; r++) registry_bytes += (uint32_t)counts[r] * sizeof(void*);
+  if (registry_bytes > total_size) {
+    SE_RET_ERR(ERR_VM_LOAD_TOO_BIG, .requested = registry_bytes, .available = total_size);
   }
 
   // Allocate before tearing down the old pool, so a failed load leaves the

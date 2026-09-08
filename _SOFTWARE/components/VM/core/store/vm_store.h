@@ -83,10 +83,10 @@ static inline void* vm_store_get(vm_reg_e r, uint16_t id) {
 }
 
 /**
- * @brief Detach every registry, then reset the arena. Order matters: for the
- * instant between, every id resolves to NULL, so nothing can follow a
- * pointer into memory about to be handed out again. Safe at any time,
- * including on a failed or abandoned load.
+ * @brief Reclaim dynamic objects, detach every registry, then free the arena.
+ * Requires quiescent execution: use vm_loader_reset() from firmware control
+ * code, which waits for passes and clears subscriptions/runtime state as well.
+ * Every raw handle and cached accessor expires; only fresh ID lookups are safe.
  */
 void vm_store_reset(void);
 
@@ -94,8 +94,9 @@ void vm_store_reset(void);
  * @brief Allocate a pool of exactly @p total_size, then build the registries.
  *
  * Pool is heap-allocated per load (not reserved statically), and the new
- * pool is allocated **before** the old one is freed -- a load that fails to
- * get memory leaves the running program untouched.
+ * pool is allocated **before** the old one is freed; registry capacity is
+ * validated first. Failure leaves old storage intact. This low-level API
+ * requires quiescent execution; firmware uses vm_loader_open().
  *
  * @param total_size Bytes the program says it needs, registries included.
  * @param counts One id count per vm_reg_e, in enum order. Zero is legal.

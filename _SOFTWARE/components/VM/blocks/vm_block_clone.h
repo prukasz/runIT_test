@@ -17,11 +17,11 @@ its own hanging off it. That is what a Set cannot do, because a Set has to be
 told the destination's shape at build time, and a tree that arrived off the
 wire does not have one until it arrives.
 
-Allocation happens on a shape change and nowhere else. The first pass builds
+Allocation happens on a schema change, including tag identity. The first pass builds
 the tree; every pass after that finds a destination that already matches and
 copies values into it, which is the same allocation-free walk a Set does. A
-source whose shape genuinely varies pays one build each time it changes, and
-the tree it replaces is released by the pointer slot that stops naming it --
+source whose schema varies pays one build each time it changes. The replacement
+is filled before publication, and the previous tree is then released by its slot --
 see slot_store() in vm_obj_access.c, where reference counts move.
 
 The clone is heap-backed (vm_obj_dyn), because the arena cannot free and this
@@ -65,7 +65,7 @@ static inline void vm_blk_clone(vm_block_h b) {
       b->cfg.rt |= VM_BLK_RT_TRIGGERED;
 
       IF_BLOCK_ENABLED(b) {
-        BLOCK_CALL(vm_obj_clone_into(src, cell), b);
+        BLOCK_CALL(vm_obj_clone_into_usr(src, cell), b);
         if (likely(!g_vm_block_fault)) {
           vm_block_set_ENO(b, true);
           return;

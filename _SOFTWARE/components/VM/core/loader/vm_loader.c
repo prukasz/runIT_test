@@ -1,6 +1,7 @@
 #include "vm_loader.h"
 #include <string.h>
 #include "vm_exec.h"
+#include "vm_sub.h"
 
 #define OWNER OWNER_VM_LOADER
 
@@ -10,22 +11,23 @@ static err_h require_state(vm_load_state_e want) {
   if (s_state != want) {
     SE_RET_ERR(ERR_VM_LOAD_BAD_STATE, .state = (uint8_t)s_state, .expected = (uint8_t)want);
   }
+  if (vm_exec_mode() != VM_RUN_STOPPED) {
+    SE_RET_ERR(ERR_VM_LOAD_RUNNING, .mode = (uint8_t)vm_exec_mode());
+  }
   return NULL;
 }
 
 void vm_loader_reset(void) {
-  /* The supervisor holds two runtime mechanisms: the event queue snapshot,
-     and a watchdog tracker. Reset first so nothing is processing while the
-     store is released. */
+  (void)vm_exec_program_lock();
   vm_exec_reset();
-  // registries first, then the arena -- vm_store_reset() owns that ordering
+  vm_sub_reset();
   vm_store_reset();
   s_state = VM_LOAD_EMPTY;
+  vm_exec_program_unlock(VM_RUN_STOPPED);
 }
 
 err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint16_t sec_cnt, uint32_t total_size) {
-  s_state = VM_LOAD_EMPTY;
-  vm_exec_reset();
+  vm_run_mode_e previous = vm_exec_program_lock();
 
   const uint16_t counts[VM_REG_CNT] = {
       [VM_REG_OBJ] = obj_cnt,
@@ -33,9 +35,16 @@ err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint1
       [VM_REG_BLK] = blk_cnt,
       [VM_REG_SEC] = sec_cnt,
   };
-  SE_RET_IF_ERR(vm_store_open(total_size, counts));
+  err_h e = vm_store_open(total_size, counts);
+  if (e) {
+    vm_exec_program_unlock(previous);
+    return e;
+  }
 
+  vm_exec_reset();
+  vm_sub_reset();
   s_state = VM_LOAD_OPEN;
+  vm_exec_program_unlock(VM_RUN_STOPPED);
   return NULL;
 }
 

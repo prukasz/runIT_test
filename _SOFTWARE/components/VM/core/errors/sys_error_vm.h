@@ -62,7 +62,10 @@
   X(ERR_VM_EVENT_OVERFLOW, struct { uint16_t type; uint16_t depth; uint16_t dropped; })                               \
   X(ERR_VM_EXPR_BAD_CODE, struct { uint16_t block_idx; uint16_t pc; uint8_t opcode; uint8_t reason; })                \
   X(ERR_VM_EXPR_MATH, struct { uint16_t block_idx; uint16_t pc; uint8_t opcode; uint8_t reason; })                    \
-  X(ERR_VM_FOR_BAD_LOOP, struct { uint16_t block_idx; uint32_t turns; uint16_t cap; uint8_t reason; })
+  X(ERR_VM_FOR_BAD_LOOP, struct { uint16_t block_idx; uint32_t turns; uint16_t cap; uint8_t reason; }) \
+  X(ERR_VM_OBJ_OWNERSHIP, struct { uint8_t reason; uint8_t limit; }) \
+  X(ERR_VM_OBJ_USR_PROTECTED, struct { void* obj; }) \
+  X(ERR_VM_LOAD_RUNNING, struct { uint8_t mode; })
 
 /**
  * @brief Human-readable descriptions for the VM tags - see
@@ -114,7 +117,18 @@
   X(ERR_VM_EVENT_OVERFLOW)         \
   X(ERR_VM_EXPR_BAD_CODE)          \
   X(ERR_VM_EXPR_MATH)              \
-  X(ERR_VM_FOR_BAD_LOOP)
+  X(ERR_VM_FOR_BAD_LOOP) \
+  X(ERR_VM_OBJ_OWNERSHIP) \
+  X(ERR_VM_OBJ_USR_PROTECTED) \
+  X(ERR_VM_LOAD_RUNNING)
+
+#define LOG_BODY_ERR_VM_LOAD_RUNNING(p, out, out_size) \
+  snprintf((out), (out_size), "program initialization requires stopped execution (mode %u)", (p)->mode)
+
+#define LOG_BODY_ERR_VM_OBJ_OWNERSHIP(p, out, out_size) \
+  snprintf((out), (out_size), "dynamic ownership: %s (depth limit %u)", (p)->reason == 0 ? "cycle" : "too deep", (p)->limit)
+#define LOG_BODY_ERR_VM_OBJ_USR_PROTECTED(p, out, out_size) \
+  snprintf((out), (out_size), "object is protected from user writes (obj=%p)", (p)->obj)
 
 #define LOG_BODY_ERR_VM_ALLOC_EXHAUSTED(p, out, out_size) \
   snprintf((out), (out_size), "vm arena exhausted: requested %lu, %lu remaining", (unsigned long)(p)->requested, (unsigned long)(p)->remaining)

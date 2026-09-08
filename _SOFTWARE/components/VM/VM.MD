@@ -10,8 +10,8 @@ Three properties shape every decision in this component:
 
 * **No dynamic allocation after load** — with one deliberate exception. The pool is heap-allocated once per upload, sized by the program itself; from then until the next upload every allocation is a bump within it. Individual objects are never freed; replacing a program resets the whole arena and rebuilds. This removes lifetime tracking, fragmentation and the allocation-failure path from the runtime entirely.
 
-  The exception is `VM_BLK_CLONE`, which builds its destination on the heap through `vm_obj_dyn` because the arena cannot free and a clone has to be replaceable. It is confined in two ways: a program containing no Clone still cannot allocate, and a Clone only allocates when its source **changes shape** — a destination that already matches is filled in place, so the steady state is as allocation-free as everything else. Lifetime is the pointer slot's: `slot_store()` retains the incoming child and releases the outgoing one, so the tree a Clone replaces is freed by the cell that stopped naming it.
-* **Structure is fixed at load; only values change at runtime.** Nothing — not a remote write, not a block — can alter an object's type, size, flags or name after it is created. Reshaping the graph means uploading a new program.
+  The exception is `VM_BLK_CLONE`, which builds its destination on the heap through `vm_obj_dyn`. It allocates when the source schema changes, including tag identity. A matching destination is validated and refilled in place. Replacements are built and filled before publication, then the old tree is released. Dynamic owning links are shared, acyclic, and depth-bounded.
+* **Each object's schema and permission flags are fixed after load.** Values, pointer links, and freshness can change at runtime. Clone replaces objects when a message schema changes; it never resizes an existing object. Block construction protects its output objects before execution starts.
 * **Everything from the wire is untrusted.** Ids, counts, offsets and lengths arriving in an upload packet are validated before they reach storage, and the whole load path returns `err_h` chains rather than sentinels.
 
 ### Directory Map
@@ -54,7 +54,7 @@ components/VM/
         └── vm_loader.h/.c      # load state machine, wire-facing validation
 ```
 
-The groups are stacked bottom-up: `errors` and `store` are depended on by everything, `obj` builds on `store`, `block` on `obj`, `exec` on `block`, and `loader` drives all of them.
+The groups are stacked bottom-up: `obj` builds on `store`, `block` on `obj`, and `exec` on `block`. The loader owns the program lifecycle. The store's teardown also calls the dynamic allocator so resetting storage always reclaims both allocation domains.
 
 `blocks/` sits outside `core/` and depends on it, never the reverse. The supervisor dispatches through the *declaration* of `g_vm_blocks` in `vm_exec.h` and never learns what is in it — which is what keeps `core/` free of `sys_io`, `sys_actions` and every other driver a real block will pull in.
 
@@ -66,23 +66,28 @@ The upload decoder table (`dec_vm_loader.h`, class `0x04`) lives in `components/
 
 ## Object Model
 
+The current lifetime, ownership, schema, write-policy, and publication contracts
+are specified in [VM_OBJ_CONTRACTS.md](core/obj/VM_OBJ_CONTRACTS.md).
+
 An object is a fixed 4-byte header followed by a flexible payload:
 
 ```c
-typedef struct __packed vm_obj_head_t {
+typedef struct __attribute__((aligned(4))) vm_obj_head_t {
   uint16_t payload_size;      // value length in bytes
   struct { uint8_t obj_t : 4; uint8_t name_size : 4; } d;
   struct {
     uint8_t mutable : 1;      // anything may write it
-    uint8_t usr_mutable : 1;  // user logic / remote writes may write it
-    uint8_t upd : 1;          // value changed since last read by telemetry
+    uint8_t upd : 1;          // published this pass
     uint8_t upd_resetable : 1;
     uint8_t tagged : 1;       // name present
     uint8_t retentive : 1;    // persist to NVS
+    uint8_t dynamic : 1;      // registered heap allocation
+    uint8_t usr_protected : 1;// user writes denied; internal writes still allowed
+    uint8_t _pad : 1;
   } f;
 } vm_obj_head_t;              // _Static_assert'd at 4 bytes
 
-typedef struct __packed vm_obj_t { vm_obj_head_t head; uint8_t payload[]; } vm_obj_t;
+typedef struct vm_obj_t { vm_obj_head_t head; uint8_t payload[]; } vm_obj_t;
 typedef vm_obj_t* vm_obj_h;   // opaque handle, same convention as err_h
 ```
 
@@ -185,7 +190,7 @@ An accessor and its index array are one allocation: identical lifetimes, always 
 
 **A `VM_IDX_REF` target must already exist when the referencing index is written.** That makes reference cycles impossible to *construct*, which is a stronger guarantee than `VM_ACCESSOR_MAX_DEPTH` catching them at resolve time.
 
-**No resolution cache.** Once item counts became a shift, an unchained resolve costs about what checking a cache stamp would. Caching only pays on multi-level PTR chains, and spending ~24 bytes per accessor across every pin to speed up the rare shape is the wrong trade. If chain-heavy programs ever show up in profiling, the invalidation hook is `vm_obj_link()`.
+**Only stable addresses are cached.** Whole-object and single-literal root accessors qualify. Deeper chains follow links live and never cache a replaceable child's address. Every arena accessor, including its cache, expires with its program.
 
 ### Reading and writing
 
@@ -210,7 +215,7 @@ Float→integer conversion **rounds and saturates** (`vm_f_to_i`). A plain cast 
 | `vm_obj_copy_content(src, dst)` | bulk copy; same type and count at every leaf, PTR arrays walked pairwise (deep, allocation-free) |
 | `vm_obj_link(join, owner)` / `vm_obj_link_direct(cell, idx, child)` | point a PTR slot at an object |
 
-Every successful write sets the target's `upd` flag and honours `mutable`.
+Every ordinary successful write sets the owning object's `upd` flag and honors `mutable`; user APIs also reject `usr_protected`. Copy validates the entire destination before committing. Clone additionally publishes its holder on both replacement and refill. Scalar writes do not propagate freshness to ancestors: use `vm_obj_publish()` after completing an aggregate update. `vm_obj_clear_quiet()` deliberately does not publish freshness.
 
 ### Writing a block — what you have to remember
 
@@ -312,7 +317,7 @@ All multi-byte fields little-endian. Design points:
 * **For a `VM_OBJ_PTR` object, `0x43` data is a list of u16 child ids**, resolved through the table and linked. Children must therefore be created by an earlier `0x42`.
 * `open` caps the arena at the **declared** `total_size` rather than the pool, so a program that under-declares then overruns fails on the object that overruns instead of silently borrowing space.
 
-`vm_loader_reset()` detaches the table *before* resetting the arena, so for the whole teardown→load window every id resolves to NULL and accessors and late callbacks fail closed rather than into the previous program's storage. An abandoned or failed upload lands in the same safe state for free.
+`vm_loader_reset()` first prevents new passes and waits for the current pass to return. It then clears execution state and subscriptions and resets both allocation domains. IDs resolve to NULL afterwards; raw handles and cached accessors have expired and must not be reused by callbacks.
 
 The class is registered in `sys_interface_init()` — see [[SYS_INTERFACE.MD]].
 
@@ -562,7 +567,7 @@ The accessor is the one that expresses it differently: `indices` is a *pointer* 
 
 ### Step by step
 
-**0x40 — reset.** `vm_loader_reset()` calls `vm_store_reset()`, which detaches all three registries *before* resetting the arena. For the instant in between, every id resolves to NULL, so an accessor or a late callback finds nothing rather than storage about to be handed out again.
+**0x40 — reset.** `vm_loader_reset()` owns the complete lifecycle: stop pass admission, wait for active execution, reset execution and subscriptions, then reset dynamic objects, four registries, and the arena. It returns with execution stopped. Transport callbacks remain installed, but no program handle survives.
 
 **0x41 — open.** Resets first, so an upload that restarts mid-stream cannot mix two programs. `total_size` is checked against the pool (`ERR_VM_LOAD_TOO_BIG`, carrying requested-vs-available), then the arena is capped at the **declared** size rather than the whole pool — a program that under-declares fails on the object that overruns, which points at the bug, instead of quietly borrowing space it never asked for. Both id tables are bump-allocated and zeroed. State becomes `VM_LOAD_OPEN`.
 
@@ -1047,13 +1052,19 @@ Overflow — more than `VM_EVENT_DEPTH` in one cycle — drops the newest and
 raises `ERR_VM_EVENT_OVERFLOW`. Events dropped by the *drain* for want of a
 taker are normal, and silent.
 
-### `usr_mutable`, finally read
+### User write protection
 
-`mutable` is "may be written at all"; `usr_mutable` is "may be written by *user
-logic*". A block's own ENO is the first and not the second, so a Set block the
-user drew cannot forge another block's flow. Internal writes keep using
-`vm_obj_set_scalar()`; user-authored and remote writes go through the `_usr`
-forms, which check both.
+`mutable` permits internal writes; `usr_protected` additionally denies user
+writes. Block construction sets protection on outputs and ENO. SET and CLONE
+use `_usr` APIs, which check each written object's policy before mutation.
+Producer blocks use internal APIs. Protection is object-local, so separately
+allocated children need their own flag if they are also producer-owned.
+
+Protection uses previously reserved bit 6 in the header flag byte. Existing
+defined wire bits and the four-byte header are unchanged. The construction
+helper accepts `VM_OBJ_F_USR_PROTECTED`; zero means no extra user restriction.
+Initialization packets remain load-only and are refused while execution runs;
+they are not a runtime remote-write API.
 
 ---
 
@@ -1089,7 +1100,7 @@ Note the app **partition** is 1 MB (`CONFIG_PARTITION_TABLE_SINGLE_APP`), not th
 
 ## Design Notes & Known Limitations
 
-* **Everything below the self test is covered.** `vm_selftest` covers object, accessor, loader layers, blocks, EN/ENO, and performance benchmarks.
+* **Self-tests cover the object, accessor, loader, block, and execution layers.** Stage `OBJ` adds ownership, transactional mutation, schema identity, protection, and teardown regressions. Benchmarks require remeasurement after these contract changes; test coverage is not a guarantee of exhaustive input coverage.
 * **The palette is seven blocks deep, and the engine is finished.** `EXPR`/`EXPR_BIT` (compute), `IF`/`SWITCH` (flow), `FOR` (spans), `SET` (the explicit Copy) and `CLONE` (Copy that builds its destination) are real; the seven placeholders in `blocks/vm_blocks_dummy.c` still stand in for every other shape. `FOR` was the last block that reaches into `core/exec/` — everything remaining is a leaf that only reads pins and calls out — so the supervisor is not expected to change again for the palette's sake.
 * **Nothing in `blocks/` touches a driver yet**, so the `blocks/ → core/`, never-the-reverse boundary is asserted but not exercised. The first IO block is what tests it, and it is also where the open question sits: whether a device block calls its driver synchronously inside the section or stages the write for a freeze point.
 * **The pass clock has no users.** `vm_now_ms()` is built and documented; no block is stateful in time yet. Timers (`TON`/`TOF`/`TP`) and edge detectors are the first.
@@ -1109,7 +1120,7 @@ Note the app **partition** is 1 MB (`CONFIG_PARTITION_TABLE_SINGLE_APP`), not th
 **Header helpers** — `vm_obj_total_size()`, `vm_obj_payload_size()`, `vm_obj_type_size()`, `vm_type_width()`, `vm_obj_items_cnt()`, `vm_obj_tag()`, `vm_obj_payload()`
 **Store** — `vm_store_open()`, `vm_store_alloc()`, `vm_store_get()`, `vm_store_reset()`, `vm_store_used()`, `vm_store_capacity()`
 **Access** — `vm_obj_by_id()`, `vm_accessor_by_id()`, `vm_obj_get_payload()`, `vm_get_obj()`, `vm_obj_set_scalar()`, `vm_obj_set_scalar_direct()`, `vm_obj_copy_content()`, `vm_obj_shape_matches()`, `vm_obj_clone_shape()`, `vm_obj_clone_into()`, `vm_obj_link()`, `vm_obj_link_direct()`, `vm_obj_clear_quiet()`, `vm_payload_at()`, `vm_obj_as_payload()`, `vm_payload_read()`
-**User-authored / remote writes** (check `usr_mutable` as well as `mutable`) — `vm_obj_set_scalar_usr()`, `vm_obj_set_scalar_direct_usr()`, `vm_obj_copy_content_usr()`
+**User mutation** (require `mutable` and reject `usr_protected`) — `vm_obj_set_scalar_usr()`, `vm_obj_set_scalar_direct_usr()`, `vm_obj_copy_content_usr()`, `vm_obj_clone_into_usr()`, `vm_obj_link_usr()`, `vm_obj_publish_usr()`
 **Macros** — `VM_OBJ_GET_VAL()`, `VM_OBJ_SET_VAL()`, `VM_OBJ_SET_VAL_AT()`, `VM_OBJ_SET_VAL_USR()`, `VM_OBJ_SET_VAL_AT_USR()`, `VM_PAYLOAD_GET_VAL()`, `VM_VAL_CAST_TO()`
 **Blocks** — `vm_block_get_in()`, `vm_block_get_out()`, `vm_block_is_enabled()`, `vm_block_triggered()`, `vm_block_input_fresh()`, `vm_block_set_ENO()`, `vm_block_span()`, `vm_block_claim_span()`, `vm_block_inputs()`, `vm_block_outputs()`, `vm_block_en_list()`, `vm_block_custom_data()`, `vm_block_size()`, `IF_BLOCK_ENABLED()`, `IF_BLOCK_TRIGGERED()`, `BLOCK_CALL()`
 **Dispatch** — `vm_block_fn_for()`, `vm_exec_check_block_type()`, `vm_exec_use_blocks()`

@@ -46,6 +46,41 @@ static volatile vm_run_mode_e s_mode = VM_RUN_STOPPED;
 static uint32_t s_pass_cnt;
 static uint32_t s_last_pass_us;
 static uint8_t s_span_depth;
+static portMUX_TYPE s_program_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_program_locked;
+static bool s_pass_active;
+
+/* Control-task boundary. A complete pass must release every local handle before
+   its program can be freed. Setting STOPPED also releases a frozen pass. */
+vm_run_mode_e vm_exec_program_lock(void) {
+  vm_run_mode_e previous;
+  for (;;) {
+    portENTER_CRITICAL(&s_program_mux);
+    if (!s_program_locked) {
+      s_program_locked = true;
+      previous = s_mode;
+      s_mode = VM_RUN_STOPPED;
+      portEXIT_CRITICAL(&s_program_mux);
+      break;
+    }
+    portEXIT_CRITICAL(&s_program_mux);
+    vTaskDelay(1);
+  }
+  for (;;) {
+    portENTER_CRITICAL(&s_program_mux);
+    bool active = s_pass_active;
+    portEXIT_CRITICAL(&s_program_mux);
+    if (!active) return previous;
+    vTaskDelay(1);
+  }
+}
+
+void vm_exec_program_unlock(vm_run_mode_e mode) {
+  portENTER_CRITICAL(&s_program_mux);
+  s_mode = mode;
+  s_program_locked = false;
+  portEXIT_CRITICAL(&s_program_mux);
+}
 
 /* ==========================================================================
    Block watchdog
@@ -294,6 +329,14 @@ void vm_exec_run_range(uint16_t start, uint16_t end) {
 }
 
 void vm_exec_pass(void) {
+  portENTER_CRITICAL(&s_program_mux);
+  if (s_program_locked || s_pass_active ||
+      (vm_exec_task_h && xTaskGetCurrentTaskHandle() == vm_exec_task_h && s_mode == VM_RUN_STOPPED)) {
+    portEXIT_CRITICAL(&s_program_mux);
+    return;
+  }
+  s_pass_active = true;
+  portEXIT_CRITICAL(&s_program_mux);
   uint64_t t0 = vm_clock_us();
   g_vm_pass_ms = t0 / 1000u;
 
@@ -333,6 +376,9 @@ void vm_exec_pass(void) {
 
   s_last_pass_us = (uint32_t)(vm_clock_us() - t0);
   s_pass_cnt++;
+  portENTER_CRITICAL(&s_program_mux);
+  s_pass_active = false;
+  portEXIT_CRITICAL(&s_program_mux);
 }
 
 /* ==========================================================================
@@ -349,7 +395,9 @@ static void vm_exec_task(void* arg) {
 
     vm_exec_pass();
 
-    if (s_mode == VM_RUN_STEP) s_mode = VM_RUN_FROZEN;
+    portENTER_CRITICAL(&s_program_mux);
+    if (!s_program_locked && s_mode == VM_RUN_STEP) s_mode = VM_RUN_FROZEN;
+    portEXIT_CRITICAL(&s_program_mux);
 
     /* One tick per pass. taskYIELD() would not do: ESP-IDF watches the idle
        task of core 1 as well as core 0, and idle runs at priority 0, so
@@ -384,11 +432,13 @@ err_h vm_exec_start(void) {
 }
 
 void vm_exec_stop(void) {
-  s_mode = VM_RUN_STOPPED;
+  vm_exec_set_mode(VM_RUN_STOPPED);
 }
 
 void vm_exec_set_mode(vm_run_mode_e mode) {
-  s_mode = mode;
+  portENTER_CRITICAL(&s_program_mux);
+  if (!s_program_locked) s_mode = mode;
+  portEXIT_CRITICAL(&s_program_mux);
 }
 
 vm_run_mode_e vm_exec_mode(void) {
@@ -414,4 +464,6 @@ void vm_exec_reset(void) {
   s_wd_word = 0;
   s_wd_last = 0;
   g_vm_block_fault = false;
+  g_vm_pass_ms = 0;
+  vm_exec_reset_stats();
 }

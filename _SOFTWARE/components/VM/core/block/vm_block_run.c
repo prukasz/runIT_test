@@ -37,7 +37,7 @@ static inline bool pin_fresh(const vm_accessor_t* acc) {
   }
 
   vm_obj_h o = NULL;
-  if (vm_get_obj(&o, acc) != NULL || !o) return false;
+  if (vm_obj_get_owner(&o, acc) != NULL || !o) return false;
   return o->head.f.upd != 0;
 }
 

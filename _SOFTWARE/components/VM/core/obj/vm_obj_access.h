@@ -149,9 +149,9 @@ static __always_inline bool vm_resolve_fast(const vm_accessor_t* acc, bool for_w
 
   if (n == 2) {
     if (unlikely(idx[1].kind != VM_IDX_LITERAL || (uint8_t)obj->head.d.obj_t != VM_OBJ_PTR)) return false;
-    uint32_t off = idx[0].value << 2;
-    if (unlikely(off >= obj->head.payload_size)) return false;
-    obj = *(vm_obj_h*)(obj->payload + off);
+    uint8_t* cell = vm_obj_elem_ptr(obj, idx[0].value);
+    if (unlikely(!cell)) return false;
+    obj = *(vm_obj_h*)cell;
     if (unlikely(obj == NULL)) return false;
   }
 
@@ -173,6 +173,8 @@ static __always_inline bool vm_resolve_fast(const vm_accessor_t* acc, bool for_w
 
 err_h vm_obj_get_payload(vm_payload_t* target, const vm_accessor_t* source);
 err_h vm_get_obj(vm_obj_h* target, const vm_accessor_t* source);
+/** @brief Object owning the addressed bytes; never follows a trailing PTR. */
+err_h vm_obj_get_owner(vm_obj_h* target, const vm_accessor_t* source);
 vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag);
 
 // -- Copy & Clone --
@@ -189,13 +191,19 @@ vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag);
 #define VM_COPY_SHAPE_SRC_EMPTY 1u  // source slot unwired, target holds an object
 #define VM_COPY_SHAPE_DST_EMPTY 2u  // target slot unwired, source holds an object
 
+/** @brief Validate the entire destination, then copy without allocating.
+ * Failure preserves destination values and freshness. Requires single-writer
+ * execution; overlapping source leaves follow deterministic slot order. */
 err_h vm_obj_copy_content(const vm_accessor_t* source, const vm_accessor_t* target);
 
 /** @brief Do these two trees have the same shape -- same type and element
  *  count at every level, and the same wired/unwired slots? True means
- *  vm_obj_copy_content() can move values between them without building
- *  anything, which is what lets a Clone allocate only when the shape changed. */
+ *  the storage shapes agree; write permissions are validated separately.
+ *  Tags are deliberately excluded. Clone reuse uses schema_matches instead. */
 bool vm_obj_shape_matches(vm_obj_h a, vm_obj_h b);
+
+/** @brief Storage shape plus tag identity at every node, for Clone reuse. */
+bool vm_obj_schema_matches(vm_obj_h a, vm_obj_h b);
 
 /** @brief Build a dynamic tree shaped like `src`, values left zero.
  *  Reference count zero -- owned by nothing until a pointer slot takes it, so
@@ -204,9 +212,25 @@ bool vm_obj_shape_matches(vm_obj_h a, vm_obj_h b);
 err_h vm_obj_clone_shape(vm_obj_h* out, vm_obj_h src);
 
 /** @brief Copy `source` into the pointer cell `target` names, building the
- *  destination first if what is there does not match. Allocates only on a
- *  shape change; steady state is the same walk vm_obj_copy_content() does. */
+ *  destination first if its schema (including tags) differs. Fill completes
+ *  before replacement releases the old tree; failures preserve the old slot.
+ *  A matching destination is preflighted and refilled, then its holder published. */
 err_h vm_obj_clone_into(const vm_accessor_t* source, const vm_accessor_t* target);
+
+/* User mutation boundary. Protected objects remain readable; internal producer
+   APIs above still honor mutable. A protection check applies to each object
+   actually written, not to containers merely traversed by an accessor. */
+err_h vm_obj_set_scalar_usr(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type);
+err_h vm_obj_set_scalar_direct_usr(vm_obj_h obj, uint16_t index, vm_val_t v, vm_obj_t_e src_type);
+err_h vm_obj_copy_content_usr(const vm_accessor_t* source, const vm_accessor_t* target);
+err_h vm_obj_clone_into_usr(const vm_accessor_t* source, const vm_accessor_t* target);
+err_h vm_obj_link_usr(const vm_accessor_t* child, const vm_accessor_t* target);
+
+/** @brief Explicit aggregate publication, after a successful field update.
+ * Scalar writes mark their owner only; copy marks the destination subtree;
+ * Clone additionally marks its holder. No implicit ancestor propagation. */
+err_h vm_obj_publish(vm_obj_h obj);
+err_h vm_obj_publish_usr(vm_obj_h obj);
 
 // -- Scalar write --
 
@@ -289,6 +313,12 @@ float vm_read_as_f32(vm_obj_t_e type, const void* src);
 int32_t vm_read_as_i32(vm_obj_t_e type, const void* src);
 int64_t vm_read_as_i64(vm_obj_t_e type, const void* src);
 
+static __always_inline uint64_t vm_load_u64(const void* src) {
+  uint64_t v;
+  memcpy(&v, src, sizeof(v));
+  return v;
+}
+
 #define VM_LOAD_CAST_TO(dst_ptr, type, src)                                                                                                     \
   do {                                                                                                                                          \
     const void* __lc_s = (const void*)(src);                                                                                                    \
@@ -296,8 +326,8 @@ int64_t vm_read_as_i64(vm_obj_t_e type, const void* src);
     *(dst_ptr) = (__typeof__(*(dst_ptr)))_Generic(*(dst_ptr),                                                                                   \
         float: (likely(__lc_t == VM_OBJ_F) ? *(const float*)__lc_s : vm_read_as_f32(__lc_t, __lc_s)),                                           \
         double: (likely(__lc_t == VM_OBJ_F) ? (double)*(const float*)__lc_s : (double)vm_read_as_f32(__lc_t, __lc_s)),                          \
-        int64_t: (likely(__lc_t == VM_OBJ_U64) ? *(const int64_t*)__lc_s : vm_read_as_i64(__lc_t, __lc_s)),                                     \
-        uint64_t: (likely(__lc_t == VM_OBJ_U64) ? *(const uint64_t*)__lc_s : (uint64_t)vm_read_as_i64(__lc_t, __lc_s)),                         \
+        int64_t: (likely(__lc_t == VM_OBJ_U64) ? (int64_t)vm_load_u64(__lc_s) : vm_read_as_i64(__lc_t, __lc_s)),                                \
+        uint64_t: (likely(__lc_t == VM_OBJ_U64) ? vm_load_u64(__lc_s) : (uint64_t)vm_read_as_i64(__lc_t, __lc_s)),                              \
         int32_t: (likely(__lc_t == VM_OBJ_I32 || __lc_t == VM_OBJ_U32) ? *(const int32_t*)__lc_s : vm_read_as_i32(__lc_t, __lc_s)),             \
         uint32_t: (likely(__lc_t == VM_OBJ_U32 || __lc_t == VM_OBJ_I32) ? *(const uint32_t*)__lc_s : (uint32_t)vm_read_as_i32(__lc_t, __lc_s)), \
         default: vm_read_as_i32(__lc_t, __lc_s));                                                                                               \
@@ -451,6 +481,9 @@ static __always_inline err_h vm_obj_set_scalar_direct(vm_obj_h obj, uint16_t ind
 
 /** @brief Write scalar `source` straight into an owned output object. */
 #define VM_OBJ_SET_VAL_AT(source, obj, index) vm_obj_set_scalar_direct((obj), (index), VM_VAL_OF(source), VM_TYPE_OF(source))
+
+#define VM_OBJ_SET_VAL_USR(source, target) vm_obj_set_scalar_usr((target), VM_VAL_OF(source), VM_TYPE_OF(source))
+#define VM_OBJ_SET_VAL_AT_USR(source, obj, index) vm_obj_set_scalar_direct_usr((obj), (index), VM_VAL_OF(source), VM_TYPE_OF(source))
 
 /** @brief Read one converted scalar out of an already-resolved payload. */
 #define VM_PAYLOAD_GET_VAL(output, payload)                     \

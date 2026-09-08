@@ -73,7 +73,7 @@ static inline void vm_blk_set(vm_block_h b) {
       b->cfg.rt |= VM_BLK_RT_TRIGGERED;  // same meaning vm_block_triggered() latches
 
       IF_BLOCK_ENABLED(b) {
-        BLOCK_CALL(vm_obj_copy_content(src, dst), b);
+        BLOCK_CALL(vm_obj_copy_content_usr(src, dst), b);
         if (likely(!g_vm_block_fault)) {
           vm_block_set_ENO(b, true);
           return;

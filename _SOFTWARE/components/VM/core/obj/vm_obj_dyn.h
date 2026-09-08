@@ -10,6 +10,10 @@
  * rejected cleanly instead of consuming DRAM until something unrelated fails.
  */
 #define VM_DYN_MAX 128
+#define VM_DYN_MAX_DEPTH 16  // maximum dynamic nodes on an ownership path
+
+#define VM_OWNERSHIP_CYCLE 0u
+#define VM_OWNERSHIP_DEPTH 1u
 
 /** @brief "Not in the register" -- what vm_obj_dyn_id() returns for an object
  *  that is not registered, including every arena object. */
@@ -34,6 +38,7 @@ static inline bool vm_obj_is_dynamic(vm_obj_h o) {
 /**
  * @brief This object's slot in the register, or VM_DYN_NO_ID.
  *
+ * Requires a live object handle (or NULL); never call with a released handle.
  * Found by comparing pointers, which is why nothing is bolted onto the object
  * itself: a dynamic object is byte-for-byte an ordinary vm_obj_t, and free()
  * takes the handle directly.
@@ -82,13 +87,18 @@ err_h vm_obj_dyn_create(vm_obj_h* out, const vm_obj_head_t* head, const char* na
  *  pointer slot. No-op on an arena object, so link paths need no type test. */
 void vm_obj_dyn_retain(vm_obj_h o);
 
+/** @brief Validate the proposed pointer-slot replacement without mutating it.
+ * Dynamic-to-dynamic edges own references and must form a bounded DAG. Arena
+ * edges are independent program-lifetime roots, not recursive ownership. */
+err_h vm_obj_dyn_check_link(vm_obj_h owner, vm_obj_h* cell, vm_obj_h child);
+
 /** @brief Drop a reference -- called when a parent's slot stops pointing here.
  *  At zero the object leaves the register and is freed, releasing its own
  *  dynamic children as it goes and leaving arena children alone. No-op on an
  *  arena object. The only correct way to dispose of a dynamic object. */
 void vm_obj_dyn_release(vm_obj_h o);
 
-/** @brief Free every live dynamic object, reference counts ignored. Must run
- *  before vm_store_reset() tears the pool down, since the parents holding these
- *  objects live in it. */
+/** @brief Allocator teardown primitive, called by vm_store_reset() before
+ *  releasing the arena. Invalidates every dynamic handle, regardless of count.
+ *  Runtime callers use vm_loader_reset(), which also quiesces execution. */
 void vm_obj_dyn_reset(void);

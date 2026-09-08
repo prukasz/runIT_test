@@ -413,8 +413,9 @@ void test_dynamic_objects(void) {
   ck("two references counted", vm_obj_dyn_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_id(d)].ref_cnt == 2);
   vm_obj_dyn_release(d);
   ck("one release leaves it alive", vm_obj_dyn_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_id(d)].ref_cnt == 1);
+  uint16_t d_id = vm_obj_dyn_id(d);
   vm_obj_dyn_release(d);
-  ck("the last release frees it and clears the slot", vm_obj_dyn_id(d) == VM_DYN_NO_ID);
+  ck("the last release frees it and clears the slot", vm_obj_dyn_get(d_id) == NULL);
 
   /* A parent releasing must take its dynamic children with it, and leave any
      arena child alone -- one tree can hold both. */
@@ -438,8 +439,9 @@ void test_dynamic_objects(void) {
   }
   ck("tree registered", vm_obj_dyn_id(parent) != VM_DYN_NO_ID && vm_obj_dyn_id(kid_a) != VM_DYN_NO_ID && vm_obj_dyn_id(kid_b) != VM_DYN_NO_ID);
 
+  uint16_t parent_id = vm_obj_dyn_id(parent), kid_a_id = vm_obj_dyn_id(kid_a), kid_b_id = vm_obj_dyn_id(kid_b);
   vm_obj_dyn_release(parent);
-  ck("releasing the parent frees both dynamic children", vm_obj_dyn_id(parent) == VM_DYN_NO_ID && vm_obj_dyn_id(kid_a) == VM_DYN_NO_ID && vm_obj_dyn_id(kid_b) == VM_DYN_NO_ID);
+  ck("releasing the parent frees both dynamic children", !vm_obj_dyn_get(parent_id) && !vm_obj_dyn_get(kid_a_id) && !vm_obj_dyn_get(kid_b_id));
   ck("the arena child survives the cascade", vm_obj_by_id(0) == arena && arena->head.f.dynamic == 0);
 
   // the register is a bound, and hitting it is a clean rejection

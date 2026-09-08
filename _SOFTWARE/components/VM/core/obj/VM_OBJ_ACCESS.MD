@@ -1,5 +1,8 @@
 # vm_obj.h + vm_obj_access.h — Public API Reference
 
+Lifetime, permissions, failure atomicity, and freshness are defined in
+[VM_OBJ_CONTRACTS.md](VM_OBJ_CONTRACTS.md).
+
 Internal-only helpers are left out: `vm_obj.h`'s two lookup tables, and
 `vm_obj_access.h`'s raw scalar-conversion primitives (`vm_payload_read`,
 `vm_f_to_i`, `VM_VAL_CAST_TO`, `vm_read_as_f32/i32/i64`, `VM_LOAD_CAST_TO`,
@@ -22,7 +25,7 @@ of these are meant to be called directly; they exist to back
 | Symbol | Meaning |
 | :--- | :--- |
 | `VM_OBJ_NAME_MAX` | Longest tag a 4-bit `name_size` can hold (15). |
-| `VM_OBJ_F_MUTABLE` / `_UPD_RESETABLE` / `_RETENTIVE` | Flags for `vm_obj_head()`'s `flags` param. |
+| `VM_OBJ_F_MUTABLE` / `_UPD_RESETABLE` / `_RETENTIVE` / `_USR_PROTECTED` | Flags for `vm_obj_head()`'s `flags` param. |
 | `VM_LOAD_F_MUTABLE` / `_UPD_RESETABLE` / `_RETENTIVE` | Same bits, wire-side names. |
 
 ### Functions
@@ -73,17 +76,22 @@ of these are meant to be called directly; they exist to back
 | `vm_obj_as_payload(obj)` | A whole object as a payload. |
 | `vm_resolve_fast(acc, for_write, out)` | Inline resolve for cached/root/shallow accessors; `false` on miss (fall back to the entries below). |
 | `vm_obj_get_payload(target, source)` | Resolve an accessor to where its value lives. |
+| `vm_obj_get_owner(target, source)` | Object owning the addressed bytes; does not follow a trailing pointer slot. |
 | `vm_get_obj(target, source)` | Resolve an accessor to the object itself (follows a trailing PTR). |
 | `vm_obj_find_child(parent, tag)` | Child of a PTR array by tag, or NULL. |
 | `vm_obj_copy_content(source, target)` | Copy one payload/tree into another of matching shape. |
 | `vm_obj_shape_matches(a, b)` | Do two trees agree on type/count/wiring at every level? |
+| `vm_obj_schema_matches(a, b)` | Storage shape plus tag identity at every level; Clone's reuse predicate. |
 | `vm_obj_clone_shape(out, src)` | Allocate a dynamic tree shaped like `src`, values left zero. |
-| `vm_obj_clone_into(source, target)` | Copy into a pointer cell, (re)building it only on a shape change. |
+| `vm_obj_clone_into(source, target)` | Refill a matching schema, or build and fill before publishing its replacement. |
 | `vm_obj_set_scalar(target, v, src_type)` | Resolve an accessor and write one converted scalar. |
 | `vm_obj_set_scalar_direct(obj, index, v, src_type)` | Write one converted scalar straight into an owned object. |
 | `vm_obj_clear_quiet(obj)` | Zero a non-PTR object's payload without setting `upd`. |
 | `vm_obj_link(to_join, owner)` | Point an accessor-resolved PTR slot at another accessor's object. |
 | `vm_obj_link_direct(cell, index, child)` | Point element `index` of `cell` at `child` directly. |
+| `vm_obj_set_scalar_usr()` / `vm_obj_set_scalar_direct_usr()` | Scalar writes requiring mutable and not user-protected. |
+| `vm_obj_copy_content_usr()` / `vm_obj_clone_into_usr()` / `vm_obj_link_usr()` | User mutation boundary used by user-authored blocks. |
+| `vm_obj_publish(obj)` / `vm_obj_publish_usr(obj)` | Explicit aggregate freshness after a successful update; honors write policy. |
 
 ### Macros — the everyday calling surface
 
@@ -92,4 +100,5 @@ of these are meant to be called directly; they exist to back
 | `VM_OBJ_GET_VAL(output, source)` | Resolve `source` and store one converted scalar into `output`. |
 | `VM_OBJ_SET_VAL(source, target)` | Resolve `target` and write `source` into it, converting. |
 | `VM_OBJ_SET_VAL_AT(source, obj, index)` | Write `source` straight into `obj[index]`. |
+| `VM_OBJ_SET_VAL_USR(source, target)` / `VM_OBJ_SET_VAL_AT_USR(source, obj, index)` | User-write counterparts requiring an unprotected target. |
 | `VM_PAYLOAD_GET_VAL(output, payload)` | Convert an already-resolved payload into `output`. |

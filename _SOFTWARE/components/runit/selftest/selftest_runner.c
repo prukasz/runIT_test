@@ -133,6 +133,7 @@ void add_obj_record_raw(uint16_t id, uint16_t payload_size, uint8_t type, uint8_
   head.f.mutable = (flags & VM_LOAD_F_MUTABLE) != 0;
   head.f.upd_resetable = (flags & VM_LOAD_F_UPD_RESETABLE) != 0;
   head.f.retentive = (flags & VM_LOAD_F_RETENTIVE) != 0;
+  head.f.usr_protected = (flags & VM_LOAD_F_USR_PROTECTED) != 0;
   f_blob(&head, sizeof(head));
   if (name && head.d.name_size) f_str(name);
 }
@@ -191,6 +192,7 @@ void test_names_and_accessor_build(void);
 void test_access_edges(void);
 void test_strings(void);
 void test_resolution_cache(void);
+void test_object_contracts(void);
 
 // Group 2: Loader & Wire Protocol
 void test_upload(void);
@@ -227,6 +229,7 @@ static const selftest_stage_t s_stages[] = {
     {"K", "resolution cache", test_resolution_cache, true},
     {"I", "access edges", test_access_edges, true},
     {"J", "string objects", test_strings, true},
+    {"OBJ", "ownership, schema and mutation contracts", test_object_contracts, true},
 
     // Group 2: Loader & Wire Protocol
     {"L", "upload protocol", test_upload, true},
@@ -282,7 +285,6 @@ void vm_selftest_run(void) {
     }
   }
 
-  vm_obj_dyn_reset();
   vm_loader_reset();
 
   int total_pass = selftest_get_pass();

@@ -105,9 +105,8 @@ void vm_obj_init(vm_obj_h o, const vm_obj_head_t* head, const char* name);
    Accessor construction
 
    Same shape as the object side: create each accessor, bind it to an id, fill
-   its indices by position. The index array is a flexible array member, so it
-   comes out of the same chunk as the header -- one allocation, and the walk
-   computes the address rather than loading a pointer.
+   its indices by position. The indices pointer addresses trailing storage in
+   the same allocation as the header, and expires with that arena allocation.
 
    `VM_IDX_REF` takes an already-built accessor rather than an id on purpose:
    requiring the target to exist before the referencing index is written makes

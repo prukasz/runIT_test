@@ -214,8 +214,15 @@ void vm_exec_set_sample_hook(void (*hook)(void));
 /**
  * @brief Drop everything the supervisor holds across a program.
  *
- * Called by the loader alongside vm_store_reset(): the event queue routes at
- * block ids, and the watchdog names one, so both are talking about a program
- * that is about to stop existing. Leaves the mode alone.
+ * Called by the loader while holding the program lifecycle barrier, after
+ * all active passes have returned. Clears events, watchdog state, clock, and
+ * statistics; mode is selected when the caller releases the barrier.
  */
 void vm_exec_reset(void);
+
+/** @brief Lifecycle barrier for the control task, never a block/sample callback.
+ * Prevent new passes and wait until the current pass has released its handles.
+ * Return the prior mode, so failed replacement can resume the old program.
+ * Pair with unlock; successful reset/open unlocks with VM_RUN_STOPPED. */
+vm_run_mode_e vm_exec_program_lock(void);
+void vm_exec_program_unlock(vm_run_mode_e mode);

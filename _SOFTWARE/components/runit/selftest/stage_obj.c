@@ -1206,9 +1206,13 @@ void test_resolution_cache(void) {
   uint32_t a = 0, b = 0;
   ck("cached and uncached agree", twin_built && VM_OBJ_GET_VAL(a, elem) == NULL && VM_OBJ_GET_VAL(b, twin) == NULL && a == b);
 
-  // rebuilding after the object is gone must drop the entry, not keep a stale one
-  ck("cache_build clears the flag when the object is gone", (vm_store_reset(), !vm_accessor_cache_build(elem)) && (elem->flags & VM_ACC_F_CACHED) == 0);
-  ck("a dropped cache falls back to failing closed", VM_OBJ_GET_VAL(v, elem) != NULL);
+  // A program's accessor is freed with its arena. Use a caller-owned copy to
+  // exercise rebuilding, rather than dereferencing the reclaimed accessor.
+  vm_accessor_t detached = *elem;
+  vm_index_t detached_index = elem->indices[0];
+  detached.indices = &detached_index;
+  ck("cache_build clears the flag when the object is gone", (vm_store_reset(), !vm_accessor_cache_build(&detached)) && (detached.flags & VM_ACC_F_CACHED) == 0);
+  ck("a dropped cache falls back to failing closed", VM_OBJ_GET_VAL(v, &detached) != NULL);
   ck("cache_build survives NULL", !vm_accessor_cache_build(NULL));
 }
 

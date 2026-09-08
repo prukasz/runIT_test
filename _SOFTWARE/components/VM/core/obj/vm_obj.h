@@ -84,8 +84,9 @@ typedef struct __attribute__((aligned(4))) vm_obj_head_t {
     uint8_t upd_resetable : 1;  // can flag be reset
     uint8_t tagged : 1;         // is name field populated
     uint8_t retentive : 1;      // should be stored in nvs - requires type of non-prt
-    uint8_t dynamic : 1;        // heap-allocated behind a vm_dyn_hdr_t, freed at refcount zero -- see vm_obj_dyn.h
-    uint8_t _pad : 2;
+    uint8_t dynamic : 1;        // registered heap allocation, freed at refcount zero -- see vm_obj_dyn.h
+    uint8_t usr_protected : 1;  // user writes denied; internal producer writes still use mutable
+    uint8_t _pad : 1;
   } f;
 } vm_obj_head_t;
 
@@ -113,11 +114,13 @@ _Static_assert(offsetof(vm_obj_t, payload) == 4, "payload must follow the head w
 #define VM_OBJ_F_MUTABLE (1u << 0)
 #define VM_OBJ_F_UPD_RESETABLE (1u << 1)
 #define VM_OBJ_F_RETENTIVE (1u << 2)
+#define VM_OBJ_F_USR_PROTECTED (1u << 3)
 
 // Same bits, wire-side names.
 #define VM_LOAD_F_MUTABLE VM_OBJ_F_MUTABLE
 #define VM_LOAD_F_UPD_RESETABLE VM_OBJ_F_UPD_RESETABLE
 #define VM_LOAD_F_RETENTIVE VM_OBJ_F_RETENTIVE
+#define VM_LOAD_F_USR_PROTECTED VM_OBJ_F_USR_PROTECTED
 
 /**
  * @brief Construct a vm_obj_head_t descriptor from parameters.
@@ -138,6 +141,7 @@ static __always_inline vm_obj_head_t vm_obj_head(vm_obj_t_e type, uint16_t item_
   h.f.mutable = (flags & VM_OBJ_F_MUTABLE) != 0;
   h.f.upd_resetable = (flags & VM_OBJ_F_UPD_RESETABLE) != 0;
   h.f.retentive = (flags & VM_OBJ_F_RETENTIVE) != 0;
+  h.f.usr_protected = (flags & VM_OBJ_F_USR_PROTECTED) != 0;
   return h;
 }
 
