@@ -22,6 +22,7 @@
 #include <sys/cdefs.h>
 #include "esp_log.h"
 #include "sys_error.h"
+#include "utils.h"
 #include "vm_exec.h"
 #include "vm_loader.h"
 #include "vm_override.h"
@@ -85,7 +86,7 @@ static inline err_h dec_vm_need(uint8_t pkt, size_t off, size_t len, size_t need
  */
 static inline err_h decoder_packet_vm_reset(void) {
   vm_loader_reset();
-  ESP_LOGI(DEC_VM_LOADER_TAG, "storage reset");
+  DBG(ESP_LOGI(DEC_VM_LOADER_TAG, "storage reset"););
   return NULL;
 }
 
@@ -109,7 +110,7 @@ static inline err_h decoder_packet_vm_open(const uint8_t* body, size_t len) {
   uint16_t blk_cnt = dec_vm_u16(body + 4);
   uint32_t total = dec_vm_u32(body + 6);
   SE_RET_IF_ERR(vm_loader_open(obj_cnt, acc_cnt, blk_cnt, total));
-  ESP_LOGI(DEC_VM_LOADER_TAG, "open: %u objects, %u accessors, %u blocks, %lu bytes", obj_cnt, acc_cnt, blk_cnt, (unsigned long)total);
+  DBG(ESP_LOGI(DEC_VM_LOADER_TAG, "open: %u objects, %u accessors, %u blocks, %lu bytes", obj_cnt, acc_cnt, blk_cnt, (unsigned long)total););
   return NULL;
 }
 
@@ -339,17 +340,17 @@ static inline err_h decoder_packet_vm_exec(const uint8_t* body, size_t len) {
   uint8_t cmd = body[0];
   if (cmd == VM_EXEC_RESET || cmd == 0x04) {
     vm_loader_reset();
-    ESP_LOGI(DEC_VM_LOADER_TAG, "vm execution reset");
+    DBG(ESP_LOGI(DEC_VM_LOADER_TAG, "vm execution reset"););
     return NULL;
   }
   if (cmd == 0x02) {
     vm_exec_stop();
-    ESP_LOGI(DEC_VM_LOADER_TAG, "vm execution stopped (VM_EXEC_STOP)");
+    DBG(ESP_LOGI(DEC_VM_LOADER_TAG, "vm execution stopped (VM_EXEC_STOP)"););
     return NULL;
   }
   if (cmd == 0x01 || cmd == VM_EXEC_NORMAL_MODE) {
     vm_exec_set_mode(VM_RUN_RUNNING);
-    ESP_LOGI(DEC_VM_LOADER_TAG, "vm execution started (VM_RUN_RUNNING)");
+    DBG(ESP_LOGI(DEC_VM_LOADER_TAG, "vm execution started (VM_RUN_RUNNING)"););
     return NULL;
   }
   return vm_exec_control((vm_exec_command_e)cmd);

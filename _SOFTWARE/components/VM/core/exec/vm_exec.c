@@ -361,7 +361,7 @@ err_h vm_exec_start(void) {
     SE_RET_ERR(ERR_BASE_NO_MEM, 0);
   }
 
-  ESP_LOGI(TAG, "supervisor started on core %d, %u block types in the table", VM_EXEC_TASK_CORE, g_vm_blocks_cnt);
+  DBG(ESP_LOGI(TAG, "supervisor started on core %d, %u block types in the table", VM_EXEC_TASK_CORE, g_vm_blocks_cnt););
   return NULL;
 }
 

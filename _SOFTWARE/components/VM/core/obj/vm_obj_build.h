@@ -38,7 +38,7 @@
  *         - ERR_VM_OBJ_BAD_SIZE: payload_size not a multiple of element width.
  *         - ERR_VM_OBJ_RETENTIVE_PTR: Pointer types cannot be retentive.
  *         - ERR_VM_REG_OOB / ERR_VM_REG_DUP: Registry ID invalid or already taken.
- *         - ERR_BASE_NO_MEM: Arena out of memory.
+ *         - ERR_VM_ALLOC_EXHAUSTED: Arena out of memory.
  *
  * @code
  * vm_obj_h temp;
@@ -86,7 +86,7 @@ void vm_obj_init(vm_obj_h o, const vm_obj_head_t* head, const char* name);
  * @param[in]  id          Registry ID to bind, or VM_ID_NONE.
  * @param[in]  root_obj_id Target root object ID.
  * @param[in]  idx_count   Number of index slots to allocate.
- * @return err_h NULL on success, or error handle (ERR_VM_REG_*, ERR_BASE_NO_MEM).
+ * @return err_h NULL on success, or error handle (ERR_VM_REG_*, ERR_VM_ALLOC_EXHAUSTED).
  */
 err_h vm_accessor_create(vm_accessor_t** out, uint16_t id, uint16_t root_obj_id, uint8_t idx_count);
 
@@ -119,7 +119,7 @@ err_h vm_accessor_set_ref(vm_accessor_t* acc, uint8_t pos, const vm_accessor_t* 
  * @param[in]     pos      Index slot position (0 .. count-1).
  * @param[in]     name     Child tag name.
  * @param[in]     name_len Length of name (must be <= VM_OBJ_NAME_MAX).
- * @return err_h NULL on success, ERR_VM_OBJ_NAME_TOO_LONG, or ERR_BASE_NO_MEM.
+ * @return err_h NULL on success, ERR_VM_OBJ_NAME_TOO_LONG, or ERR_VM_ALLOC_EXHAUSTED.
  */
 err_h vm_accessor_set_name(vm_accessor_t* acc, uint8_t pos, const char* name, uint8_t name_len);
 

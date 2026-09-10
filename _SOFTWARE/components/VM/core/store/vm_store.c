@@ -26,7 +26,6 @@ static void arena_init(vm_alloc_t* a, void* mem, uint32_t capacity) {
 static void* arena_carve(vm_alloc_t* a, uint32_t size) {
   uint32_t aligned = (a->offset + 3u) & ~3u;
   if (size > a->capacity || aligned > a->capacity - size) {
-    SE_EMIT_ERR(ERR_VM_ALLOC_EXHAUSTED, .requested = size, .remaining = a->capacity - a->offset);
     return NULL;
   }
   a->offset = aligned + size;
@@ -77,9 +76,10 @@ err_h vm_store_open(uint32_t total_size, const uint16_t counts[VM_REG_CNT]) {
     uint16_t n = counts[r];
     if (n == 0) continue;  // a program with none of this kind is legal, just inert
 
-    void** items = (void**)arena_carve(&g_vm_store.arena, (uint32_t)n * sizeof(void*));
+    uint32_t reg_size = (uint32_t)n * sizeof(void*);
+    void** items = (void**)arena_carve(&g_vm_store.arena, reg_size);
     if (!items) {
-      SE_RET_ERR(ERR_BASE_NO_MEM, 0);
+      SE_RET_ERR(ERR_VM_ALLOC_EXHAUSTED, .requested = reg_size, .remaining = g_vm_store.arena.capacity - g_vm_store.arena.offset);
     }
     memset(items, 0, (size_t)n * sizeof(void*));
     g_vm_store.reg[r].items = items;
@@ -110,7 +110,7 @@ err_h vm_store_alloc(void** out, vm_reg_e r, uint16_t id, uint32_t size) {
 
   void* p = arena_carve(&g_vm_store.arena, size);
   if (!p) {
-    SE_RET_ERR(ERR_BASE_NO_MEM, 0);
+    SE_RET_ERR(ERR_VM_ALLOC_EXHAUSTED, .requested = size, .remaining = g_vm_store.arena.capacity - g_vm_store.arena.offset);
   }
   memset(p, 0, size);
 

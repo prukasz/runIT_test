@@ -128,7 +128,7 @@ vm_obj_head_t head = vm_make_obj_head(
 vm_obj_h gains_obj = NULL;
 err_h err = vm_obj_create(&gains_obj, 10, &head, tag);
 if (err != ERR_OK) {
-    return err; // E.g. ERR_BASE_NO_MEM or ERR_VM_REG_DUP
+    return err; // E.g. ERR_VM_ALLOC_EXHAUSTED or ERR_VM_REG_DUP
 }
 ```
 

@@ -10,6 +10,8 @@
 #include "vm_store.h"
 
 #define OWNER OWNER_VM_EXEC
+#undef LOCAL_DBG
+#define LOCAL_DBG 1
 
 static const char* TAG = "vm_override";
 
@@ -72,6 +74,7 @@ void vm_override_drain(void) {
 
   size_t item_size = 0;
   void* item = NULL;
+  uint16_t applied_cnt = 0;
 
   while ((item = xRingbufferReceive(s_override_rb, &item_size, 0)) != NULL) {
     if (item_size >= sizeof(vm_override_record_t)) {
@@ -82,13 +85,14 @@ void vm_override_drain(void) {
         if (w > 0 && rec->len > 0) {
           memcpy(obj->payload + (size_t)rec->start_idx * w, rec->data, rec->len);
           obj->head.f.upd = 1;
-          ESP_LOGI(TAG, "override applied: id %u [%u..%u], %u bytes",
-                   rec->id, rec->start_idx, rec->start_idx + (rec->len / w) - 1, rec->len);
+          applied_cnt++;
         }
       }
     }
     vRingbufferReturnItem(s_override_rb, item);
   }
+
+  DBG(if (applied_cnt > 0) { ESP_LOGI(TAG, "overrides applied: %u records", applied_cnt); });
 }
 
 void vm_override_reset(void) {

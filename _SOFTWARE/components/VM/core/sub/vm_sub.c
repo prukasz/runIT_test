@@ -2,6 +2,7 @@
 #include <esp_log.h>
 #include <stdio.h>
 #include <string.h>
+#include "utils.h"
 #include "vm_exec.h"
 #include "vm_obj_access.h"
 #include "vm_obj_dyn.h"
@@ -63,37 +64,39 @@ static void frame_flush(sub_frame_t* f) {
   f->buf[2] = f->count;
 
   // Log telemetry packet details
-  ESP_LOGI(TAG, "TX Telemetry: %u records (%u bytes)", (unsigned)f->count, (unsigned)f->len);
-  size_t off = 3;
-  for (uint8_t i = 0; i < f->count && (off + 6) <= f->len; i++) {
-    uint16_t id = (uint16_t)(f->buf[off] | ((uint16_t)f->buf[off + 1] << 8));
-    uint16_t start_idx = (uint16_t)(f->buf[off + 2] | ((uint16_t)f->buf[off + 3] << 8));
-    uint16_t byte_len = (uint16_t)(f->buf[off + 4] | ((uint16_t)f->buf[off + 5] << 8));
-    off += 6;
-    if (off + byte_len <= f->len) {
-      if (byte_len == 4) {
-        float fval = 0.0f;
-        memcpy(&fval, f->buf + off, 4);
-        ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=4): float=%f", (unsigned)i, (unsigned)id, (unsigned)start_idx, (double)fval);
-      } else if (byte_len == 1) {
-        ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=1): val=%u", (unsigned)i, (unsigned)id, (unsigned)start_idx, (unsigned)f->buf[off]);
-      } else if (byte_len == 2) {
-        uint16_t u16val = (uint16_t)(f->buf[off] | ((uint16_t)f->buf[off + 1] << 8));
-        ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=2): u16=%u", (unsigned)i, (unsigned)id, (unsigned)start_idx, (unsigned)u16val);
-      } else {
-        ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=%u B)", (unsigned)i, (unsigned)id, (unsigned)start_idx, (unsigned)byte_len);
+  DBG(
+    ESP_LOGI(TAG, "TX Telemetry: %u records (%u bytes)", (unsigned)f->count, (unsigned)f->len);
+    size_t off = 3;
+    for (uint8_t i = 0; i < f->count && (off + 6) <= f->len; i++) {
+      uint16_t id = (uint16_t)(f->buf[off] | ((uint16_t)f->buf[off + 1] << 8));
+      uint16_t start_idx = (uint16_t)(f->buf[off + 2] | ((uint16_t)f->buf[off + 3] << 8));
+      uint16_t byte_len = (uint16_t)(f->buf[off + 4] | ((uint16_t)f->buf[off + 5] << 8));
+      off += 6;
+      if (off + byte_len <= f->len) {
+        if (byte_len == 4) {
+          float fval = 0.0f;
+          memcpy(&fval, f->buf + off, 4);
+          ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=4): float=%f", (unsigned)i, (unsigned)id, (unsigned)start_idx, (double)fval);
+        } else if (byte_len == 1) {
+          ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=1): val=%u", (unsigned)i, (unsigned)id, (unsigned)start_idx, (unsigned)f->buf[off]);
+        } else if (byte_len == 2) {
+          uint16_t u16val = (uint16_t)(f->buf[off] | ((uint16_t)f->buf[off + 1] << 8));
+          ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=2): u16=%u", (unsigned)i, (unsigned)id, (unsigned)start_idx, (unsigned)u16val);
+        } else {
+          ESP_LOGI(TAG, "  [rec %u] OBJ %u (start=%u, len=%u B)", (unsigned)i, (unsigned)id, (unsigned)start_idx, (unsigned)byte_len);
+        }
+        off += byte_len;
       }
-      off += byte_len;
     }
-  }
 
-  // Format and log raw hex buffer
-  char hex_buf[96];
-  size_t hex_len = 0;
-  for (size_t i = 0; i < f->len && hex_len + 3 < sizeof(hex_buf); i++) {
-    hex_len += (size_t)snprintf(hex_buf + hex_len, sizeof(hex_buf) - hex_len, "%02X ", f->buf[i]);
-  }
-  ESP_LOGI(TAG, "  Frame Hex: [ %s%s]", hex_buf, (f->len * 3 >= sizeof(hex_buf)) ? "..." : "");
+    // Format and log raw hex buffer
+    char hex_buf[96];
+    size_t hex_len = 0;
+    for (size_t i = 0; i < f->len && hex_len + 3 < sizeof(hex_buf); i++) {
+      hex_len += (size_t)snprintf(hex_buf + hex_len, sizeof(hex_buf) - hex_len, "%02X ", f->buf[i]);
+    }
+    ESP_LOGI(TAG, "  Frame Hex: [ %s%s]", hex_buf, (f->len * 3 >= sizeof(hex_buf)) ? "..." : "");
+  );
 
   if (s_sender) {
     (void)s_sender(f->buf, f->len);
@@ -206,22 +209,23 @@ err_h vm_sub_subscribe(const uint16_t* ids, uint16_t count) {
   s_sub_count = 0;
   for (uint16_t i = 0; i < count; i++) {
     s_subscribed_ids[s_sub_count++] = ids[i];
-    ESP_LOGI(TAG, "  -> subscribed obj_id=%u", (unsigned)ids[i]);
+    DBG(ESP_LOGI(TAG, "  -> subscribed obj_id=%u", (unsigned)ids[i]););
   }
 
-  ESP_LOGI(TAG, "subscribed to %u objects total", (unsigned)s_sub_count);
+  DBG(ESP_LOGI(TAG, "subscribed to %u objects total", (unsigned)s_sub_count););
   return NULL;
 }
 
 err_h vm_sub_handle_packet(const uint8_t* body, size_t len) {
   SE_CHECK_NOT_NULL(body);
   if (len < 1) {
-    SE_RET_ERR(ERR_BASE_NOT_FOUND, 0);
+    SE_RET_ERR(ERR_VM_LOAD_SHORT_RECORD, .packet = VM_SUB_PACKET_SUBSCRIBE, .need = 1, .got = (uint16_t)len);
   }
 
   uint8_t count = body[0];
-  if (count > 0 && len < (1u + (size_t)count * 2u)) {
-    SE_RET_ERR(ERR_BASE_NOT_FOUND, 0);
+  size_t need = 1u + (size_t)count * 2u;
+  if (count > 0 && len < need) {
+    SE_RET_ERR(ERR_VM_LOAD_SHORT_RECORD, .packet = VM_SUB_PACKET_SUBSCRIBE, .need = (uint16_t)need, .got = (uint16_t)len);
   }
 
   if (count == 0) {
@@ -265,7 +269,7 @@ void vm_sub_scan(void) {
 void vm_sub_reset(void) {
   s_sub_count = 0;
   s_emitted_count = 0;
-  ESP_LOGI(TAG, "subscriptions cleared");
+  DBG(ESP_LOGI(TAG, "subscriptions cleared"););
 }
 
 uint16_t vm_sub_count(void) {

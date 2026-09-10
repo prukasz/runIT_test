@@ -15,6 +15,35 @@ extern "C" {
 #endif
 
 /**
+ * @brief Debug execution macro.
+ * Encapsulates any arbitrary code fragment (e.g. DBG(ESP_LOGI(...)); or DBG(my_var++;))
+ * Can be enabled globally with #define ENABLE_DBG 1 or per-file with #define LOCAL_DBG 1.
+ * When disabled, compiler dead-code elimination removes the code and strings with zero overhead.
+ */
+#ifndef ENABLE_DBG
+#define ENABLE_DBG 0
+#endif
+
+/*
+ * DBG(...) macro:
+ * Call DBG(code) to execute code only when debug is active.
+ * To enable per file, place:
+ *   #undef LOCAL_DBG
+ *   #define LOCAL_DBG 1
+ * in that .c file.
+ */
+#ifndef LOCAL_DBG
+#define LOCAL_DBG 0
+#endif
+
+#define DBG(...)                                              \
+  do {                                                        \
+    if ((ENABLE_DBG) || (LOCAL_DBG)) {                        \
+      __VA_ARGS__;                                            \
+    }                                                         \
+  } while (0)
+
+/**
  * @brief Creates a static ESP-IDF Ringbuffer.
  */
 #define R_RINGBUFFER_DEFINE(name, buffer_size, type)                                             \
