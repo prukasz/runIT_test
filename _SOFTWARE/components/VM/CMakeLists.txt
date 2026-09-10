@@ -16,7 +16,7 @@ idf_component_register(
     # exec/ is the first layer with anything outside the arena to talk to: the
     # supervisor is a FreeRTOS task pinned to core 1 (utils' R_TASK_* macros),
     # and every timing block plus the block watchdog reads esp_timer.
-    REQUIRES sys_errors utils freertos esp_timer callbacks
+    REQUIRES sys_errors utils freertos esp_timer callbacks esp_ringbuf
 )
 
 # The project builds at -Og (CONFIG_COMPILER_OPTIMIZATION_DEBUG), which is the

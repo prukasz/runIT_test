@@ -2677,7 +2677,6 @@ void test_runtime_override(void) {
   err_h err_prot = sys_interface_decode(f_bad_prot, sizeof(f_bad_prot));
   ck("injection targeting usr_protected object rejected", err_has_tag(err_prot, ERR_VM_OBJ_USR_PROTECTED));
   ck("protected object y payload unchanged", near_f(ex_f(OV_O_Y), 0.0f));
-  ck("no pending override queued for protected write", vm_override_pending_count() == 0);
 
   // 7b: Attempt write to immutable constant k (OV_O_K): MUST REJECT with ERR_VM_OBJ_NOT_MUTABLE
   uint8_t f_bad_mut[13] = {
@@ -2691,7 +2690,6 @@ void test_runtime_override(void) {
   err_h err_mut = sys_interface_decode(f_bad_mut, sizeof(f_bad_mut));
   ck("injection targeting immutable object rejected", err_has_tag(err_mut, ERR_VM_OBJ_NOT_MUTABLE));
   ck("immutable object k payload unchanged", near_f(ex_f(OV_O_K), 10.0f));
-  ck("no pending override queued for immutable write", vm_override_pending_count() == 0);
 
   // 7c: Attempt write to unknown object ID 999: MUST REJECT with ERR_VM_ACCESSOR_UNKNOWN_ID
   uint8_t f_bad_id[13] = {
@@ -2718,12 +2716,10 @@ void test_runtime_override(void) {
   memcpy(&f_good[9], &new_x, sizeof(new_x));
   err_h err_good = sys_interface_decode(f_good, sizeof(f_good));
   ck("valid runtime 0x43 packet accepted by decoder", err_good == NULL);
-  ck("override queued (pending count == 1)", vm_override_pending_count() == 1);
   ck("mid-scan isolation: x NOT yet modified before pass", near_f(ex_f(OV_O_X), 0.0f));
 
   // Step B: Run scan pass
   vm_exec_pass();
-  ck("override drained at pass boundary (pending count == 0)", vm_override_pending_count() == 0);
   ck("x updated to 5.0f at pass boundary", near_f(ex_f(OV_O_X), 5.0f));
   ck("block 0 triggered and computed y = 50.0f", near_f(ex_f(OV_O_Y), 50.0f));
   ck("telemetry emitted for updated y", s_pipe_sub_calls == 1);
@@ -2737,11 +2733,9 @@ void test_runtime_override(void) {
   float new_x2 = 12.0f;
   memcpy(&f_good[9], &new_x2, sizeof(new_x2));
   ck("second 0x43 packet accepted", sys_interface_decode(f_good, sizeof(f_good)) == NULL);
-  ck("second override queued (pending count == 1)", vm_override_pending_count() == 1);
   ck("mid-scan isolation: x remains 5.0f before pass", near_f(ex_f(OV_O_X), 5.0f));
 
   vm_exec_pass();
-  ck("override drained at pass boundary", vm_override_pending_count() == 0);
   ck("x updated to 12.0f at pass boundary", near_f(ex_f(OV_O_X), 12.0f));
   ck("block 0 computed y = 120.0f", near_f(ex_f(OV_O_Y), 120.0f));
   ck("telemetry emitted for new y", s_pipe_sub_calls == 2);

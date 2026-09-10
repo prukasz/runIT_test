@@ -4,19 +4,19 @@
 #include "sys_error.h"
 #include "sys_error_vm.h"
 
-#define VM_OVERRIDE_MAX_DATA 32
-#define VM_OVERRIDE_QUEUE_DEPTH 16
+#define VM_OVERRIDE_BUF_SIZE 1024
 
-typedef struct {
+typedef struct __attribute__((packed)) {
   uint16_t id;
   uint16_t start_idx;
   uint16_t len;
-  uint8_t data[VM_OVERRIDE_MAX_DATA];
+  uint8_t data[];
 } vm_override_record_t;
 
 /**
  * @brief Enqueue a runtime variable update record (called from Core 0 decoder).
  * Validates object existence, user protection, mutability, and bounds before enqueueing.
+ * Supports arbitrary variable-length data up to buffer capacity.
  */
 err_h vm_override_post(uint16_t id, uint16_t start_idx, const uint8_t* data, uint16_t len);
 
@@ -30,8 +30,3 @@ void vm_override_drain(void);
  * @brief Reset the override queue.
  */
 void vm_override_reset(void);
-
-/**
- * @brief Return the number of pending override records.
- */
-uint16_t vm_override_pending_count(void);

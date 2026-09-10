@@ -33,16 +33,16 @@ uint64_t g_vm_pass_ms;
 
 R_TASK_DEFINE(vm_exec_task_h, 3072);
 
-static vm_run_mode_e s_mode = VM_RUN_STOPPED;
-static uint32_t s_pass_cnt;
-static uint32_t s_last_pass_us;
+static volatile vm_run_mode_e s_mode = VM_RUN_STOPPED;
+static volatile uint32_t s_pass_cnt;
+static volatile uint32_t s_last_pass_us;
 static uint8_t s_span_depth;
 static vm_block_h s_current_block;
 static vm_span_t s_child_bounds;
 static portMUX_TYPE s_program_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_program_locked;
-static bool s_pass_active;
-static bool s_cancel;
+static volatile bool s_pass_active;
+static volatile bool s_cancel;
 static bool s_waiting;
 static uint16_t s_next_block = UINT16_MAX;
 static vm_run_mode_e s_selected = VM_RUN_RUNNING;
@@ -65,13 +65,10 @@ vm_run_mode_e vm_exec_program_lock(void) {
     portEXIT_CRITICAL(&s_program_mux);
     vTaskDelay(1);
   }
-  for (;;) {
-    portENTER_CRITICAL(&s_program_mux);
-    bool active = s_pass_active;
-    portEXIT_CRITICAL(&s_program_mux);
-    if (!active) return previous;
+  while (s_pass_active) {
     vTaskDelay(1);
   }
+  return previous;
 }
 
 void vm_exec_program_unlock(vm_run_mode_e mode) {
@@ -83,7 +80,7 @@ void vm_exec_program_unlock(vm_run_mode_e mode) {
 }
 
 // Block watchdog: published (seq << 16) | block_id sampled periodically by esp_timer on core 0
-static uint32_t s_wd_word;  // atomically published (seq << 16) | block index; 0 = idle
+static volatile uint32_t s_wd_word;  // (seq << 16) | block index; 0 = idle
 static uint16_t s_wd_seq;
 static esp_timer_handle_t s_wd_timer;
 static uint32_t s_wd_last;
@@ -91,16 +88,16 @@ static bool s_wd_reported;  // sampler-owned
 
 static __always_inline void wd_enter(uint16_t blk_id) {
   if (++s_wd_seq == 0) ++s_wd_seq;  // block 0 must never publish the idle sentinel
-  __atomic_store_n(&s_wd_word, ((uint32_t)s_wd_seq << 16) | blk_id, __ATOMIC_RELAXED);
+  s_wd_word = ((uint32_t)s_wd_seq << 16) | blk_id;
 }
 
 static __always_inline void wd_leave(void) {
-  __atomic_store_n(&s_wd_word, 0, __ATOMIC_RELAXED);
+  s_wd_word = 0;
 }
 
 static void wd_sample(void* arg) {
   (void)arg;
-  uint32_t cur = __atomic_load_n(&s_wd_word, __ATOMIC_RELAXED);
+  uint32_t cur = s_wd_word;
   if (cur != s_wd_last) s_wd_reported = false;
   if (cur != 0 && cur == s_wd_last && !s_wd_reported) {
     s_wd_reported = true;
@@ -147,15 +144,17 @@ static void report_event_overflow(void) {
 }
 
 bool vm_exec_cancelled(void) {
-  portENTER_CRITICAL(&s_program_mux);
-  bool cancelled = s_cancel;
-  portEXIT_CRITICAL(&s_program_mux);
-  return cancelled;
+  return s_cancel;
 }
 
 /* Keep the C stack, including FOR iterators, while waiting. A parent watchdog
    must be idle here too: waiting for the operator is not a hung block. */
 static bool block_gate(uint16_t id) {
+  // Fast path: in normal continuous run or single-pass step, do not acquire spinlock
+  if (likely((s_mode == VM_RUN_RUNNING || s_mode == VM_RUN_STEP) && !s_cancel)) {
+    return true;
+  }
+
   wd_leave();
   for (;;) {
     portENTER_CRITICAL(&s_program_mux);
@@ -228,7 +227,7 @@ void vm_exec_run_range(uint16_t start, uint16_t end) {
   s_span_depth++;
   vm_block_h outer_block = s_current_block;
   const vm_span_t outer_bounds = s_child_bounds;
-  const uint32_t outer_wd = __atomic_load_n(&s_wd_word, __ATOMIC_RELAXED);
+  const uint32_t outer_wd = s_wd_word;
 
   for (uint16_t i = start; i < end;) {
     if (vm_exec_cancelled()) break;
@@ -383,7 +382,7 @@ void vm_exec_set_mode(vm_run_mode_e mode) {
 }
 
 vm_run_mode_e vm_exec_mode(void) {
-  return vm_exec_status().mode;
+  return s_mode;
 }
 
 vm_exec_status_t vm_exec_status(void) {
@@ -438,24 +437,16 @@ err_h vm_exec_control(vm_exec_command_e command) {
 }
 
 uint32_t vm_exec_pass_count(void) {
-  portENTER_CRITICAL(&s_program_mux);
-  uint32_t count = s_pass_cnt;
-  portEXIT_CRITICAL(&s_program_mux);
-  return count;
+  return s_pass_cnt;
 }
 
 uint32_t vm_exec_last_pass_us(void) {
-  portENTER_CRITICAL(&s_program_mux);
-  uint32_t duration = s_last_pass_us;
-  portEXIT_CRITICAL(&s_program_mux);
-  return duration;
+  return s_last_pass_us;
 }
 
 void vm_exec_reset_stats(void) {
-  portENTER_CRITICAL(&s_program_mux);
   s_pass_cnt = 0;
   s_last_pass_us = 0;
-  portEXIT_CRITICAL(&s_program_mux);
 }
 
 void vm_exec_reset(void) {

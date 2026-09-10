@@ -2,6 +2,8 @@
 #include <string.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/ringbuf.h"
+#include "utils.h"
 #include "vm_obj.h"
 #include "vm_obj_access.h"
 #include "vm_obj_build.h"
@@ -11,11 +13,8 @@
 
 static const char* TAG = "vm_override";
 
-static portMUX_TYPE s_override_mux = portMUX_INITIALIZER_UNLOCKED;
-static vm_override_record_t s_override_ring[VM_OVERRIDE_QUEUE_DEPTH];
-static uint16_t s_head = 0;
-static uint16_t s_tail = 0;
-static uint16_t s_count = 0;
+// Static ring buffer initialized at startup via constructor macro
+R_RINGBUFFER_DEFINE(s_override_rb, VM_OVERRIDE_BUF_SIZE, RINGBUF_TYPE_NOSPLIT);
 
 err_h vm_override_post(uint16_t id, uint16_t start_idx, const uint8_t* data, uint16_t len) {
   if (!data && len > 0) {
@@ -28,9 +27,10 @@ err_h vm_override_post(uint16_t id, uint16_t start_idx, const uint8_t* data, uin
   if (!obj->head.f.mutable) {
     SE_RET_ERR(ERR_VM_OBJ_NOT_MUTABLE, .obj = obj);
   }
-  if (len > VM_OVERRIDE_MAX_DATA) {
-    SE_RET_ERR(ERR_VM_LOAD_DATA_RANGE, .id = id, .start_idx = start_idx, .len = len, .items = vm_obj_get_items_cnt(obj));
+  if (obj->head.f.usr_protected) {
+    SE_RET_ERR(ERR_VM_OBJ_USR_PROTECTED, .obj = obj);
   }
+
   uint8_t w = vm_obj_get_type_size(obj);
   uint16_t items = vm_obj_get_items_cnt(obj);
   if (w == 0 || (len % w) != 0) {
@@ -41,63 +41,63 @@ err_h vm_override_post(uint16_t id, uint16_t start_idx, const uint8_t* data, uin
     SE_RET_ERR(ERR_VM_LOAD_DATA_RANGE, .id = id, .start_idx = start_idx, .len = n, .items = items);
   }
 
-  portENTER_CRITICAL(&s_override_mux);
-  if (s_count >= VM_OVERRIDE_QUEUE_DEPTH) {
-    portEXIT_CRITICAL(&s_override_mux);
+  if (unlikely(!s_override_rb)) {
     SE_RET_ERR(ERR_VM_ALLOC_EXHAUSTED, .requested = len, .remaining = 0);
   }
-  vm_override_record_t* rec = &s_override_ring[s_head];
+
+  size_t rec_size = sizeof(vm_override_record_t) + len;
+  void* item_mem = NULL;
+  // Non-blocking acquire from caller context (decoder task)
+  if (xRingbufferSendAcquire(s_override_rb, &item_mem, rec_size, 0) != pdTRUE || !item_mem) {
+    SE_RET_ERR(ERR_VM_ALLOC_EXHAUSTED, .requested = rec_size, .remaining = 0);
+  }
+
+  vm_override_record_t* rec = (vm_override_record_t*)item_mem;
   rec->id = id;
   rec->start_idx = start_idx;
   rec->len = len;
   if (len > 0) {
     memcpy(rec->data, data, len);
   }
-  s_head = (s_head + 1) % VM_OVERRIDE_QUEUE_DEPTH;
-  s_count++;
-  portEXIT_CRITICAL(&s_override_mux);
+
+  if (xRingbufferSendComplete(s_override_rb, item_mem) != pdTRUE) {
+    SE_RET_ERR(ERR_VM_ALLOC_EXHAUSTED, .requested = rec_size, .remaining = 0);
+  }
 
   return NULL;
 }
 
 void vm_override_drain(void) {
-  vm_override_record_t batch[VM_OVERRIDE_QUEUE_DEPTH];
-  uint16_t batch_count = 0;
+  if (unlikely(!s_override_rb)) return;
 
-  portENTER_CRITICAL(&s_override_mux);
-  while (s_count > 0 && batch_count < VM_OVERRIDE_QUEUE_DEPTH) {
-    batch[batch_count++] = s_override_ring[s_tail];
-    s_tail = (s_tail + 1) % VM_OVERRIDE_QUEUE_DEPTH;
-    s_count--;
-  }
-  portEXIT_CRITICAL(&s_override_mux);
+  size_t item_size = 0;
+  void* item = NULL;
 
-  for (uint16_t i = 0; i < batch_count; i++) {
-    const vm_override_record_t* rec = &batch[i];
-    vm_obj_h obj = vm_obj_get_by_id(rec->id);
-    if (!obj || !obj->head.f.mutable) {
-      continue;
+  while ((item = xRingbufferReceive(s_override_rb, &item_size, 0)) != NULL) {
+    if (item_size >= sizeof(vm_override_record_t)) {
+      const vm_override_record_t* rec = (const vm_override_record_t*)item;
+      vm_obj_h obj = vm_obj_get_by_id(rec->id);
+      if (obj && obj->head.f.mutable && !obj->head.f.usr_protected) {
+        uint8_t w = vm_obj_get_type_size(obj);
+        if (w > 0 && rec->len > 0) {
+          memcpy(obj->payload + (size_t)rec->start_idx * w, rec->data, rec->len);
+          obj->head.f.upd = 1;
+          ESP_LOGI(TAG, "override applied: id %u [%u..%u], %u bytes",
+                   rec->id, rec->start_idx, rec->start_idx + (rec->len / w) - 1, rec->len);
+        }
+      }
     }
-    uint8_t w = vm_obj_get_type_size(obj);
-    if (w == 0) continue;
-    memcpy(obj->payload + (size_t)rec->start_idx * w, rec->data, rec->len);
-    obj->head.f.upd = 1;
-    ESP_LOGI(TAG, "override applied: id %u [%u..%u], %u bytes",
-             rec->id, rec->start_idx, rec->start_idx + (rec->len / w) - 1, rec->len);
+    vRingbufferReturnItem(s_override_rb, item);
   }
 }
 
 void vm_override_reset(void) {
-  portENTER_CRITICAL(&s_override_mux);
-  s_head = 0;
-  s_tail = 0;
-  s_count = 0;
-  portEXIT_CRITICAL(&s_override_mux);
-}
+  if (unlikely(!s_override_rb)) return;
 
-uint16_t vm_override_pending_count(void) {
-  portENTER_CRITICAL(&s_override_mux);
-  uint16_t c = s_count;
-  portEXIT_CRITICAL(&s_override_mux);
-  return c;
+  // Drain and return all items in the ring buffer
+  size_t item_size = 0;
+  void* item = NULL;
+  while ((item = xRingbufferReceive(s_override_rb, &item_size, 0)) != NULL) {
+    vRingbufferReturnItem(s_override_rb, item);
+  }
 }

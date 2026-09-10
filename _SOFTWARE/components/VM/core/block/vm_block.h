@@ -158,6 +158,9 @@ static inline void* vm_block_get_custom_data(vm_block_h b) {
 
 // ===========================================================================
 // 5. Pin Access & Validation
+// Note: vm_block_get_in and vm_block_get_out perform runtime validation for
+// selftests and external diagnostics. Production block handlers access resolved
+// pin arrays directly via vm_block_get_inputs / vm_block_get_outputs for speed.
 // ===========================================================================
 
 /**
