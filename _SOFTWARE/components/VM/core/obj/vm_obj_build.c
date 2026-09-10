@@ -152,16 +152,20 @@ bool vm_accessor_cache_build(vm_accessor_t* acc) {
 
   acc->flags &= (uint8_t)~VM_ACC_F_CACHED;
 
-  // Only single-level or direct accessors qualify for caching
+  // Multi-level chains cannot be cached: child pointers (a.b.c) can be dynamically repointed/cloned at runtime
   if (acc->count > 1) return false;
 
+  // Root object must already exist in registry
   vm_obj_h obj = vm_obj_get_by_id(acc->id);
   if (!obj) return false;
 
   if (acc->count == 0) {
+    // Whole-object direct address: payload starts at fixed offset 0
     acc->c_payload = vm_make_payload(obj);
   } else {
+    // Dynamic ref (VM_IDX_REF) or tag scan (VM_IDX_NAME) cannot be cached: index changes or requires search
     if (acc->indices[0].kind != VM_IDX_LITERAL) return false;
+    // Declared literal index must be within object capacity
     uint8_t* p = vm_obj_get_elem_ptr(obj, acc->indices[0].value);
     if (!p) return false;
     acc->c_payload = (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0};
