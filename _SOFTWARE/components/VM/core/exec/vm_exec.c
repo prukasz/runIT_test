@@ -7,21 +7,12 @@
 #include "vm_block.h"
 #include "vm_event.h"
 #include "vm_obj_dyn.h"
+#include "vm_override.h"
 #include "vm_store.h"
 
 #define OWNER OWNER_VM_EXEC
 
 static const char* TAG = "vm_exec";
-
-/* ==========================================================================
-   The palette
-
-   `g_vm_blocks` / `g_vm_blocks_cnt` are defined in blocks/vm_blocks_table.c,
-   not here. The supervisor dispatches through the declaration in vm_exec.h and
-   must not know what is in the palette -- so the dependency runs blocks ->
-   exec and never back, which is what keeps core/ free of every driver a real
-   block will eventually pull in.
-   ========================================================================== */
 
 err_h vm_exec_check_block_type(uint16_t blk_id, uint8_t block_type) {
   if (!vm_block_fn_for(block_type)) {
@@ -42,16 +33,23 @@ uint64_t g_vm_pass_ms;
 
 R_TASK_DEFINE(vm_exec_task_h, 3072);
 
-static volatile vm_run_mode_e s_mode = VM_RUN_STOPPED;
+static vm_run_mode_e s_mode = VM_RUN_STOPPED;
 static uint32_t s_pass_cnt;
 static uint32_t s_last_pass_us;
 static uint8_t s_span_depth;
+static vm_block_h s_current_block;
+static vm_span_t s_child_bounds;
 static portMUX_TYPE s_program_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_program_locked;
 static bool s_pass_active;
+static bool s_cancel;
+static bool s_waiting;
+static uint16_t s_next_block = UINT16_MAX;
+static vm_run_mode_e s_selected = VM_RUN_RUNNING;
+static vm_run_mode_e s_resume = VM_RUN_STOPPED;
 
-/* Control-task boundary. A complete pass must release every local handle before
-   its program can be freed. Setting STOPPED also releases a frozen pass. */
+/* Cancel at a block boundary and wait for the stack to release all handles
+   before the loader can replace the program. */
 vm_run_mode_e vm_exec_program_lock(void) {
   vm_run_mode_e previous;
   for (;;) {
@@ -60,6 +58,7 @@ vm_run_mode_e vm_exec_program_lock(void) {
       s_program_locked = true;
       previous = s_mode;
       s_mode = VM_RUN_STOPPED;
+      s_cancel = true;
       portEXIT_CRITICAL(&s_program_mux);
       break;
     }
@@ -78,76 +77,39 @@ vm_run_mode_e vm_exec_program_lock(void) {
 void vm_exec_program_unlock(vm_run_mode_e mode) {
   portENTER_CRITICAL(&s_program_mux);
   s_mode = mode;
+  s_cancel = false;
   s_program_locked = false;
   portEXIT_CRITICAL(&s_program_mux);
 }
 
-/* ==========================================================================
-   Block watchdog
-
-   One global watchdog, not per-block timing. Timing every block would cost a
-   clock read per block per pass for something that almost never fires. Instead
-   the supervisor publishes *which block it is currently executing* and a timer
-   samples it: same block still current two samples running means it hung.
-   Cost is one store per block and no clock reads at all -- and unlike the task
-   watchdog it names the block that hung instead of just resetting.
-
-   The word packs a sequence number alongside the block id, because the sampler
-   has to distinguish "same block still running" from "same block again next
-   pass". The id alone cannot: a one-block program would look permanently hung.
-
-   Zero means "not inside a block", so the gaps between blocks and between
-   passes read as idle rather than as a hang.
-
-   [[VM_EXEC.MD]] specifies a timer *ISR* here, with the sampler setting a flag
-   and something at task level building the trace, because error construction
-   allocates and that is not ISR-safe. This uses an ordinary esp_timer instead,
-   whose callback already runs at task level on the esp_timer task -- on core 0,
-   so it keeps sampling while core 1 is stuck. That removes the need for the
-   flag hand-off entirely (the error is built where it is detected) and avoids
-   depending on CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD. The deferred
-   hand-off would in fact have been worse here: a genuinely hung block never
-   reaches the freeze point that would have drained the flag, so the report
-   would never arrive.
-   ========================================================================== */
-static volatile uint32_t s_wd_word;  // (seq << 16) | block index; 0 = idle
+// Block watchdog: published (seq << 16) | block_id sampled periodically by esp_timer on core 0
+static uint32_t s_wd_word;  // atomically published (seq << 16) | block index; 0 = idle
 static uint16_t s_wd_seq;
 static esp_timer_handle_t s_wd_timer;
 static uint32_t s_wd_last;
+static bool s_wd_reported;  // sampler-owned
 
 static __always_inline void wd_enter(uint16_t blk_id) {
-  s_wd_word = ((uint32_t)(++s_wd_seq) << 16) | blk_id;
+  if (++s_wd_seq == 0) ++s_wd_seq;  // block 0 must never publish the idle sentinel
+  __atomic_store_n(&s_wd_word, ((uint32_t)s_wd_seq << 16) | blk_id, __ATOMIC_RELAXED);
 }
 
 static __always_inline void wd_leave(void) {
-  s_wd_word = 0;
+  __atomic_store_n(&s_wd_word, 0, __ATOMIC_RELAXED);
 }
 
 static void wd_sample(void* arg) {
   (void)arg;
-  uint32_t cur = s_wd_word;
-  if (cur != 0 && cur == s_wd_last) {
+  uint32_t cur = __atomic_load_n(&s_wd_word, __ATOMIC_RELAXED);
+  if (cur != s_wd_last) s_wd_reported = false;
+  if (cur != 0 && cur == s_wd_last && !s_wd_reported) {
+    s_wd_reported = true;
     SE_EMIT_ERR(ERR_VM_EXEC_BLOCK_HUNG, .block_idx = (uint16_t)(cur & 0xFFFFu), .ms = VM_EXEC_BLOCK_WD_MS);
-    /* Cleared so one hang reports once rather than every sample for as long as
-       it lasts. If the block is still stuck at the next sample the word will
-       not have changed, but s_wd_last no longer matches it, so the next report
-       is one full period away. */
-    s_wd_last = 0;
-    return;
   }
   s_wd_last = cur;
 }
 
-/* ==========================================================================
-   Telemetry sampling
-
-   A hook rather than a call into a subscription module, because none exists
-   yet -- live values are sampled for explicitly subscribed ids, and what does
-   the subscribing is not the VM's to decide. What *is* the VM's to decide is
-   where in the pass it happens, and that is not negotiable: subscriptions are
-   sampled before `upd` is cleared, because clearing first would silently break
-   "send on update", which is that flag's other customer.
-   ========================================================================== */
+// Telemetry sampling hook (called before end-of-pass upd sweep)
 static void (*s_sample_hook)(void);
 
 void vm_exec_set_sample_hook(void (*hook)(void)) {
@@ -158,25 +120,7 @@ void vm_exec_set_sample_hook(void (*hook)(void)) {
    The pass
    ========================================================================== */
 
-/**
- * `upd` is cleared by the supervisor, at the end of a pass -- not at the point
- * of consumption, and not at each section boundary.
- *
- * If a consumer cleared the flag when it ran, fan-out would break: two blocks
- * reading the same fresh object, and whichever ran first would steal the
- * update. Topological order already guarantees a writer runs before its
- * readers within the same pass, so every consumer sees the flag before it is
- * cleared here. Clearing per section would break that across sections -- a
- * value written in section 0 would no longer read as fresh in section 3, even
- * though section 3 runs after it in the same pass.
- *
- * The sweep respects `upd_resetable`. A non-resettable object is never cleared
- * by anyone; the flag is reserved for constants and user variables, where
- * freshness is not a meaningful signal. Such an object may still be wired to a
- * trigger pin -- its `upd` simply never clears, so the block reading it is
- * permanently active, which the editor shows on the block face rather than
- * rejecting.
- */
+// End-of-pass upd sweep: clears upd flag on resetable registry and dynamic objects
 static void clear_upd(void) {
   const vm_registry_t* g = &g_vm_store.reg[VM_REG_OBJ];
   for (uint16_t i = 0; i < g->count; i++) {
@@ -189,51 +133,49 @@ static void clear_upd(void) {
      message is exactly the kind of thing a downstream block waits on, so they
      have to be swept too or freshness would work for arena objects only. */
   for (uint16_t i = 0; i < VM_DYN_MAX; i++) {
-    vm_obj_h o = vm_obj_dyn_get(i);
+    vm_obj_h o = vm_obj_dyn_get_by_id(i);
     if (o && o->head.f.upd_resetable) o->head.f.upd = 0;
   }
 }
 
-/**
- * A freeze point. The only place anything external may intervene, and the
- * reason a section is the unit it is: everything below lands between sections,
- * never inside one, so a section always traverses a consistent snapshot.
- *
- * Events are *not* here, and that is a deliberate step further than section
- * granularity: they are swapped once at the top of the pass, so every section
- * of one pass sees the same arrivals rather than each seeing whatever had
- * landed by the time it started. Only the overflow *report* is here, because
- * building an error allocates and the post path may be an ISR.
- */
-static void freeze_point(void) {
+/* Overflow reporting stays outside block dispatch. */
+static void report_event_overflow(void) {
   err_h e = vm_event_take_overflow();
   if (unlikely(e != NULL)) SE_push_to_handler(e);
 
-  /* Freeze and resume take effect here too, which is what bounds freeze
-     latency by the longest section rather than by a whole pass. The delay is a
-     real block rather than a spin: the VM owns core 1 but does not own it
-     exclusively, and a frozen VM should cost nothing. */
-  while (s_mode == VM_RUN_FROZEN) {
-    vTaskDelay(MSEC(10));
+
+}
+
+bool vm_exec_cancelled(void) {
+  portENTER_CRITICAL(&s_program_mux);
+  bool cancelled = s_cancel;
+  portEXIT_CRITICAL(&s_program_mux);
+  return cancelled;
+}
+
+/* Keep the C stack, including FOR iterators, while waiting. A parent watchdog
+   must be idle here too: waiting for the operator is not a hung block. */
+static bool block_gate(uint16_t id) {
+  wd_leave();
+  for (;;) {
+    portENTER_CRITICAL(&s_program_mux);
+    bool hold = s_mode == VM_RUN_FROZEN || s_mode == VM_RUN_SCAN || s_mode == VM_RUN_BLOCK;
+    if (s_cancel || !hold) {
+      bool run = !s_cancel;
+      if (run && s_mode == VM_RUN_BLOCK_STEP) s_mode = VM_RUN_BLOCK;
+      s_waiting = false;
+      s_next_block = UINT16_MAX;
+      portEXIT_CRITICAL(&s_program_mux);
+      return run;
+    }
+    s_waiting = true;
+    s_next_block = id;
+    portEXIT_CRITICAL(&s_program_mux);
+    vTaskDelay(1);
   }
 }
 
-/**
- * Every block in a running section is called. The supervisor decides nothing
- * about whether it should be: no activation test, no gating, no skipping.
- *
- * That is not a simplification, it is where the knowledge is. A block knows
- * what wakes it -- an arrival, a level, a deadline, nothing at all -- far
- * better than any table describing it from outside could, and it already holds
- * everything needed to answer: its pins, its enable list, its private state.
- * So it asks (vm_block_triggered(), vm_block_is_enabled()) and acts, and when
- * it decides not to act it says so with vm_block_set_ENO(b, false) and nothing
- * else -- its outputs stand, and the end-of-pass `upd` sweep below withdraws
- * their freshness for it.
- *
- * What is left here is the two things a block genuinely cannot do for itself:
- * honour cfg.on_error after it has already failed, and move the walk.
- */
+// Dispatch block function and enforce cfg.on_error
 static void run_block(vm_block_h b, vm_block_fn fn) {
   // per-call bits only; VM_BLK_RT_SPAN_BAD and anything sticky survives
   b->cfg.rt &= (uint8_t)~VM_BLK_RT_PER_CALL;
@@ -261,21 +203,36 @@ static void run_block(vm_block_h b, vm_block_fn fn) {
      outputs are *not* retracted: whatever the block wrote is what it computed,
      and the flow being stopped is what keeps anything from acting on it. */
   if (unlikely(g_vm_block_fault) && b->cfg.on_error == VM_BLK_ERR_STOP) {
-    vm_block_set_ENO(b, false);
+    vm_block_set_eno(b, false);
   }
 
   g_vm_block_fault = outer_fault;  // hand the owner back its own fault state
 }
 
 void vm_exec_run_range(uint16_t start, uint16_t end) {
+  // Reject self-recursion and range escapes before any nested block can act
+  if (s_current_block &&
+      (start != s_child_bounds.start || end <= start || end > s_child_bounds.end)) {
+    g_vm_block_fault = true;
+    if (!(s_current_block->cfg.rt & VM_BLK_RT_SPAN_BAD)) {
+      s_current_block->cfg.rt |= VM_BLK_RT_SPAN_BAD;
+      SE_EMIT_ERR(ERR_VM_EXEC_BAD_SPAN, .block_idx = s_current_block->cfg.block_idx, .start = start, .end = end);
+    }
+    return;
+  }
   if (unlikely(s_span_depth >= VM_EXEC_MAX_SPAN_DEPTH)) {
+    g_vm_block_fault = true;
     SE_EMIT_ERR(ERR_VM_EXEC_SPAN_DEPTH, .block_idx = start, .depth = VM_EXEC_MAX_SPAN_DEPTH);
     return;
   }
   s_span_depth++;
+  vm_block_h outer_block = s_current_block;
+  const vm_span_t outer_bounds = s_child_bounds;
+  const uint32_t outer_wd = __atomic_load_n(&s_wd_word, __ATOMIC_RELAXED);
 
   for (uint16_t i = start; i < end;) {
-    vm_block_h b = vm_block_by_id(i);
+    if (vm_exec_cancelled()) break;
+    vm_block_h b = vm_block_get_by_id(i);
     if (unlikely(!b)) {
       i++;
       continue;
@@ -291,31 +248,21 @@ void vm_exec_run_range(uint16_t start, uint16_t end) {
       continue;
     }
 
+    if (!block_gate(i)) break;
+    s_current_block = b;
+    s_child_bounds = (vm_span_t){(uint16_t)(i + 1), end};
     wd_enter(i);
     run_block(b, fn);
     wd_leave();
 
     uint16_t next = (uint16_t)(i + 1);
 
-    /* Did the block just take over the range that follows it? If so the walk
-       jumps, because otherwise every block in that span would run once from
-       here *plus* however many times its owner ran it.
-
-       Asked after the call, not before: only the block knows it is a span
-       owner, and it says so by claiming (vm_block_claim_span()). A FOR claims
-       before it decides anything else, so it still claims when it is disabled
-       -- running the span zero times is not the same as letting this walk run
-       it once. */
+    // Span owner claimed the following range; advance walk past the span
     if (unlikely(b->cfg.rt & VM_BLK_RT_SPAN)) {
-      const vm_span_t* sp = vm_block_span(b);
+      const vm_span_t* sp = vm_block_get_span(b);
       if (likely(sp && sp->start == next && sp->end > sp->start && sp->end <= end)) {
         next = sp->end;
       } else if (!(b->cfg.rt & VM_BLK_RT_SPAN_BAD)) {
-        /* A claim vm_block_claim_span() accepted but that does not fit where
-           the walk actually is -- it does not start at the next block, or runs
-           past the section. Sticky, so a standing condition reports once per
-           program rather than once per pass. The walk still moves forward by
-           one, so this degrades to "the span runs inline" rather than a hang. */
         b->cfg.rt |= VM_BLK_RT_SPAN_BAD;
         SE_EMIT_ERR(ERR_VM_EXEC_BAD_SPAN, .block_idx = b->cfg.block_idx, .start = sp ? sp->start : 0,
                     .end = sp ? sp->end : 0);
@@ -326,11 +273,17 @@ void vm_exec_run_range(uint16_t start, uint16_t end) {
   }
 
   s_span_depth--;
+  s_current_block = outer_block;
+  s_child_bounds = outer_bounds;
+  /* Returning from a body is progress: resume timing the owner with a fresh
+     token, rather than making repeated visits look like one stalled call. */
+  if (outer_wd && !vm_exec_cancelled()) wd_enter((uint16_t)outer_wd);
 }
 
 void vm_exec_pass(void) {
   portENTER_CRITICAL(&s_program_mux);
-  if (s_program_locked || s_pass_active ||
+  if (s_program_locked || s_pass_active || s_mode == VM_RUN_FROZEN ||
+      s_mode == VM_RUN_SCAN || s_mode == VM_RUN_BLOCK ||
       (vm_exec_task_h && xTaskGetCurrentTaskHandle() == vm_exec_task_h && s_mode == VM_RUN_STOPPED)) {
     portEXIT_CRITICAL(&s_program_mux);
     return;
@@ -340,43 +293,32 @@ void vm_exec_pass(void) {
   uint64_t t0 = vm_clock_us();
   g_vm_pass_ms = t0 / 1000u;
 
-  /* Events, like the clock, are latched once for the whole pass rather than
-     per section: what this drain pulls out of the queue is what every block
-     sees, start to finish, and anything the last pass did not act on is
-     overwritten by it. One instant per pass, for time and for arrivals alike. */
+  /* Events, like the clock, are latched once for the whole pass: what this
+     drain pulls out of the queue is what every block sees, start to finish. */
   vm_event_drain();
+  vm_override_drain();
 
-  uint16_t n = vm_section_count();
-  uint16_t ran = 0;
-  for (uint16_t s = 0; s < n; s++) {
-    const vm_section_t* sec = vm_section_by_id(s);
-    if (unlikely(!sec)) continue;  // id declared but never bound
-    freeze_point();
-    vm_exec_run_range(sec->start, sec->end);
-    ran++;
-  }
+  report_event_overflow();
+  vm_exec_run_range(0, g_vm_store.reg[VM_REG_BLK].count);
 
-  /* No section actually bound -- either the program declared none, or it
-     declared some and never uploaded them. Both mean the same thing to a pass:
-     the whole order is one section, interruptible nowhere.
-
-     The condition is "none bound", not "none declared", on purpose. A program
-     whose section packets never arrived would otherwise load, count passes and
-     execute nothing at all, with nothing to see -- the worst failure mode
-     available here. Running the order it did load is at least observable, and
-     matches what declaring no sections does. */
-  if (ran == 0) {
-    freeze_point();
-    vm_exec_run_range(0, g_vm_store.reg[VM_REG_BLK].count);
-  }
-
-  // order within the pass: run sections -> sample subscriptions -> clear upd
-  if (s_sample_hook) s_sample_hook();
+  // Order within pass: execute blocks -> sample subscriptions -> clear upd
+  bool completed = !vm_exec_cancelled();
+  if (completed && s_sample_hook) s_sample_hook();
   clear_upd();
 
-  s_last_pass_us = (uint32_t)(vm_clock_us() - t0);
-  s_pass_cnt++;
   portENTER_CRITICAL(&s_program_mux);
+  if (completed) {
+    s_last_pass_us = (uint32_t)(vm_clock_us() - t0);
+    s_pass_cnt++;
+  }
+  if (!s_program_locked && s_mode == VM_RUN_STEP) {
+    s_mode = VM_RUN_FROZEN;
+    s_resume = VM_RUN_SCAN;
+  }
+  if (completed && s_mode == VM_RUN_FROZEN && s_resume == VM_RUN_STEP) s_resume = VM_RUN_SCAN;
+  if (completed && s_mode == VM_RUN_FROZEN && s_resume == VM_RUN_BLOCK_STEP) s_resume = VM_RUN_BLOCK;
+  // Empty programs also consume one NEXT. No dispatch means no gate did it.
+  if (s_mode == VM_RUN_BLOCK_STEP) s_mode = VM_RUN_BLOCK;
   s_pass_active = false;
   portEXIT_CRITICAL(&s_program_mux);
 }
@@ -388,22 +330,15 @@ void vm_exec_pass(void) {
 static void vm_exec_task(void* arg) {
   (void)arg;
   for (;;) {
-    if (s_mode == VM_RUN_STOPPED) {
+    vm_run_mode_e mode = vm_exec_mode();
+    if (mode == VM_RUN_STOPPED || mode == VM_RUN_FROZEN || mode == VM_RUN_SCAN || mode == VM_RUN_BLOCK) {
       vTaskDelay(MSEC(10));
       continue;
     }
 
     vm_exec_pass();
 
-    portENTER_CRITICAL(&s_program_mux);
-    if (!s_program_locked && s_mode == VM_RUN_STEP) s_mode = VM_RUN_FROZEN;
-    portEXIT_CRITICAL(&s_program_mux);
-
-    /* One tick per pass. taskYIELD() would not do: ESP-IDF watches the idle
-       task of core 1 as well as core 0, and idle runs at priority 0, so
-       yielding to an equal-priority peer never lets it run. At
-       CONFIG_FREERTOS_HZ = 100 one tick is exactly the 10 ms floor already
-       promised to the user, and it leaves core 1 usable by device drivers. */
+    // Yield 1 tick per pass to ensure core-1 idle task and drivers run
     vTaskDelay(1);
   }
 }
@@ -437,32 +372,105 @@ void vm_exec_stop(void) {
 
 void vm_exec_set_mode(vm_run_mode_e mode) {
   portENTER_CRITICAL(&s_program_mux);
-  if (!s_program_locked) s_mode = mode;
+  if (!s_program_locked && mode <= VM_RUN_BLOCK_STEP) {
+    if (mode == VM_RUN_FROZEN && s_mode != VM_RUN_FROZEN) s_resume = s_mode;
+    if (mode == VM_RUN_RUNNING) s_selected = VM_RUN_RUNNING;
+    if (mode == VM_RUN_STEP || mode == VM_RUN_SCAN) s_selected = VM_RUN_SCAN;
+    if (mode == VM_RUN_BLOCK || mode == VM_RUN_BLOCK_STEP) s_selected = VM_RUN_BLOCK;
+    s_mode = mode;
+  }
   portEXIT_CRITICAL(&s_program_mux);
 }
 
 vm_run_mode_e vm_exec_mode(void) {
-  return s_mode;
+  return vm_exec_status().mode;
+}
+
+vm_exec_status_t vm_exec_status(void) {
+  portENTER_CRITICAL(&s_program_mux);
+  vm_exec_status_t status = {s_mode, s_next_block, s_pass_active, s_waiting};
+  portEXIT_CRITICAL(&s_program_mux);
+  return status;
+}
+
+err_h vm_exec_control(vm_exec_command_e command) {
+  if (command == VM_EXEC_RESET_TO_START) {
+    (void)vm_exec_program_lock();
+    clear_upd();
+    s_resume = s_selected;
+    vm_exec_program_unlock(s_selected == VM_RUN_RUNNING ? VM_RUN_FROZEN : s_selected);
+    return NULL;
+  }
+  portENTER_CRITICAL(&s_program_mux);
+  bool valid = !s_program_locked;
+  if (valid) switch (command) {
+    case VM_EXEC_SCAN_MODE:
+      s_selected = s_mode = VM_RUN_SCAN;
+      break;
+    case VM_EXEC_BLOCK_MODE:
+      s_selected = s_mode = VM_RUN_BLOCK;
+      break;
+    case VM_EXEC_NORMAL_MODE:
+      s_selected = s_mode = VM_RUN_RUNNING;
+      break;
+    case VM_EXEC_ONCE:
+      valid = s_selected == VM_RUN_SCAN && (s_mode == VM_RUN_SCAN || s_mode == VM_RUN_FROZEN);
+      if (valid) s_mode = VM_RUN_STEP;
+      break;
+    case VM_EXEC_NEXT:
+      valid = s_selected == VM_RUN_BLOCK && s_mode == VM_RUN_BLOCK && (!s_pass_active || s_waiting);
+      if (valid) s_mode = VM_RUN_BLOCK_STEP;
+      break;
+    case VM_EXEC_PAUSE:
+      if (s_mode != VM_RUN_FROZEN) { s_resume = s_mode; s_mode = VM_RUN_FROZEN; }
+      break;
+    case VM_EXEC_RESUME:
+      if (s_mode == VM_RUN_FROZEN) s_mode = s_resume;
+      break;
+    default:
+      valid = false;
+      break;
+  }
+  uint8_t mode = (uint8_t)s_mode;
+  portEXIT_CRITICAL(&s_program_mux);
+  if (!valid) SE_RET_ERR(ERR_VM_EXEC_CONTROL, .command = (uint8_t)command, .mode = mode);
+  return NULL;
 }
 
 uint32_t vm_exec_pass_count(void) {
-  return s_pass_cnt;
+  portENTER_CRITICAL(&s_program_mux);
+  uint32_t count = s_pass_cnt;
+  portEXIT_CRITICAL(&s_program_mux);
+  return count;
 }
 
 uint32_t vm_exec_last_pass_us(void) {
-  return s_last_pass_us;
+  portENTER_CRITICAL(&s_program_mux);
+  uint32_t duration = s_last_pass_us;
+  portEXIT_CRITICAL(&s_program_mux);
+  return duration;
 }
 
 void vm_exec_reset_stats(void) {
+  portENTER_CRITICAL(&s_program_mux);
   s_pass_cnt = 0;
   s_last_pass_us = 0;
+  portEXIT_CRITICAL(&s_program_mux);
 }
 
 void vm_exec_reset(void) {
   vm_event_reset();
+  vm_override_reset();
   s_span_depth = 0;
-  s_wd_word = 0;
-  s_wd_last = 0;
+  s_current_block = NULL;
+  s_child_bounds = (vm_span_t){0, 0};
+  portENTER_CRITICAL(&s_program_mux);
+  s_waiting = false;
+  s_next_block = UINT16_MAX;
+  s_selected = VM_RUN_RUNNING;
+  s_resume = VM_RUN_STOPPED;
+  portEXIT_CRITICAL(&s_program_mux);
+  wd_leave();  // sampler history stays owned by the timer task
   g_vm_block_fault = false;
   g_vm_pass_ms = 0;
   vm_exec_reset_stats();

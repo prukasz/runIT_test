@@ -1,7 +1,7 @@
 file(GLOB SELFTEST_SRCS "${CMAKE_CURRENT_LIST_DIR}/selftest/*.c")
 
-idf_component_register(SRCS "runit.c" "vm_bench.c" ${SELFTEST_SRCS}
-                    INCLUDE_DIRS "include" "selftest"
+idf_component_register(SRCS "runit.c" "runit_guide_test.c" "vm_bench.c" ${SELFTEST_SRCS}
+                    INCLUDE_DIRS "." "include" "selftest"
                     REQUIRES freertos log devices sys_i2c sys_device sys_io sys_errors sys_power ble sys_interface codecs sys_actions VM)
 
 # Matches the VM component's own -O2 (see components/VM/CMakeLists.txt). The

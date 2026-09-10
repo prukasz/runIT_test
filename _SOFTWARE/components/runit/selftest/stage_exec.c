@@ -10,6 +10,10 @@
 #include "vm_event.h"
 #include "vm_exec.h"
 #include "vm_loader.h"
+#include "dec_vm_loader.h"
+#include "sys_interface.h"
+#include "vm_sub.h"
+#include "vm_override.h"
 
 // registry id == block_idx == position in the execution order, so an id reads
 // as "block N" in an assertion and is also where the walk finds it
@@ -62,13 +66,13 @@ static bool ex_counter(uint16_t id, uint16_t acc, uint16_t obj) {
                                               .eno_obj_id = VM_BLOCK_NO_ID});
   if (e != NULL || b == NULL) return false;
 
-  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_get_custom_data(b);
   c->const_cnt = 1;
   c->code_len = sizeof(c_inc);
   c->consts[0].f = 1.0f;
   memcpy(&c->consts[1], c_inc, sizeof(c_inc));
 
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   if (!o) return false;
   o->head.f.upd = 1;
   return true;
@@ -76,27 +80,27 @@ static bool ex_counter(uint16_t id, uint16_t acc, uint16_t obj) {
 
 // how many times the supervisor called the counter writing `obj`
 static uint32_t ex_count(uint16_t obj) {
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   return o ? (uint32_t)*(float*)o->payload : 0xFFFFFFFFu;
 }
 
 static void ex_count_reset(uint16_t obj) {
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   if (o) *(float*)o->payload = 0.0f;
 }
 
 static bool ex_b(uint16_t obj) {
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   return o && *(uint8_t*)o->payload != 0;
 }
 
 static uint8_t ex_upd(uint16_t obj) {
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   return o ? o->head.f.upd : 0xFFu;
 }
 
 static float ex_f(uint16_t obj) {
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   return o ? *(float*)o->payload : -1.0f;
 }
 
@@ -119,7 +123,7 @@ static bool ex_expr(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t o
                                               .eno_obj_id = eno});
   if (e != NULL || b == NULL) return false;
 
-  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_get_custom_data(b);
   c->const_cnt = k_cnt;
   c->code_len = code_len;
   for (uint8_t i = 0; i < k_cnt; i++) c->consts[i].u = ks[i];
@@ -158,12 +162,12 @@ static bool ex_for(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop
   if (e != NULL || b == NULL) return false;
 
   if (custom_len >= sizeof(vm_span_t)) {
-    vm_span_t* sp = (vm_span_t*)vm_block_custom_data(b);
+    vm_span_t* sp = (vm_span_t*)vm_block_get_custom_data(b);
     sp->start = span_start;
     sp->end = span_end;
   }
   if (custom_len >= sizeof(vm_for_code_t)) {
-    vm_for_code_t* c = (vm_for_code_t*)vm_block_custom_data(b);
+    vm_for_code_t* c = (vm_for_code_t*)vm_block_get_custom_data(b);
     c->k_start = lp.start;
     c->k_end = lp.end;
     c->k_step = lp.step;
@@ -174,10 +178,140 @@ static bool ex_for(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop
   return true;
 }
 
+static bool s_step_test_done;
+
+static void ex_pause_at_sample(void) {
+  (void)vm_exec_control(VM_EXEC_PAUSE);
+}
+
+static void ex_step_worker(void* arg) {
+  (void)arg;
+  vm_exec_pass();
+  __atomic_store_n(&s_step_test_done, true, __ATOMIC_RELEASE);
+  vTaskDelete(NULL);
+}
+
+static bool ex_wait_block(uint16_t id) {
+  uint64_t until = vm_clock_us() + 2000000;
+  do {
+    vm_exec_status_t st = vm_exec_status();
+    if (st.waiting && st.mode == VM_RUN_BLOCK && st.next_block == id) return true;
+    vTaskDelay(1);
+  } while (vm_clock_us() < until);
+  return false;
+}
+
+static bool ex_wait_done(void) {
+  uint64_t until = vm_clock_us() + 2000000;
+  while (!__atomic_load_n(&s_step_test_done, __ATOMIC_ACQUIRE)) {
+    if (vm_clock_us() >= until) return false;
+    vTaskDelay(1);
+  }
+  return true;
+}
+
+static void ex_test_controls(void) {
+  ck("empty control packet rejected", dec_vm_loader_decode((const uint8_t[]){0x48}, 1) != NULL);
+  ck("trailing control payload rejected", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_NORMAL_MODE, 0}, 3) != NULL);
+  ck("unknown wire command rejected", dec_vm_loader_decode((const uint8_t[]){0x48, 255}, 2) != NULL);
+  ck("wire selects block mode", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_BLOCK_MODE}, 2) == NULL && vm_exec_mode() == VM_RUN_BLOCK);
+  ck("wire queues next", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_NEXT}, 2) == NULL && vm_exec_mode() == VM_RUN_BLOCK_STEP);
+  ck("wire rewind cancels pending next", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_RESET_TO_START}, 2) == NULL && vm_exec_mode() == VM_RUN_BLOCK);
+  ck("wire scan mode holds", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_SCAN_MODE}, 2) == NULL);
+  uint32_t passes = vm_exec_pass_count();
+  vm_exec_pass();
+  ck("scan mode waits for once", vm_exec_pass_count() == passes);
+  ck("next rejected in scan mode", vm_exec_control(VM_EXEC_NEXT) != NULL);
+  ck("scan once accepted", vm_exec_control(VM_EXEC_ONCE) == NULL);
+  ck("duplicate pending once rejected", vm_exec_control(VM_EXEC_ONCE) != NULL);
+  vm_exec_pass();
+  ck("scan once completed", vm_exec_pass_count() == passes + 1);
+  ck("resume after once keeps scan mode held", vm_exec_control(VM_EXEC_RESUME) == NULL && vm_exec_mode() == VM_RUN_SCAN);
+  vm_exec_set_sample_hook(ex_pause_at_sample);
+  ck("wire scan once accepted", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_ONCE}, 2) == NULL);
+  vm_exec_pass();
+  vm_exec_set_sample_hook(NULL);
+  ck("pause during scan completion does not replay once", vm_exec_control(VM_EXEC_RESUME) == NULL && vm_exec_mode() == VM_RUN_SCAN);
+
+  for (unsigned attempt = 0; attempt < 3; ++attempt) {
+    ex_count_reset(EX_O_TICK);
+    ex_count_reset(EX_O_INNER);
+    passes = vm_exec_pass_count();
+    ck("block mode selected", vm_exec_control(VM_EXEC_BLOCK_MODE) == NULL);
+    ck("once rejected in block mode", vm_exec_control(VM_EXEC_ONCE) != NULL);
+    vm_exec_pass();
+    ck("block mode holds before scan", ex_count(EX_O_TICK) == 0 && vm_exec_pass_count() == passes);
+    ck("first next accepted", vm_exec_control(VM_EXEC_NEXT) == NULL);
+    ck("duplicate pending next rejected", vm_exec_control(VM_EXEC_NEXT) != NULL);
+    __atomic_store_n(&s_step_test_done, false, __ATOMIC_RELEASE);
+    bool started = xTaskCreate(ex_step_worker, "vm_step_test", 4096, NULL, 5, NULL) == pdPASS;
+    ck("step worker started", started);
+    if (!started) { vm_exec_stop(); return; }
+    bool held = ex_wait_block(EX_GATED);
+    ck("one next dispatches only block zero", held && ex_count(EX_O_TICK) == 1 && ex_count(EX_O_INNER) == 0);
+    const uint16_t next[] = {EX_TRIG, EX_SPAN, EX_INNER};
+    for (unsigned i = 0; i < 3 && held; ++i) {
+      ck("next accepted", vm_exec_control(VM_EXEC_NEXT) == NULL);
+      held = ex_wait_block(next[i]);
+      ck("next stops before following dispatch", held);
+    }
+    if (held) {
+      ck("FOR entry does not run its body", ex_count(EX_O_INNER) == 0);
+      uint64_t stamp = vm_now_ms();
+      uint8_t events = vm_event_count();
+      cb_event_t pending = {0};
+      ck("event queues while stepping", vm_event_post(&pending));
+      ck("pause nested body", vm_exec_control(VM_EXEC_PAUSE) == NULL);
+      ck("resume preserves block mode", vm_exec_control(VM_EXEC_RESUME) == NULL && vm_exec_mode() == VM_RUN_BLOCK);
+      ck("next enters first loop iteration", vm_exec_control(VM_EXEC_NEXT) == NULL);
+      held = ex_wait_block(EX_INNER);
+      ck("repeated body is a separate step", held && ex_count(EX_O_INNER) == 1 && vm_now_ms() == stamp);
+      ck("step preserves event snapshot", held && vm_event_count() == events);
+    }
+    if (held && attempt == 0) {
+      ck("next enters second iteration", vm_exec_control(VM_EXEC_NEXT) == NULL);
+      held = ex_wait_block(EX_FAULT);
+      ck("FOR returns without an extra step", held && ex_count(EX_O_INNER) == 2);
+      ck("final block step accepted", vm_exec_control(VM_EXEC_NEXT) == NULL);
+      ck("last step completes scan", ex_wait_done() && vm_exec_pass_count() == passes + 1);
+      ck("pass duration includes operator waits", vm_exec_last_pass_us() > 0);
+    } else if (attempt < 2) {
+      ck("rewind releases nested stack", vm_exec_control(VM_EXEC_RESET_TO_START) == NULL && ex_wait_done());
+      ck("rewind preserves values and excludes cancelled scan", ex_count(EX_O_INNER) == 1 && vm_exec_pass_count() == passes);
+      ck("rewind holds block mode at start", vm_exec_mode() == VM_RUN_BLOCK && !vm_exec_status().scan_active);
+    } else {
+      ck("wire reset releases a nested held scan", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_RESET}, 2) == NULL && ex_wait_done());
+      ck("nested reset unloads safely", vm_exec_mode() == VM_RUN_STOPPED && !vm_block_get_by_id(0) && vm_exec_pass_count() == 0);
+    }
+    // A failed wait must still release the worker before the next fixture.
+    (void)vm_exec_control(VM_EXEC_RESET_TO_START);
+    ck("worker released", ex_wait_done());
+  }
+  ck("wire normal mode runs", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_NORMAL_MODE}, 2) == NULL && vm_exec_mode() == VM_RUN_RUNNING);
+  ck("wire pause normal", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_PAUSE}, 2) == NULL && vm_exec_mode() == VM_RUN_FROZEN);
+  ck("wire resume normal", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_RESUME}, 2) == NULL && vm_exec_mode() == VM_RUN_RUNNING);
+  ck("rewind normal holds", vm_exec_control(VM_EXEC_RESET_TO_START) == NULL && vm_exec_mode() == VM_RUN_FROZEN);
+  ck("resume rewind restores normal", vm_exec_control(VM_EXEC_RESUME) == NULL && vm_exec_mode() == VM_RUN_RUNNING);
+  ck("invalid command rejected", vm_exec_control((vm_exec_command_e)255) != NULL);
+  vm_exec_stop();
+  ck("wire reset unloads program", dec_vm_loader_decode((const uint8_t[]){0x48, VM_EXEC_RESET}, 2) == NULL &&
+     vm_loader_state() == VM_LOAD_EMPTY && !vm_block_get_by_id(0) && vm_exec_pass_count() == 0);
+  ck("open empty stepping fixture", vm_loader_open(0, 0, 0, 1024) == NULL);
+  (void)vm_exec_control(VM_EXEC_BLOCK_MODE);
+  (void)vm_exec_control(VM_EXEC_NEXT);
+  vm_exec_set_sample_hook(ex_pause_at_sample);
+  vm_exec_pass();
+  vm_exec_set_sample_hook(NULL);
+  ck("empty scan consumes next even if paused during completion", vm_exec_pass_count() == 1 &&
+     vm_exec_control(VM_EXEC_RESUME) == NULL && vm_exec_mode() == VM_RUN_BLOCK);
+  vm_loader_reset();
+}
+
 void test_exec_pass(void) {
   ESP_LOGI(TAG, "-- R: the pass --");
   vm_loader_reset();
-  direct_arena_reset();
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 32, [VM_REG_ACC] = 24, [VM_REG_BLK] = 6};
+  ck("execution arena opens", vm_store_open(DIRECT_POOL, counts) == NULL);
 
   /* The gate and the trigger are upd_resetable, because the end-of-pass sweep
      is one of the things under test and a non-resettable object is deliberately
@@ -213,8 +347,8 @@ void test_exec_pass(void) {
   accs = accs && ex_acc(4, EX_O_DIV) != NULL;
   ck("accessors built", accs);
 
-  *(float*)vm_obj_by_id(EX_O_DIV)->payload = 2.0f;
-  vm_obj_by_id(EX_O_DIV)->head.f.upd = 1;  // never swept, so EX_FAULT runs every pass
+  *(float*)vm_obj_get_by_id(EX_O_DIV)->payload = 2.0f;
+  vm_obj_get_by_id(EX_O_DIV)->head.f.upd = 1;  // never swept, so EX_FAULT runs every pass
 
   /* 6.0 / divisor -- a program that succeeds on pass 1 and divides by zero on
      pass 2, which is how on_error is exercised now that there is no block
@@ -266,7 +400,7 @@ void test_exec_pass(void) {
   ck("an ungated block was called and acted", ex_count(EX_O_TICK) == 1);
   ck("an enabled router decided", ex_b(EX_O_BR1) && !ex_b(EX_O_BR0) && ex_b(EX_ENO_GATED));
   ck("a block asking what arrived acted on a fresh input", near_f(ex_f(EX_O_HELD), 1.0f) && ex_b(EX_ENO_TRIG));
-  ck("...and latched that it was triggered", (vm_block_by_id(EX_TRIG)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
+  ck("...and latched that it was triggered", (vm_block_get_by_id(EX_TRIG)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
 
   /* Twice, not three times. Three would mean the outer walk ran the body as
      well as the owner running it -- which is the whole reason a claim exists. */
@@ -283,12 +417,12 @@ void test_exec_pass(void) {
      `upd` standing from when they were written. Cleared by hand here, because
      what the next pass has to show is that nothing *sets* it -- a stand-down
      that is loud would read as an arrival to everything below. */
-  vm_obj_by_id(EX_O_HELD)->head.f.upd = 0;
-  vm_obj_by_id(EX_ENO_TRIG)->head.f.upd = 0;
-  vm_obj_by_id(EX_ENO_FAULT)->head.f.upd = 0;
-  vm_obj_by_id(EX_O_BR1)->head.f.upd = 0;
+  vm_obj_get_by_id(EX_O_HELD)->head.f.upd = 0;
+  vm_obj_get_by_id(EX_ENO_TRIG)->head.f.upd = 0;
+  vm_obj_get_by_id(EX_ENO_FAULT)->head.f.upd = 0;
+  vm_obj_get_by_id(EX_O_BR1)->head.f.upd = 0;
   *(uint8_t*)gate->payload = 0;
-  *(float*)vm_obj_by_id(EX_O_DIV)->payload = 0.0f;
+  *(float*)vm_obj_get_by_id(EX_O_DIV)->payload = 0.0f;
 
   vm_exec_pass();
 
@@ -319,14 +453,6 @@ void test_exec_pass(void) {
   ck("...and leaves what was published standing", near_f(ex_f(EX_O_KEPT), 3.0f));
   ck("...taken false quietly, like every other stand-down", ex_upd(EX_ENO_FAULT) == 0);
 
-  /* ---- sections partition the same order, and change nothing about it ---- */
-  ck("sections over the whole order", vm_section_create(0, EX_TICK, EX_SPAN) == NULL && vm_section_create(1, EX_SPAN, EX_FAULT + 1) == NULL);
-  ex_count_reset(EX_O_TICK);
-  ex_count_reset(EX_O_INNER);
-  vm_exec_pass();
-  ck("every section runs every pass", ex_count(EX_O_TICK) == 1);
-  ck("a span inside a section still runs from its owner only", ex_count(EX_O_INNER) == 2);
-
   /* That the pass timer records something, and nothing about how long.
      This stage runs a block that deliberately fails, and reporting that
      failure goes out over UART from the error handler -- which can preempt
@@ -335,7 +461,31 @@ void test_exec_pass(void) {
      (one tick per pass), not of a pass measured with a logger in it; vm_bench.c
      is where per-access cost is actually measured. */
   ESP_LOGI(TAG, "  last pass: %lu us over 6 blocks", (unsigned long)vm_exec_last_pass_us());
-  ck("the pass timer records a duration", vm_exec_last_pass_us() > 0);
+
+  uint32_t passes = vm_exec_pass_count();
+  uint64_t stamp = vm_now_ms();
+  cb_event_t pending = {0};
+  vm_event_reset();
+  ck("event queues before freezing", vm_event_post(&pending));
+  vm_exec_set_mode(VM_RUN_FROZEN);
+  vm_exec_pass();
+  ck("a frozen pass does not start or latch time", vm_exec_pass_count() == passes && vm_now_ms() == stamp);
+  ck("a frozen pass leaves pending events queued", vm_event_count() == 0);
+  vm_exec_set_mode(VM_RUN_STEP);
+  vm_exec_pass();
+  ck("step completes one pass and freezes", vm_exec_pass_count() == passes + 1 && vm_exec_mode() == VM_RUN_FROZEN);
+  ck("step latches the pending event", vm_event_count() == 1);
+  vm_exec_pass();
+  ck("step does not admit the next pass", vm_exec_pass_count() == passes + 1);
+  vm_exec_set_mode(VM_RUN_STOPPED);
+
+  vm_for_code_t* loop = (vm_for_code_t*)vm_block_get_custom_data(vm_block_get_by_id(EX_SPAN));
+  loop->span = (vm_span_t){EX_SPAN, EX_INNER + 1};
+  ex_count_reset(EX_O_INNER);
+  vm_exec_pass();
+  ck("self-containing span cannot recurse; body only runs inline", ex_count(EX_O_INNER) == 1 && !ex_b(EX_ENO_SPAN));
+  loop->span = (vm_span_t){EX_INNER, EX_INNER + 1};
+  ex_test_controls();
 }
 
 /* ==========================================================================
@@ -438,28 +588,28 @@ void test_events(void) {
 #define EXPR_ENO(n) ((uint16_t)(30 + (n)))  // block n's ENO
 
 static float out_f(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(EXPR_OUT(n));
+  vm_obj_h o = vm_obj_get_by_id(EXPR_OUT(n));
   return o ? *(float*)o->payload : -1.0f;
 }
 
 static uint32_t out_u(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(EXPR_OUT(n));
+  vm_obj_h o = vm_obj_get_by_id(EXPR_OUT(n));
   return o ? *(uint32_t*)o->payload : 0xDEADBEEFu;
 }
 
 static bool eno_of(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(EXPR_ENO(n));
+  vm_obj_h o = vm_obj_get_by_id(EXPR_ENO(n));
   return o && *(uint8_t*)o->payload != 0;
 }
 
 // the block's own view of its fault episode -- VM_EXPR_RT_FAULTED
 static uint8_t expr_rt(uint16_t n) {
-  vm_block_h b = vm_block_by_id(n);
-  return b ? ((const vm_expr_code_t*)vm_block_custom_data(b))->rt : 0xFFu;
+  vm_block_h b = vm_block_get_by_id(n);
+  return b ? ((const vm_expr_code_t*)vm_block_get_custom_data(b))->rt : 0xFFu;
 }
 
 static bool cfg_bad(uint16_t n) {
-  vm_block_h b = vm_block_by_id(n);
+  vm_block_h b = vm_block_get_by_id(n);
   return b && (b->cfg.rt & VM_BLK_RT_CFG_BAD) != 0;
 }
 
@@ -484,7 +634,7 @@ static bool expr_block(uint16_t id, uint8_t type, const uint16_t* ins, uint8_t i
   if (e != NULL || b == NULL) return false;
   if (custom_len < vm_expr_size(k_cnt, code_len)) return true;  // the deliberately-too-short case
 
-  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_get_custom_data(b);
   c->const_cnt = k_cnt;
   c->code_len = code_len;
   for (uint8_t i = 0; i < k_cnt; i++) c->consts[i].u = ks[i];
@@ -501,7 +651,7 @@ static bool expr_blk(uint16_t id, uint8_t type, const uint16_t* ins, uint8_t in_
 void test_expr(void) {
   ESP_LOGI(TAG, "-- T: expression blocks --");
   vm_loader_reset();
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 48, [VM_REG_ACC] = 8, [VM_REG_BLK] = 16, [VM_REG_SEC] = 2};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 48, [VM_REG_ACC] = 8, [VM_REG_BLK] = 16};
   (void)vm_store_open(DIRECT_POOL, counts);
 
   /* Inputs 0..4 are deliberately *not* upd_resetable, so their `upd` survives
@@ -511,7 +661,7 @@ void test_expr(void) {
   bool built = true;
   for (uint16_t i = 0; i < 5; i++) {
     built = built && mk(i, i < 3 ? VM_OBJ_F : VM_OBJ_U32, 1, NULL, true) != NULL;
-    if (built) vm_obj_by_id(i)->head.f.upd = 1;
+    if (built) vm_obj_get_by_id(i)->head.f.upd = 1;
   }
   vm_obj_head_t sh = hd(VM_OBJ_F, 1);
   sh.f.mutable = 1;
@@ -519,11 +669,11 @@ void test_expr(void) {
   vm_obj_h stale_in = NULL;
   built = built && vm_obj_create(&stale_in, 5, &sh, NULL) == NULL;
 
-  *(float*)vm_obj_by_id(0)->payload = 3.0f;   // A
-  *(float*)vm_obj_by_id(1)->payload = 4.0f;   // B
-  *(float*)vm_obj_by_id(2)->payload = 0.0f;   // the divisor, zero to begin with
-  *(uint32_t*)vm_obj_by_id(3)->payload = 0x12345678u;
-  *(uint32_t*)vm_obj_by_id(4)->payload = 8u;
+  *(float*)vm_obj_get_by_id(0)->payload = 3.0f;   // A
+  *(float*)vm_obj_get_by_id(1)->payload = 4.0f;   // B
+  *(float*)vm_obj_get_by_id(2)->payload = 0.0f;   // the divisor, zero to begin with
+  *(uint32_t*)vm_obj_get_by_id(3)->payload = 0x12345678u;
+  *(uint32_t*)vm_obj_get_by_id(4)->payload = 8u;
   *(float*)stale_in->payload = 5.0f;
   stale_in->head.f.upd = 1;
 
@@ -625,8 +775,8 @@ void test_expr(void) {
 
   /* ---- pass 2: the divisor is no longer zero, the passthrough's input is
           no longer fresh ---- */
-  *(float*)vm_obj_by_id(2)->payload = 2.0f;
-  vm_obj_by_id(EXPR_ENO(13))->head.f.upd = 0;
+  *(float*)vm_obj_get_by_id(2)->payload = 2.0f;
+  vm_obj_get_by_id(EXPR_ENO(13))->head.f.upd = 0;
   vm_exec_pass();
 
   ck("the same expression recovers once the data does", near_f(out_f(4), 1.5f) && eno_of(4));
@@ -638,7 +788,7 @@ void test_expr(void) {
      only the flow is withdrawn. */
   ck("a stale input means the expression does not run", !eno_of(13));
   ck("...and its result stands", near_f(out_f(13), 5.0f));
-  ck("...with the ENO taken false quietly", vm_obj_by_id(EXPR_ENO(13))->head.f.upd == 0);
+  ck("...with the ENO taken false quietly", vm_obj_get_by_id(EXPR_ENO(13))->head.f.upd == 0);
 }
 
 /* ==========================================================================
@@ -662,17 +812,17 @@ void test_expr(void) {
 static const uint8_t s_br_q[7] = {2, 4, 4, 4, 4, 1, 2};  // q_cnt per block, in order
 
 static bool br_out(uint16_t n, uint8_t k) {
-  vm_obj_h o = vm_obj_by_id(BR_OUT(n, k));
+  vm_obj_h o = vm_obj_get_by_id(BR_OUT(n, k));
   return o && *(uint8_t*)o->payload != 0;
 }
 
 static bool br_eno(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(BR_ENO(n));
+  vm_obj_h o = vm_obj_get_by_id(BR_ENO(n));
   return o && *(uint8_t*)o->payload != 0;
 }
 
 static uint8_t br_upd(uint16_t n, uint8_t k) {
-  vm_obj_h o = vm_obj_by_id(BR_OUT(n, k));
+  vm_obj_h o = vm_obj_get_by_id(BR_OUT(n, k));
   return o ? o->head.f.upd : 0xFFu;
 }
 
@@ -711,7 +861,7 @@ static bool br_block(uint16_t id, uint8_t type, uint16_t in_acc, uint16_t en_acc
 void test_branch(void) {
   ESP_LOGI(TAG, "-- U: flow routers --");
   vm_loader_reset();
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 48, [VM_REG_ACC] = 8, [VM_REG_BLK] = 8, [VM_REG_SEC] = 2};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 48, [VM_REG_ACC] = 8, [VM_REG_BLK] = 8};
   (void)vm_store_open(DIRECT_POOL, counts);
 
   /* 0 condition, 1 selector, 2 gate, 3 a fractional selector, 4 a negative one.
@@ -735,11 +885,11 @@ void test_branch(void) {
   for (uint16_t i = 0; i < 5; i++) accs = accs && ex_acc(i, i) != NULL;
   ck("accessors built", accs);
 
-  *(float*)vm_obj_by_id(0)->payload = 1.0f;     // condition: true
-  *(uint32_t*)vm_obj_by_id(1)->payload = 2u;    // selector: branch 2
-  *(uint8_t*)vm_obj_by_id(2)->payload = 1;      // gate: open
-  *(float*)vm_obj_by_id(3)->payload = 2.6f;     // rounds to branch 3, not 2
-  *(float*)vm_obj_by_id(4)->payload = -1.0f;    // no such branch
+  *(float*)vm_obj_get_by_id(0)->payload = 1.0f;     // condition: true
+  *(uint32_t*)vm_obj_get_by_id(1)->payload = 2u;    // selector: branch 2
+  *(uint8_t*)vm_obj_get_by_id(2)->payload = 1;      // gate: open
+  *(float*)vm_obj_get_by_id(3)->payload = 2.6f;     // rounds to branch 3, not 2
+  *(float*)vm_obj_get_by_id(4)->payload = -1.0f;    // no such branch
 
   bool blk = true;
   blk = blk && br_block(0, VM_BLK_IF, 0, VM_BLOCK_NO_ID);
@@ -755,8 +905,8 @@ void test_branch(void) {
   /* The property the whole design rests on: these blocks are pure shape. What
      the loader allocates is the header plus the three pin arrays and not one
      byte more, so there is no private state to go stale between passes. */
-  vm_block_h b0 = vm_block_by_id(0);
-  ck("a router carries no payload", b0 && b0->cfg.custom_len == 0 && vm_block_total_size(b0) == vm_block_size(1, 2, 0, 0));
+  vm_block_h b0 = vm_block_get_by_id(0);
+  ck("a router carries no payload", b0 && b0->cfg.custom_len == 0 && vm_block_get_total_size(b0) == vm_block_calc_size(1, 2, 0, 0));
 
   /* ---- pass 1: everything decides ---- */
   vm_exec_reset_stats();
@@ -766,7 +916,7 @@ void test_branch(void) {
   ck("a selector takes exactly its own branch", one_hot(1, 2) && br_eno(1));
   ck("an open gate lets the router decide", one_hot(2, 2) && br_eno(2));
   /* 2.6 lands on branch 3 rather than branch 2, because a float read into an
-     int32 pin rounds -- vm_read_as_i32(), the same conversion every other pin
+     int32 pin rounds -- vm_get_as_i32(), the same conversion every other pin
      in the program gets. A router that truncated would be the odd one out. */
   ck("a fractional selector rounds, as every pin read does", one_hot(3, 3) && br_eno(3));
 
@@ -791,15 +941,15 @@ void test_branch(void) {
   ck("...and a well-formed router is not latched", !cfg_bad(0) && !cfg_bad(1) && !cfg_bad(2));
 
   /* ---- pass 2: the condition flips, the selection moves, the gate closes ---- */
-  *(float*)vm_obj_by_id(0)->payload = 0.0f;
-  *(uint32_t*)vm_obj_by_id(1)->payload = 0u;
-  *(uint8_t*)vm_obj_by_id(2)->payload = 0;
+  *(float*)vm_obj_get_by_id(0)->payload = 0.0f;
+  *(uint32_t*)vm_obj_get_by_id(1)->payload = 0u;
+  *(uint8_t*)vm_obj_get_by_id(2)->payload = 0;
   /* These branch objects are not upd_resetable, so the end-of-pass sweep never
      touches them and pass 1's loud write is still standing. Clearing by hand is
      what makes the next two assertions about *this* pass rather than the last. */
   for (uint8_t k = 0; k < 4; k++) {
-    vm_obj_by_id(BR_OUT(1, k))->head.f.upd = 0;
-    vm_obj_by_id(BR_OUT(2, k))->head.f.upd = 0;
+    vm_obj_get_by_id(BR_OUT(1, k))->head.f.upd = 0;
+    vm_obj_get_by_id(BR_OUT(2, k))->head.f.upd = 0;
   }
   vm_exec_pass();
 
@@ -816,15 +966,15 @@ void test_branch(void) {
   ck("...quietly, so nothing below reads it as an arrival", br_upd(2, 2) == 0);
 
   /* ---- pass 3: the selector leaves the case set entirely ---- */
-  *(uint32_t*)vm_obj_by_id(1)->payload = 9u;
+  *(uint32_t*)vm_obj_get_by_id(1)->payload = 9u;
   vm_exec_pass();
 
   ck("a selector past the last case takes no branch", one_hot(1, -1) && !br_eno(1));
   ck("...and still is not a config fault", !cfg_bad(1));
 
   /* ---- pass 4: and comes back ---- */
-  *(uint32_t*)vm_obj_by_id(1)->payload = 3u;
-  *(uint8_t*)vm_obj_by_id(2)->payload = 1;
+  *(uint32_t*)vm_obj_get_by_id(1)->payload = 3u;
+  *(uint8_t*)vm_obj_get_by_id(2)->payload = 1;
   vm_exec_pass();
 
   ck("a selector returning to range routes again", one_hot(1, 3) && br_eno(1));
@@ -884,12 +1034,12 @@ static const uint8_t s_for_bodies[] = {1, 3, 5, 7, 9, 11, 14, 18, 20, 22};
 #define FOR_BODY_CNT ((uint8_t)(sizeof(s_for_bodies) / sizeof(s_for_bodies[0])))
 
 static bool for_eno(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(FOR_ENO(n));
+  vm_obj_h o = vm_obj_get_by_id(FOR_ENO(n));
   return o && *(uint8_t*)o->payload != 0;
 }
 
 static uint32_t for_idx(uint16_t obj_id) {
-  vm_obj_h o = vm_obj_by_id(obj_id);
+  vm_obj_h o = vm_obj_get_by_id(obj_id);
   return o ? *(uint32_t*)o->payload : 0xFFFFFFFFu;
 }
 
@@ -904,9 +1054,9 @@ static void for_counters_reset(void) {
 
 // the block's own view of its bad-loop episode -- VM_FOR_RT_BAD
 static uint8_t for_rt(uint16_t n) {
-  vm_block_h b = vm_block_by_id(n);
+  vm_block_h b = vm_block_get_by_id(n);
   if (!b || b->cfg.custom_len < sizeof(vm_for_code_t)) return 0xFFu;
-  return ((const vm_for_code_t*)vm_block_custom_data(b))->rt;
+  return ((const vm_for_code_t*)vm_block_get_custom_data(b))->rt;
 }
 
 // a loop with no pins and no iterator output, which most of the table is
@@ -923,7 +1073,7 @@ static bool for_idxed(uint16_t id, uint16_t span_start, uint16_t span_end, for_l
 void test_for(void) {
   ESP_LOGI(TAG, "-- V: FOR and the span walk --");
   vm_loader_reset();
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 80, [VM_REG_ACC] = 16, [VM_REG_BLK] = 24, [VM_REG_SEC] = 2};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 80, [VM_REG_ACC] = 16, [VM_REG_BLK] = 24};
   (void)vm_store_open(8192, counts);
 
   bool built = true;
@@ -947,8 +1097,8 @@ void test_for(void) {
   for (uint8_t i = 0; i < FOR_BODY_CNT; i++) accs = accs && ex_acc((uint16_t)(4 + i), FOR_CNT(s_for_bodies[i])) != NULL;
   ck("accessors built", accs);
 
-  *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 3u;
-  *(uint8_t*)vm_obj_by_id(FOR_GATE)->payload = 0;  // block 2 stays shut
+  *(uint32_t*)vm_obj_get_by_id(FOR_END)->payload = 3u;
+  *(uint8_t*)vm_obj_get_by_id(FOR_GATE)->payload = 0;  // block 2 stays shut
 
   static const uint8_t c_fold[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_ADD};  // acc + i
   static const uint8_t c_badop[] = {VM_EXPR_IN, 0, 0xFE};                       // fails on every call
@@ -1030,7 +1180,7 @@ void test_for(void) {
   /* The point of the whole mechanism: a body that varies per turn, and a fold
      across turns. `upd` is swept at the end of the *pass*, not per turn, so the
      accumulator reads its own last value and re-triggers -- 0+1+2+3. */
-  ck("a body accumulates across turns", near_f(*(float*)vm_obj_by_id(FOR_ACC)->payload, 6.0f));
+  ck("a body accumulates across turns", near_f(*(float*)vm_obj_get_by_id(FOR_ACC)->payload, 6.0f));
 
   /* The three shapes a plain repeat count cannot say. */
   ck("for (i=10; i>0; i-=2) counts down", for_cnt(18) == 5 && for_idx(FOR_IDXD) == 2u);
@@ -1044,17 +1194,17 @@ void test_for(void) {
 
   /* ---- pass 2: the live end asks for more turns than the budget ---- */
   for_counters_reset();
-  *(float*)vm_obj_by_id(FOR_ACC)->payload = 0.0f;
-  *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 9u;
+  *(float*)vm_obj_get_by_id(FOR_ACC)->payload = 0.0f;
+  *(uint32_t*)vm_obj_get_by_id(FOR_END)->payload = 9u;
   vm_exec_pass();
 
   ck("a pin asking past the budget gets the budget", for_cnt(5) == 5);
   ck("...and is latched, so a stuck loop reports once", (for_rt(4) & VM_FOR_RT_BAD) != 0);
-  ck("the fold repeats identically on the next pass", near_f(*(float*)vm_obj_by_id(FOR_ACC)->payload, 6.0f));
+  ck("the fold repeats identically on the next pass", near_f(*(float*)vm_obj_get_by_id(FOR_ACC)->payload, 6.0f));
 
   /* ---- pass 3: back inside the budget ---- */
   for_counters_reset();
-  *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 2u;
+  *(uint32_t*)vm_obj_get_by_id(FOR_END)->payload = 2u;
   vm_exec_pass();
 
   ck("an end the loop can reach is honoured", for_cnt(5) == 2);
@@ -1062,7 +1212,7 @@ void test_for(void) {
 
   /* ---- pass 4: the condition is false before the first turn ---- */
   for_counters_reset();
-  *(uint32_t*)vm_obj_by_id(FOR_END)->payload = 0u;
+  *(uint32_t*)vm_obj_get_by_id(FOR_END)->payload = 0u;
   vm_exec_pass();
 
   ck("a condition false at the start runs the body no times", for_cnt(5) == 0 && !for_eno(4));
@@ -1169,17 +1319,17 @@ static bool set_blk(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t e
 }
 
 static float set_f(uint16_t obj) {
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   return o ? *(float*)o->payload : -1.0f;
 }
 
 static float set_at(uint16_t obj, uint8_t i) {
-  vm_obj_h o = vm_obj_by_id(obj);
+  vm_obj_h o = vm_obj_get_by_id(obj);
   return o ? ((const float*)o->payload)[i] : -1.0f;
 }
 
 static bool set_eno(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(SET_ENO(n));
+  vm_obj_h o = vm_obj_get_by_id(SET_ENO(n));
   return o && *(uint8_t*)o->payload != 0;
 }
 
@@ -1189,7 +1339,7 @@ void test_set(void) {
   /* Accessor ids track object ids in this stage, so the accessor registry has
      to reach as far as the highest object an accessor is rooted at, not merely
      as far as the number of accessors. */
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 80, [VM_REG_ACC] = 48, [VM_REG_BLK] = 20, [VM_REG_SEC] = 2};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 80, [VM_REG_ACC] = 48, [VM_REG_BLK] = 20};
   (void)vm_store_open(16384, counts);
 
   bool built = true;
@@ -1240,38 +1390,38 @@ void test_set(void) {
      needs and the whole reason it can allocate nothing. SET_T_BAD gets one row
      and is left a slot short on purpose. */
   bool wired = built;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SRC), 0, vm_obj_by_id(SET_R_S0)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SRC), 1, vm_obj_by_id(SET_R_S1)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_DST), 0, vm_obj_by_id(SET_R_D0)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_DST), 1, vm_obj_by_id(SET_R_D1)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_BAD), 0, vm_obj_by_id(SET_R_D0)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_PTRS), 0, vm_obj_by_id(SET_PL_S)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_PTRD), 0, vm_obj_by_id(SET_PL_D)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_SRC), 0, vm_obj_get_by_id(SET_R_S0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_SRC), 1, vm_obj_get_by_id(SET_R_S1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_DST), 0, vm_obj_get_by_id(SET_R_D0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_DST), 1, vm_obj_get_by_id(SET_R_D1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_BAD), 0, vm_obj_get_by_id(SET_R_D0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_PTRS), 0, vm_obj_get_by_id(SET_PL_S)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_PTRD), 0, vm_obj_get_by_id(SET_PL_D)) == NULL;
   // two cycles of equal shape -- the walk cannot tell them apart from a deep tree
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_A), 0, vm_obj_by_id(SET_CYC_B)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_B), 0, vm_obj_by_id(SET_CYC_A)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_C), 0, vm_obj_by_id(SET_CYC_D)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_CYC_D), 0, vm_obj_by_id(SET_CYC_C)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SEMPTY), 0, vm_obj_by_id(SET_R_S0)) == NULL;  // slot 1 left empty
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_ROMUT), 0, vm_obj_by_id(SET_R_RO)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_ROMUT), 1, vm_obj_by_id(SET_R_D1)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_NARROW), 0, vm_obj_by_id(SET_R_NARROW)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_NARROW), 1, vm_obj_by_id(SET_R_D1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_CYC_A), 0, vm_obj_get_by_id(SET_CYC_B)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_CYC_B), 0, vm_obj_get_by_id(SET_CYC_A)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_CYC_C), 0, vm_obj_get_by_id(SET_CYC_D)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_CYC_D), 0, vm_obj_get_by_id(SET_CYC_C)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_SEMPTY), 0, vm_obj_get_by_id(SET_R_S0)) == NULL;  // slot 1 left empty
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_ROMUT), 0, vm_obj_get_by_id(SET_R_RO)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_ROMUT), 1, vm_obj_get_by_id(SET_R_D1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_NARROW), 0, vm_obj_get_by_id(SET_R_NARROW)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_NARROW), 1, vm_obj_get_by_id(SET_R_D1)) == NULL;
   // SHARE and SHARE2 already name the same row 0: nothing to move there
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE), 0, vm_obj_by_id(SET_R_S0)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE), 1, vm_obj_by_id(SET_R_S1)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE2), 0, vm_obj_by_id(SET_R_S0)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_T_SHARE2), 1, vm_obj_by_id(SET_R_SHARE)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_L3_S), 0, vm_obj_by_id(SET_T_SRC)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(SET_L3_D), 0, vm_obj_by_id(SET_T_DST)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_SHARE), 0, vm_obj_get_by_id(SET_R_S0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_SHARE), 1, vm_obj_get_by_id(SET_R_S1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_SHARE2), 0, vm_obj_get_by_id(SET_R_S0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_T_SHARE2), 1, vm_obj_get_by_id(SET_R_SHARE)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_L3_S), 0, vm_obj_get_by_id(SET_T_SRC)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(SET_L3_D), 0, vm_obj_get_by_id(SET_T_DST)) == NULL;
   ck("tables wired", wired);
   for (uint8_t i = 0; i < 3; i++) {
-    ((float*)vm_obj_by_id(SET_R_S0)->payload)[i] = (float)(i + 1);  // 1 2 3
-    ((float*)vm_obj_by_id(SET_R_S1)->payload)[i] = (float)(i + 4);  // 4 5 6
+    ((float*)vm_obj_get_by_id(SET_R_S0)->payload)[i] = (float)(i + 1);  // 1 2 3
+    ((float*)vm_obj_get_by_id(SET_R_S1)->payload)[i] = (float)(i + 4);  // 4 5 6
   }
-  vm_obj_by_id(SET_T_SRC)->head.f.upd = 1;  // link_direct already set it; say so out loud
+  vm_obj_get_by_id(SET_T_SRC)->head.f.upd = 1;  // link_direct already set it; say so out loud
 
-  *(uint8_t*)vm_obj_by_id(SET_GATE_OPEN)->payload = 1;  // block 11 is armed
+  *(uint8_t*)vm_obj_get_by_id(SET_GATE_OPEN)->payload = 1;  // block 11 is armed
 
   bool accs = true;
   for (uint16_t i = SET_SRC; i <= SET_T_BAD; i++) accs = accs && ex_acc(i, i) != NULL;
@@ -1286,13 +1436,13 @@ void test_set(void) {
   if (accs) (void)vm_accessor_cache_build(a_elem);
   ck("accessors built", accs);
 
-  *(float*)vm_obj_by_id(SET_SRC)->payload = 12.5f;
-  *(float*)vm_obj_by_id(SET_SRC1)->payload = 1.0f;
-  *(float*)vm_obj_by_id(SET_SRC8)->payload = 2.0f;
-  for (uint8_t i = 0; i < 4; i++) ((float*)vm_obj_by_id(SET_ARRS)->payload)[i] = (float)(i + 1);
-  *(uint8_t*)vm_obj_by_id(SET_GATE)->payload = 0;  // block 2 stays shut
-  *(float*)vm_obj_by_id(SET_PL_S)->payload = 8.5f;
-  vm_obj_by_id(SET_PTRS)->head.f.upd = 1;
+  *(float*)vm_obj_get_by_id(SET_SRC)->payload = 12.5f;
+  *(float*)vm_obj_get_by_id(SET_SRC1)->payload = 1.0f;
+  *(float*)vm_obj_get_by_id(SET_SRC8)->payload = 2.0f;
+  for (uint8_t i = 0; i < 4; i++) ((float*)vm_obj_get_by_id(SET_ARRS)->payload)[i] = (float)(i + 1);
+  *(uint8_t*)vm_obj_get_by_id(SET_GATE)->payload = 0;  // block 2 stays shut
+  *(float*)vm_obj_get_by_id(SET_PL_S)->payload = 8.5f;
+  vm_obj_get_by_id(SET_PTRS)->head.f.upd = 1;
 
   bool blk = true;
   blk = blk && set_blk(0, (const uint16_t[]){SET_SRC, SET_DST}, 2, VM_BLOCK_NO_ID, SET_ENO(0));
@@ -1316,8 +1466,8 @@ void test_set(void) {
   vm_exec_pass();
 
   ck("a fresh source copies into the target", near_f(set_f(SET_DST), 12.5f) && set_eno(0));
-  ck("...and the copy is loud, so a reader downstream sees news", vm_obj_by_id(SET_DST)->head.f.upd != 0);
-  ck("...and the block latched that it was triggered", (vm_block_by_id(0)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
+  ck("...and the copy is loud, so a reader downstream sees news", vm_obj_get_by_id(SET_DST)->head.f.upd != 0);
+  ck("...and the block latched that it was triggered", (vm_block_get_by_id(0)->cfg.rt & VM_BLK_RT_TRIGGERED) != 0);
 
   /* A Set moves the whole payload, so an array arrives as an array. This is
      the case a scalar store could not do at all. */
@@ -1329,33 +1479,33 @@ void test_set(void) {
   ck("a gated Set does not copy however fresh the source", near_f(set_f(SET_DST2), 0.0f) && !set_eno(2));
 
   /* Every refusal has the same shape: nothing published, flow withdrawn. */
-  ck("a type mismatch is refused", *(uint32_t*)vm_obj_by_id(SET_BAD)->payload == 0u && !set_eno(3));
+  ck("a type mismatch is refused", *(uint32_t*)vm_obj_get_by_id(SET_BAD)->payload == 0u && !set_eno(3));
   ck("one pin is not a Set", !set_eno(6) && cfg_bad(6));
   ck("an unwired target is not a Set", !set_eno(7) && cfg_bad(7));
   ck("...and neither of those is latched on a well-formed Set", !cfg_bad(0) && !cfg_bad(4));
-  ck("the sweep clears a resetable source's upd", vm_obj_by_id(SET_SRC1)->head.f.upd == 0);
+  ck("the sweep clears a resetable source's upd", vm_obj_get_by_id(SET_SRC1)->head.f.upd == 0);
 
   /* One pointer cell is the smallest deep copy there is: the value under the
      source slot lands under the target slot, and the two slots still name
      different objects afterwards. A byte copy would have made them one. */
   ck("a pointer cell is walked, so the value under it moves", near_f(set_f(SET_PL_D), 8.5f) && set_eno(5));
   ck("...and the two cells still point at objects of their own",
-     ((const vm_obj_h*)vm_obj_by_id(SET_PTRS)->payload)[0] != ((const vm_obj_h*)vm_obj_by_id(SET_PTRD)->payload)[0]);
+     ((const vm_obj_h*)vm_obj_get_by_id(SET_PTRS)->payload)[0] != ((const vm_obj_h*)vm_obj_get_by_id(SET_PTRD)->payload)[0]);
 
   /* ---- the 2D case ---- */
   ck("a 2D table copies row by row",
      near_f(set_at(SET_R_D0, 0), 1.0f) && near_f(set_at(SET_R_D0, 2), 3.0f) && near_f(set_at(SET_R_D1, 0), 4.0f) &&
          near_f(set_at(SET_R_D1, 2), 6.0f) && set_eno(9));
   ck("...marking both the rows written and the table above them fresh",
-     vm_obj_by_id(SET_R_D0)->head.f.upd != 0 && vm_obj_by_id(SET_T_DST)->head.f.upd != 0);
+     vm_obj_get_by_id(SET_R_D0)->head.f.upd != 0 && vm_obj_get_by_id(SET_T_DST)->head.f.upd != 0);
 
   /* The whole reason the walk exists. A shallow copy of the pointer bytes
      would have left both tables naming the same rows, and this edit would
      show up in the source -- somewhere else entirely in the program, long
      after the Set ran. */
   ck("the two tables kept their own rows",
-     ((const vm_obj_h*)vm_obj_by_id(SET_T_SRC)->payload)[0] != ((const vm_obj_h*)vm_obj_by_id(SET_T_DST)->payload)[0]);
-  ((float*)vm_obj_by_id(SET_R_D0)->payload)[0] = -1.0f;
+     ((const vm_obj_h*)vm_obj_get_by_id(SET_T_SRC)->payload)[0] != ((const vm_obj_h*)vm_obj_get_by_id(SET_T_DST)->payload)[0]);
+  ((float*)vm_obj_get_by_id(SET_R_D0)->payload)[0] = -1.0f;
   ck("...so editing the copy does not reach the original", near_f(set_at(SET_R_S0, 0), 1.0f));
 
   ck("a target slot with no object is a shape error, not a crash", !set_eno(10) && near_f(set_at(SET_R_S1, 0), 4.0f));
@@ -1406,18 +1556,18 @@ void test_set(void) {
 
   /* ---- pass 2: nothing arrives. Both sources hold a value they would copy
           if they ran, so a copy that happens anyway is visible. ---- */
-  *(float*)vm_obj_by_id(SET_SRC1)->payload = 99.0f;
-  *(float*)vm_obj_by_id(SET_SRC8)->payload = 99.0f;
-  vm_obj_by_id(SET_DST1)->head.f.upd = 0;  // block 1's target goes stale with its source
+  *(float*)vm_obj_get_by_id(SET_SRC1)->payload = 99.0f;
+  *(float*)vm_obj_get_by_id(SET_SRC8)->payload = 99.0f;
+  vm_obj_get_by_id(SET_DST1)->head.f.upd = 0;  // block 1's target goes stale with its source
   /* Pass 1's true ENO left `upd` standing: set_ENO(false) clears the payload
      quietly and by design does not touch the flag, and an mk() object is not
      upd_resetable so the sweep leaves it too. Clearing it here is what makes
      the next assertion about *this* pass. */
-  vm_obj_by_id(SET_ENO(1))->head.f.upd = 0;
+  vm_obj_get_by_id(SET_ENO(1))->head.f.upd = 0;
   vm_exec_pass();
 
   ck("a stale source does not copy", near_f(set_f(SET_DST1), 1.0f) && !set_eno(1));
-  ck("...with the ENO taken false quietly", vm_obj_by_id(SET_ENO(1))->head.f.upd == 0);
+  ck("...with the ENO taken false quietly", vm_obj_get_by_id(SET_ENO(1))->head.f.upd == 0);
 
   /* Block 8's target is still fresh from its own pass-1 copy, and its source
      is not. A vm_block_triggered() over both pins would read the target as an
@@ -1425,7 +1575,7 @@ void test_set(void) {
      would never stop. */
   ck("a fresh target does not re-fire a Set", near_f(set_f(SET_DST8), 2.0f) && !set_eno(8));
   ck("...and that really was source-stale, target-fresh",
-     vm_obj_by_id(SET_SRC8)->head.f.upd == 0 && vm_obj_by_id(SET_DST8)->head.f.upd != 0);
+     vm_obj_get_by_id(SET_SRC8)->head.f.upd == 0 && vm_obj_get_by_id(SET_DST8)->head.f.upd != 0);
 }
 
 /* ==========================================================================
@@ -1461,14 +1611,14 @@ void test_set(void) {
 static uint16_t dyn_live(void) {
   uint16_t n = 0;
   for (uint16_t i = 0; i < VM_DYN_MAX; i++) {
-    if (vm_obj_dyn_get(i)) n++;
+    if (vm_obj_dyn_get_by_id(i)) n++;
   }
   return n;
 }
 
 // the object the block built, reached the way a downstream block would
 static vm_obj_h cln_built(uint16_t cell_obj) {
-  vm_obj_h c = vm_obj_by_id(cell_obj);
+  vm_obj_h c = vm_obj_get_by_id(cell_obj);
   return c ? ((vm_obj_h*)c->payload)[0] : NULL;
 }
 
@@ -1499,7 +1649,7 @@ static bool clone_blk(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t
 }
 
 static bool cln_eno(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(CLN_ENO(n));
+  vm_obj_h o = vm_obj_get_by_id(CLN_ENO(n));
   return o && *(uint8_t*)o->payload != 0;
 }
 
@@ -1507,7 +1657,7 @@ void test_clone(void) {
   ESP_LOGI(TAG, "-- X: the Clone block --");
   vm_obj_dyn_reset();  // before the loader: the parents holding these live in the pool
   vm_loader_reset();
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 40, [VM_REG_ACC] = 16, [VM_REG_BLK] = 8, [VM_REG_SEC] = 2};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 40, [VM_REG_ACC] = 16, [VM_REG_BLK] = 8};
   (void)vm_store_open(8192, counts);
 
   bool built = true;
@@ -1525,24 +1675,24 @@ void test_clone(void) {
   ck("objects built", built);
 
   bool wired = built;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_HOLD), 0, vm_obj_by_id(CLN_A)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_TBL), 0, vm_obj_by_id(CLN_R0)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_TBL), 1, vm_obj_by_id(CLN_R1)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(CLN_HOLD2), 0, vm_obj_by_id(CLN_TBL)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(CLN_HOLD), 0, vm_obj_get_by_id(CLN_A)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(CLN_TBL), 0, vm_obj_get_by_id(CLN_R0)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(CLN_TBL), 1, vm_obj_get_by_id(CLN_R1)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(CLN_HOLD2), 0, vm_obj_get_by_id(CLN_TBL)) == NULL;
   ck("sources wired", wired);
   ck("linking arena objects took no dynamic references", dyn_live() == 0);
 
-  ((float*)vm_obj_by_id(CLN_A)->payload)[0] = 1.0f;
-  ((float*)vm_obj_by_id(CLN_A)->payload)[1] = 2.0f;
-  for (uint8_t i = 0; i < 5; i++) ((float*)vm_obj_by_id(CLN_B)->payload)[i] = (float)(10 + i);
+  ((float*)vm_obj_get_by_id(CLN_A)->payload)[0] = 1.0f;
+  ((float*)vm_obj_get_by_id(CLN_A)->payload)[1] = 2.0f;
+  for (uint8_t i = 0; i < 5; i++) ((float*)vm_obj_get_by_id(CLN_B)->payload)[i] = (float)(10 + i);
   for (uint8_t i = 0; i < 3; i++) {
-    ((float*)vm_obj_by_id(CLN_R0)->payload)[i] = (float)(i + 1);
-    ((float*)vm_obj_by_id(CLN_R1)->payload)[i] = (float)(i + 4);
+    ((float*)vm_obj_get_by_id(CLN_R0)->payload)[i] = (float)(i + 1);
+    ((float*)vm_obj_get_by_id(CLN_R1)->payload)[i] = (float)(i + 4);
   }
   /* Neither holder is upd_resetable, so both read fresh on every pass and the
      blocks fire every time -- the stand-down cases belong to stage W. */
-  vm_obj_by_id(CLN_HOLD)->head.f.upd = 1;
-  vm_obj_by_id(CLN_HOLD2)->head.f.upd = 1;
+  vm_obj_get_by_id(CLN_HOLD)->head.f.upd = 1;
+  vm_obj_get_by_id(CLN_HOLD2)->head.f.upd = 1;
 
   bool accs = cln_child_acc(0, CLN_HOLD) != NULL;      // acc 0: the scalar source
   accs = accs && ex_acc(1, CLN_CELL) != NULL;          // acc 1: its destination cell
@@ -1585,16 +1735,16 @@ void test_clone(void) {
 
   vm_obj_h c1 = cln_built(CLN_CELL);
   ck("a Clone builds its destination and fills it", c1 && near_f(((const float*)c1->payload)[1], 2.0f) && cln_eno(0));
-  ck("...on the heap, registered, and marked dynamic", c1 && vm_obj_is_dynamic(c1) && vm_obj_dyn_id(c1) != VM_DYN_NO_ID);
-  ck("...shaped like its source, tag and all", c1 && vm_obj_items_cnt(c1) == 2 && c1->head.f.tagged && c1->head.d.name_size == 1);
+  ck("...on the heap, registered, and marked dynamic", c1 && vm_obj_is_dynamic(c1) && vm_obj_dyn_get_id(c1) != VM_DYN_NO_ID);
+  ck("...shaped like its source, tag and all", c1 && vm_obj_get_items_cnt(c1) == 2 && c1->head.f.tagged && c1->head.d.name_size == 1);
   ck("...and mutable, whatever the source was", c1 && c1->head.f.mutable);
 
   /* A tree source clones as a tree: the rows are built too, and they are the
      copy's own rows, not the source's. */
   vm_obj_h t1 = cln_built(CLN_TCELL);
-  ck("a 2D source clones row by row", t1 && vm_obj_items_cnt(t1) == 2 && cln_eno(1) &&
+  ck("a 2D source clones row by row", t1 && vm_obj_get_items_cnt(t1) == 2 && cln_eno(1) &&
                                           near_f(((const float*)((vm_obj_h*)t1->payload)[1]->payload)[2], 6.0f));
-  ck("...and the rows belong to the copy", t1 && ((vm_obj_h*)t1->payload)[0] != vm_obj_by_id(CLN_R0) &&
+  ck("...and the rows belong to the copy", t1 && ((vm_obj_h*)t1->payload)[0] != vm_obj_get_by_id(CLN_R0) &&
                                                vm_obj_is_dynamic(((vm_obj_h*)t1->payload)[0]));
 
   // 1 scalar + 1 table + 2 rows
@@ -1607,11 +1757,11 @@ void test_clone(void) {
   rd = 0.0f;
   ck("...or by the tag it carried over from its source", VM_OBJ_GET_VAL(rd, a_named) == NULL && near_f(rd, 2.0f));
   ck("the cell itself still reads as 0 -- a pointer is not a value",
-     VM_OBJ_GET_VAL(rd, vm_accessor_by_id(1)) == NULL && near_f(rd, 0.0f));
+     VM_OBJ_GET_VAL(rd, vm_accessor_get_by_id(1)) == NULL && near_f(rd, 0.0f));
 
   /* ---- pass 2: same shapes, new values. The whole point -- nothing new is
           allocated and the destination objects are the same ones. ---- */
-  ((float*)vm_obj_by_id(CLN_A)->payload)[1] = 42.0f;
+  ((float*)vm_obj_get_by_id(CLN_A)->payload)[1] = 42.0f;
   vm_exec_pass();
 
   ck("a matching destination is refilled, not rebuilt", cln_built(CLN_CELL) == c1 && near_f(((const float*)c1->payload)[1], 42.0f));
@@ -1619,12 +1769,12 @@ void test_clone(void) {
   ck("the table is likewise reused", cln_built(CLN_TCELL) == t1);
 
   /* ---- pass 3: the source changes shape under the block ---- */
-  ck("re-point the holder at a differently shaped child", vm_obj_link_direct(vm_obj_by_id(CLN_HOLD), 0, vm_obj_by_id(CLN_B)) == NULL);
-  vm_obj_by_id(CLN_HOLD)->head.f.upd = 1;
+  ck("re-point the holder at a differently shaped child", vm_obj_link_direct(vm_obj_get_by_id(CLN_HOLD), 0, vm_obj_get_by_id(CLN_B)) == NULL);
+  vm_obj_get_by_id(CLN_HOLD)->head.f.upd = 1;
   vm_exec_pass();
 
   vm_obj_h c2 = cln_built(CLN_CELL);
-  ck("a shape change builds a new destination", c2 && c2 != c1 && vm_obj_items_cnt(c2) == 5);
+  ck("a shape change builds a new destination", c2 && c2 != c1 && vm_obj_get_items_cnt(c2) == 5);
   ck("...filled from the new source", c2 && near_f(((const float*)c2->payload)[4], 14.0f) && cln_eno(0));
   /* The old tree was freed by the slot that stopped naming it -- if the link
      path did not move the reference, this count would climb every time a
@@ -1634,7 +1784,7 @@ void test_clone(void) {
   /* Independence, the same property stage W checks for Set: the clone holds
      its own storage, so editing it cannot reach back into the source. */
   ((float*)c2->payload)[0] = -1.0f;
-  ck("editing the clone does not reach the source", near_f(((const float*)vm_obj_by_id(CLN_B)->payload)[0], 10.0f));
+  ck("editing the clone does not reach the source", near_f(((const float*)vm_obj_get_by_id(CLN_B)->payload)[0], 10.0f));
 
   /* The reason such a chain must not be cached: the tree it reached through
      was freed two statements into this pass, and the same accessor now has to
@@ -1681,9 +1831,9 @@ void test_clone(void) {
 
 // the field `tag` of the copy, reached the way a wired block reaches it
 static vm_obj_h js_field(const char* tag) {
-  vm_obj_h cell = vm_obj_by_id(JS_COPY);
+  vm_obj_h cell = vm_obj_get_by_id(JS_COPY);
   vm_obj_h copy = cell ? ((vm_obj_h*)cell->payload)[0] : NULL;
-  return copy ? vm_obj_find_child(copy, tag) : NULL;
+  return copy ? vm_obj_get_child(copy, tag) : NULL;
 }
 
 static float js_field_f(const char* tag) {
@@ -1692,7 +1842,7 @@ static float js_field_f(const char* tag) {
 }
 
 static bool js_eno(uint16_t n) {
-  vm_obj_h o = vm_obj_by_id(JS_ENO(n));
+  vm_obj_h o = vm_obj_get_by_id(JS_ENO(n));
   return o && *(uint8_t*)o->payload != 0;
 }
 
@@ -1713,7 +1863,7 @@ void test_json_pipeline(void) {
   ESP_LOGI(TAG, "-- Y: clone, compute, write back --");
   vm_obj_dyn_reset();
   vm_loader_reset();
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 24, [VM_REG_ACC] = 8, [VM_REG_BLK] = 4, [VM_REG_SEC] = 2};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 24, [VM_REG_ACC] = 8, [VM_REG_BLK] = 4};
   (void)vm_store_open(8192, counts);
 
   bool built = true;
@@ -1727,22 +1877,22 @@ void test_json_pipeline(void) {
   ck("objects built", built);
 
   bool wired = built;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(JS_ROOT), 0, vm_obj_by_id(JS_TEMP)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(JS_ROOT), 1, vm_obj_by_id(JS_RES)) == NULL;
-  wired = wired && vm_obj_link_direct(vm_obj_by_id(JS_CELL), 0, vm_obj_by_id(JS_ROOT)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(JS_ROOT), 0, vm_obj_get_by_id(JS_TEMP)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(JS_ROOT), 1, vm_obj_get_by_id(JS_RES)) == NULL;
+  wired = wired && vm_obj_link_direct(vm_obj_get_by_id(JS_CELL), 0, vm_obj_get_by_id(JS_ROOT)) == NULL;
   ck("message wired", wired);
 
-  *(float*)vm_obj_by_id(JS_TEMP)->payload = 21.5f;
-  *(float*)vm_obj_by_id(JS_RES)->payload = 0.0f;
+  *(float*)vm_obj_get_by_id(JS_TEMP)->payload = 21.5f;
+  *(float*)vm_obj_get_by_id(JS_RES)->payload = 0.0f;
 
   /* Both of these have to be resetable or the chain never stands down: the
      cell would read as a message arriving on every pass, and the expression's
      output as a fresh answer forever, so the last assertions in this stage
      would be measuring a program that cannot stop rather than one that has.
      The clone's own objects get the flag from clone_shape(). */
-  vm_obj_by_id(JS_CELL)->head.f.upd_resetable = 1;
-  vm_obj_by_id(JS_MATH)->head.f.upd_resetable = 1;
-  vm_obj_by_id(JS_CELL)->head.f.upd = 1;  // a message arrived
+  vm_obj_get_by_id(JS_CELL)->head.f.upd_resetable = 1;
+  vm_obj_get_by_id(JS_MATH)->head.f.upd_resetable = 1;
+  vm_obj_get_by_id(JS_CELL)->head.f.upd = 1;  // a message arrived
 
   bool accs = true;
   vm_accessor_t* a_msg = NULL;
@@ -1774,23 +1924,23 @@ void test_json_pipeline(void) {
 
   ck("the clone took the message's shape and tags", js_field("temp") && js_field("result"));
   ck("...and its values", near_f(js_field_f("temp"), 21.5f) && js_eno(0));
-  ck("the expression read the copy through three steps", near_f(*(const float*)vm_obj_by_id(JS_MATH)->payload, 43.0f) && js_eno(1));
+  ck("the expression read the copy through three steps", near_f(*(const float*)vm_obj_get_by_id(JS_MATH)->payload, 43.0f) && js_eno(1));
   ck("the Set wrote the answer into the copy", near_f(js_field_f("result"), 43.0f) && js_eno(2));
 
   /* The point of the copy. Everything above happened to the clone, and the
      message a client sent is byte-for-byte what it sent. */
-  ck("the original message is untouched", near_f(*(const float*)vm_obj_by_id(JS_RES)->payload, 0.0f));
-  ck("...and its fields are still its own objects", js_field("result") != vm_obj_by_id(JS_RES));
+  ck("the original message is untouched", near_f(*(const float*)vm_obj_get_by_id(JS_RES)->payload, 0.0f));
+  ck("...and its fields are still its own objects", js_field("result") != vm_obj_get_by_id(JS_RES));
 
   /* ---- a second message, same shape: the copy is refilled rather than
           rebuilt, so a message rate is not an allocation rate ---- */
-  vm_obj_h first = ((vm_obj_h*)vm_obj_by_id(JS_COPY)->payload)[0];
+  vm_obj_h first = ((vm_obj_h*)vm_obj_get_by_id(JS_COPY)->payload)[0];
   uint16_t live = dyn_live();
-  *(float*)vm_obj_by_id(JS_TEMP)->payload = 10.0f;
-  vm_obj_by_id(JS_CELL)->head.f.upd = 1;
+  *(float*)vm_obj_get_by_id(JS_TEMP)->payload = 10.0f;
+  vm_obj_get_by_id(JS_CELL)->head.f.upd = 1;
   vm_exec_pass();
 
-  ck("a second message reuses the copy", ((vm_obj_h*)vm_obj_by_id(JS_COPY)->payload)[0] == first && dyn_live() == live);
+  ck("a second message reuses the copy", ((vm_obj_h*)vm_obj_get_by_id(JS_COPY)->payload)[0] == first && dyn_live() == live);
   ck("...and flows through to the answer", near_f(js_field_f("result"), 20.0f) && js_eno(2));
 
   /* ---- nothing arrives: the chain stands down from the top ---- */
@@ -1800,4 +1950,808 @@ void test_json_pipeline(void) {
 
   vm_obj_dyn_reset();
 }
+
+/* ==========================================================================
+   Selection pipeline: Modulo -> Switch -> Gated Actions + Telemetry
+   ========================================================================== */
+#define PIPE_O_X 0
+#define PIPE_O_MOD 1
+#define PIPE_O_Q0 2
+#define PIPE_O_Q1 3
+#define PIPE_O_Q2 4
+#define PIPE_O_ENO_MOD 5
+#define PIPE_O_ENO_SW 6
+#define PIPE_O_ENO_INC 7
+#define PIPE_O_ENO_DBL 8
+
+#define PIPE_ACC_X 0
+#define PIPE_ACC_MOD 1
+#define PIPE_ACC_Q0 2
+#define PIPE_ACC_Q2 3
+
+#define PIPE_BLK_MOD 0
+#define PIPE_BLK_SW 1
+#define PIPE_BLK_INC 2
+#define PIPE_BLK_DBL 3
+
+static uint8_t s_pipe_sub_buf[256];
+static size_t s_pipe_sub_len;
+static int s_pipe_sub_calls;
+
+static err_h pipe_mock_sender(const uint8_t* data, size_t len) {
+  s_pipe_sub_calls++;
+  s_pipe_sub_len = (len < sizeof(s_pipe_sub_buf)) ? len : sizeof(s_pipe_sub_buf);
+  memcpy(s_pipe_sub_buf, data, s_pipe_sub_len);
+  return NULL;
+}
+
+static bool ex_expr_gated(uint16_t id, const uint16_t* ins, uint8_t in_cnt, uint16_t en_acc,
+                          uint16_t out_obj, uint16_t eno,
+                          const uint32_t* ks, uint8_t k_cnt, const uint8_t* code, uint16_t code_len) {
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = VM_BLK_EXPR,
+                                              .in_cnt = in_cnt,
+                                              .q_cnt = 1,
+                                              .en_cnt = (en_acc != VM_BLOCK_NO_ID) ? 1 : 0,
+                                              .en_mode = VM_BLK_EN_ALL,
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = (uint16_t)vm_expr_size(k_cnt, code_len),
+                                              .in_acc_ids = ins,
+                                              .out_obj_ids = (const uint16_t[]){out_obj},
+                                              .en_acc_ids = (en_acc != VM_BLOCK_NO_ID) ? (const uint16_t[]){en_acc} : NULL,
+                                              .eno_obj_id = eno});
+  if (e != NULL || b == NULL) return false;
+
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_get_custom_data(b);
+  c->const_cnt = k_cnt;
+  c->code_len = code_len;
+  for (uint8_t i = 0; i < k_cnt; i++) c->consts[i].u = ks[i];
+  memcpy(&c->consts[k_cnt], code, code_len);
+  return true;
+}
+
+static bool ex_switch_3(uint16_t id, uint16_t in_acc, const uint16_t* outs, uint16_t eno) {
+  vm_block_h b = NULL;
+  err_h e = vm_block_create(&b, id,
+                            &(vm_block_cfg_t){.block_idx = id,
+                                              .block_type = VM_BLK_SWITCH,
+                                              .in_cnt = 1,
+                                              .q_cnt = 3,
+                                              .en_cnt = 0,
+                                              .on_error = VM_BLK_ERR_STOP,
+                                              .custom_len = VM_BRANCH_CUSTOM_LEN,
+                                              .in_acc_ids = (const uint16_t[]){in_acc},
+                                              .out_obj_ids = outs,
+                                              .eno_obj_id = eno});
+  return e == NULL && b != NULL;
+}
+
+void test_step_selection_pipeline(void) {
+  ESP_LOGI(TAG, "-- Selection pipeline: step-by-step & telemetry --");
+
+  vm_loader_reset();
+  vm_sub_reset();
+  (void)vm_sub_init();
+  vm_sub_set_sender(pipe_mock_sender);
+  s_pipe_sub_calls = 0;
+  s_pipe_sub_len = 0;
+
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 16, [VM_REG_ACC] = 8, [VM_REG_BLK] = 4};
+  ck("pipeline arena opens", vm_store_open(DIRECT_POOL, counts) == NULL);
+
+  // Objects
+  vm_obj_head_t hx = hd(VM_OBJ_F, 1);
+  hx.f.mutable = 1;
+  hx.f.upd_resetable = 1;
+  vm_obj_h ox = NULL;
+  bool built = vm_obj_create(&ox, PIPE_O_X, &hx, "x") == NULL;
+
+  vm_obj_head_t hm = hd(VM_OBJ_F, 1);
+  hm.f.mutable = 1;
+  hm.f.upd_resetable = 1;
+  vm_obj_h om = NULL;
+  built = built && vm_obj_create(&om, PIPE_O_MOD, &hm, "mod") == NULL;
+
+  built = built && mk(PIPE_O_Q0, VM_OBJ_B, 1, "q0", true) != NULL;
+  built = built && mk(PIPE_O_Q1, VM_OBJ_B, 1, "q1", true) != NULL;
+  built = built && mk(PIPE_O_Q2, VM_OBJ_B, 1, "q2", true) != NULL;
+
+  for (uint16_t i = PIPE_O_ENO_MOD; i <= PIPE_O_ENO_DBL; i++) {
+    built = built && mk(i, VM_OBJ_B, 1, NULL, true) != NULL;
+  }
+  ck("pipeline objects built", built);
+  if (!built) return;
+
+  // Accessors
+  bool accs = true;
+  accs = accs && ex_acc(PIPE_ACC_X, PIPE_O_X) != NULL;
+  accs = accs && ex_acc(PIPE_ACC_MOD, PIPE_O_MOD) != NULL;
+  accs = accs && ex_acc(PIPE_ACC_Q0, PIPE_O_Q0) != NULL;
+  accs = accs && ex_acc(PIPE_ACC_Q2, PIPE_O_Q2) != NULL;
+  ck("pipeline accessors built", accs);
+  if (!accs) return;
+
+  // Bytecode definitions
+  static const uint8_t c_mod3[] = {VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_MOD};
+  const uint32_t k3[] = {kf(3.0f)};
+  static const uint8_t c_add1[] = {VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_ADD};
+  const uint32_t k1[] = {kf(1.0f)};
+  static const uint8_t c_mul2[] = {VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_MUL};
+  const uint32_t k2[] = {kf(2.0f)};
+
+  // Blocks
+  bool blks = true;
+  blks = blks && ex_expr_gated(PIPE_BLK_MOD, (const uint16_t[]){PIPE_ACC_X}, 1, VM_BLOCK_NO_ID,
+                               PIPE_O_MOD, PIPE_O_ENO_MOD, k3, 1, c_mod3, sizeof(c_mod3));
+  blks = blks && ex_switch_3(PIPE_BLK_SW, PIPE_ACC_MOD,
+                             (const uint16_t[]){PIPE_O_Q0, PIPE_O_Q1, PIPE_O_Q2}, PIPE_O_ENO_SW);
+  blks = blks && ex_expr_gated(PIPE_BLK_INC, (const uint16_t[]){PIPE_ACC_X}, 1, PIPE_ACC_Q0,
+                               PIPE_O_X, PIPE_O_ENO_INC, k1, 1, c_add1, sizeof(c_add1));
+  blks = blks && ex_expr_gated(PIPE_BLK_DBL, (const uint16_t[]){PIPE_ACC_X}, 1, PIPE_ACC_Q2,
+                               PIPE_O_X, PIPE_O_ENO_DBL, k2, 1, c_mul2, sizeof(c_mul2));
+  ck("pipeline blocks built in execution order", blks);
+  if (!blks) return;
+
+  // Subscribe to x (OBJ ID 0)
+  const uint16_t sub_ids[] = {PIPE_O_X};
+  ck("pipeline: subscribe to x", vm_sub_subscribe(sub_ids, 1) == NULL && vm_sub_count() == 1);
+
+  // Set block mode
+  ck("pipeline: select block mode", vm_exec_control(VM_EXEC_BLOCK_MODE) == NULL);
+
+  /* =========================================================================
+     Pass 1: x = 0.0f -> mod = 0 -> Q0 active -> x + 1 => x = 1.0f
+     ========================================================================= */
+  *(float*)vm_obj_get_by_id(PIPE_O_X)->payload = 0.0f;
+  vm_obj_get_by_id(PIPE_O_X)->head.f.upd = 1;
+  s_pipe_sub_calls = 0;
+  s_pipe_sub_len = 0;
+
+  // Queue first block dispatch (block 0) and start worker
+  ck("p1: queue first block next", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  __atomic_store_n(&s_step_test_done, false, __ATOMIC_RELEASE);
+  bool started = xTaskCreate(ex_step_worker, "vm_pipe_step", 4096, NULL, 5, NULL) == pdPASS;
+  ck("p1: step worker started", started);
+  if (!started) { vm_exec_stop(); return; }
+
+  // Worker runs block 0 (expr mod) and holds before block 1 (switch)
+  bool held = ex_wait_block(PIPE_BLK_SW);
+  ck("p1: block 0 evaluated mod=0, holds before switch", held && near_f(ex_f(PIPE_O_MOD), 0.0f));
+  ck("p1: switch outputs not driven yet", !ex_b(PIPE_O_Q0) && !ex_b(PIPE_O_Q1) && !ex_b(PIPE_O_Q2));
+
+  // Step block 1 (switch) -> holds before block 2 (expr x+1)
+  ck("p1: step switch", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PIPE_BLK_INC);
+  ck("p1: switch branch 0 taken (Q0=1, Q1=0, Q2=0)", held && ex_b(PIPE_O_Q0) && !ex_b(PIPE_O_Q1) && !ex_b(PIPE_O_Q2));
+  ck("p1: x still 0 before block 2 runs", near_f(ex_f(PIPE_O_X), 0.0f));
+
+  // Step block 2 (expr x+1) -> holds before block 3 (expr x*2)
+  ck("p1: step block 2 (x+1)", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PIPE_BLK_DBL);
+  ck("p1: block 2 executed, x=1.0f", held && near_f(ex_f(PIPE_O_X), 1.0f));
+
+  // Step block 3 (expr x*2, gated by Q2 which is 0) -> scan finishes
+  ck("p1: step block 3", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  ck("p1: scan 1 completed", ex_wait_done() && vm_exec_pass_count() == 1);
+  ck("p1: x remains 1.0f (block 3 skipped)", near_f(ex_f(PIPE_O_X), 1.0f));
+  ck("p1: telemetry emitted for x", s_pipe_sub_calls == 1);
+
+  float rx = 0.0f;
+  if (s_pipe_sub_len >= 13) {
+    memcpy(&rx, s_pipe_sub_buf + 9, 4);
+  }
+  ck("p1: telemetry value is 1.0f", near_f(rx, 1.0f));
+
+  /* =========================================================================
+     Pass 2: Idle pass without updates -> telemetry is NOT emitted
+     ========================================================================= */
+  s_pipe_sub_calls = 0;
+  s_pipe_sub_len = 0;
+
+  ck("p2: queue next", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  __atomic_store_n(&s_step_test_done, false, __ATOMIC_RELEASE);
+  started = xTaskCreate(ex_step_worker, "vm_pipe_step", 4096, NULL, 5, NULL) == pdPASS;
+  ck("p2: worker started", started);
+  if (!started) { vm_exec_stop(); return; }
+
+  // Because x has upd=0, block 0 is not triggered -> sweeps through to completion
+  held = ex_wait_block(PIPE_BLK_SW);
+  ck("p2: block 0 held before switch", held);
+  ck("p2: step switch", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PIPE_BLK_INC);
+  ck("p2: held before block 2", held);
+  ck("p2: step block 2", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PIPE_BLK_DBL);
+  ck("p2: held before block 3", held);
+  ck("p2: step block 3", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  ck("p2: scan 2 completed", ex_wait_done() && vm_exec_pass_count() == 2);
+  ck("p2: no telemetry emitted when x is untouched", s_pipe_sub_calls == 0);
+  ck("p2: x unchanged", near_f(ex_f(PIPE_O_X), 1.0f));
+
+  /* =========================================================================
+     Pass 3: x set to 2.0f -> mod = 2 -> Q2 active -> block x*2 runs => x = 4.0f
+     ========================================================================= */
+  *(float*)vm_obj_get_by_id(PIPE_O_X)->payload = 2.0f;
+  vm_obj_get_by_id(PIPE_O_X)->head.f.upd = 1;
+  s_pipe_sub_calls = 0;
+  s_pipe_sub_len = 0;
+
+  ck("p3: queue next", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  __atomic_store_n(&s_step_test_done, false, __ATOMIC_RELEASE);
+  started = xTaskCreate(ex_step_worker, "vm_pipe_step", 4096, NULL, 5, NULL) == pdPASS;
+  ck("p3: worker started", started);
+  if (!started) { vm_exec_stop(); return; }
+
+  held = ex_wait_block(PIPE_BLK_SW);
+  ck("p3: block 0 evaluated mod=2", held && near_f(ex_f(PIPE_O_MOD), 2.0f));
+
+  ck("p3: step switch", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PIPE_BLK_INC);
+  ck("p3: switch branch 2 taken (Q0=0, Q1=0, Q2=1)", held && !ex_b(PIPE_O_Q0) && !ex_b(PIPE_O_Q1) && ex_b(PIPE_O_Q2));
+
+  // Step block 2 (disabled because Q0=0)
+  ck("p3: step block 2", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PIPE_BLK_DBL);
+  ck("p3: block 2 skipped, x still 2.0f", held && near_f(ex_f(PIPE_O_X), 2.0f));
+
+  // Step block 3 (enabled because Q2=1) -> computes 2.0 * 2.0 = 4.0f
+  ck("p3: step block 3 (x*2)", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  ck("p3: scan 3 completed", ex_wait_done() && vm_exec_pass_count() == 3);
+  ck("p3: block 3 executed, x=4.0f", near_f(ex_f(PIPE_O_X), 4.0f));
+  ck("p3: telemetry emitted for x", s_pipe_sub_calls == 1);
+
+  rx = 0.0f;
+  if (s_pipe_sub_len >= 13) {
+    memcpy(&rx, s_pipe_sub_buf + 9, 4);
+  }
+  ck("p3: telemetry value is 4.0f", near_f(rx, 4.0f));
+
+  // Teardown
+  vm_exec_stop();
+  vm_exec_set_sample_hook(NULL);
+  vm_sub_reset();
+  vm_loader_reset();
+}
+
+/* ==========================================================================
+   Mathematical Test: Nilakantha Series for Pi
+   ========================================================================== */
+#define PI_O_PI 0
+#define PI_O_D 1
+#define PI_O_ENO_FOR 2
+#define PI_O_ENO_EXPR 3
+
+#define PI_ACC_PI 0
+#define PI_ACC_D 1
+
+#define PI_BLK_FOR 0
+#define PI_BLK_CALC 1
+
+void test_math_pi(void) {
+  ESP_LOGI(TAG, "-- Mathematical test: Nilakantha Pi calculation --");
+
+  vm_loader_reset();
+  vm_sub_reset();
+  (void)vm_sub_init();
+  vm_sub_set_sender(pipe_mock_sender);
+  s_pipe_sub_calls = 0;
+  s_pipe_sub_len = 0;
+
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 8, [VM_REG_ACC] = 4, [VM_REG_BLK] = 4};
+  ck("pi arena opens", vm_store_open(DIRECT_POOL, counts) == NULL);
+
+  // Objects
+  vm_obj_head_t hp = hd(VM_OBJ_F, 1);
+  hp.f.mutable = 1;
+  hp.f.upd_resetable = 1;
+  vm_obj_h opi = NULL;
+  bool built = vm_obj_create(&opi, PI_O_PI, &hp, "pi") == NULL;
+
+  vm_obj_head_t hd_obj = hd(VM_OBJ_F, 1);
+  hd_obj.f.mutable = 1;
+  hd_obj.f.upd_resetable = 1;
+  vm_obj_h od = NULL;
+  built = built && vm_obj_create(&od, PI_O_D, &hd_obj, "d") == NULL;
+
+  built = built && mk(PI_O_ENO_FOR, VM_OBJ_B, 1, NULL, true) != NULL;
+  built = built && mk(PI_O_ENO_EXPR, VM_OBJ_B, 1, NULL, true) != NULL;
+  ck("pi objects built", built);
+  if (!built) return;
+
+  // Accessors
+  bool accs = true;
+  accs = accs && ex_acc(PI_ACC_PI, PI_O_PI) != NULL;
+  accs = accs && ex_acc(PI_ACC_D, PI_O_D) != NULL;
+  ck("pi accessors built", accs);
+  if (!accs) return;
+
+  // Loop config: d from 2.0 to 46.0 by 4.0 (12 turns = 24 series terms)
+  const for_loop_t lp = {
+      .start = 2.0f,
+      .end = 46.0f,
+      .step = 4.0f,
+      .budget = 64,
+      .op = VM_FOR_OP_ADD,
+      .cmp = VM_FOR_CMP_LE,
+  };
+
+  /* Nilakantha pair:
+     pi = pi + 4.0 / (d * (d + 1) * (d + 2)) - 4.0 / ((d + 2) * (d + 3) * (d + 4)) */
+  static const uint8_t c_pi_calc[] = {
+      VM_EXPR_IN, 0,
+      VM_EXPR_K, 0,
+      VM_EXPR_IN, 1,
+      VM_EXPR_IN, 1, VM_EXPR_K, 1, VM_EXPR_ADD,
+      VM_EXPR_MUL,
+      VM_EXPR_IN, 1, VM_EXPR_K, 2, VM_EXPR_ADD,
+      VM_EXPR_MUL,
+      VM_EXPR_DIV,
+      VM_EXPR_ADD,
+      VM_EXPR_K, 0,
+      VM_EXPR_IN, 1, VM_EXPR_K, 2, VM_EXPR_ADD,
+      VM_EXPR_IN, 1, VM_EXPR_K, 3, VM_EXPR_ADD,
+      VM_EXPR_MUL,
+      VM_EXPR_IN, 1, VM_EXPR_K, 0, VM_EXPR_ADD,
+      VM_EXPR_MUL,
+      VM_EXPR_DIV,
+      VM_EXPR_SUB
+  };
+  const uint32_t pi_ks[] = {kf(4.0f), kf(1.0f), kf(2.0f), kf(3.0f)};
+
+  // Blocks: Block 0 (FOR) owns Block 1 (EXPR)
+  bool blks = true;
+  blks = blks && ex_for(PI_BLK_FOR, 1, 2, lp, NULL, 0, (const uint16_t[]){PI_O_D}, 1, NULL, 0, PI_O_ENO_FOR,
+                        sizeof(vm_for_code_t));
+  blks = blks && ex_expr(PI_BLK_CALC, (const uint16_t[]){PI_ACC_PI, PI_ACC_D}, 2, PI_O_PI, PI_O_ENO_EXPR,
+                         pi_ks, 4, c_pi_calc, sizeof(c_pi_calc));
+  ck("pi blocks built", blks);
+  if (!blks) return;
+
+  // Subscribe to pi
+  ck("pi subscribe", vm_sub_subscribe((const uint16_t[]){PI_O_PI}, 1) == NULL);
+
+  // Initialize pi = 3.0f
+  *(float*)vm_obj_get_by_id(PI_O_PI)->payload = 3.0f;
+  vm_obj_get_by_id(PI_O_PI)->head.f.upd = 1;
+
+  // Run pass: 12 loop turns execute within one scan
+  vm_exec_pass();
+
+  float pi_res = ex_f(PI_O_PI);
+  ck("pi series completed", pi_res > 3.14f && pi_res < 3.15f);
+  ck("pi accurate to 4 decimal places (within 0.0001 of pi)", fabsf(pi_res - 3.14159265f) < 1e-4f);
+  ck("pi telemetry emitted", s_pipe_sub_calls == 1);
+
+  float rx = 0.0f;
+  if (s_pipe_sub_len >= 13) memcpy(&rx, s_pipe_sub_buf + 9, 4);
+  ck("pi telemetry payload matches computed pi", fabsf(rx - pi_res) < 1e-5f);
+
+  vm_exec_stop();
+  vm_exec_set_sample_hook(NULL);
+  vm_sub_reset();
+  vm_loader_reset();
+}
+
+/* ==========================================================================
+   Mathematical Test: Prime Number Tester (Trial Division in FOR Loop)
+   ========================================================================== */
+#define PR_O_N 0
+#define PR_O_END 1
+#define PR_O_D 2
+#define PR_O_IS_DIV 3
+#define PR_O_DIV_CNT 4
+#define PR_O_IS_PRIME 5
+#define PR_O_ENO_SUB 6
+#define PR_O_ENO_FOR 7
+#define PR_O_ENO_MOD 8
+#define PR_O_ENO_ADD 9
+#define PR_O_ENO_CHK 10
+
+#define PR_ACC_N 0
+#define PR_ACC_END 1
+#define PR_ACC_D 2
+#define PR_ACC_IS_DIV 3
+#define PR_ACC_DIV_CNT 4
+
+#define PR_BLK_SUB 0
+#define PR_BLK_FOR 1
+#define PR_BLK_MOD 2
+#define PR_BLK_ADD 3
+#define PR_BLK_CHK 4
+
+void test_math_primes(void) {
+  ESP_LOGI(TAG, "-- Mathematical test: Prime number tester --");
+
+  vm_loader_reset();
+  vm_sub_reset();
+  (void)vm_sub_init();
+  vm_sub_set_sender(pipe_mock_sender);
+  s_pipe_sub_calls = 0;
+  s_pipe_sub_len = 0;
+
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 16, [VM_REG_ACC] = 8, [VM_REG_BLK] = 8};
+  ck("prime arena opens", vm_store_open(DIRECT_POOL, counts) == NULL);
+
+  // Objects
+  bool built = true;
+  for (uint16_t i = PR_O_N; i <= PR_O_IS_PRIME; i++) {
+    vm_obj_head_t h = hd(VM_OBJ_F, 1);
+    h.f.mutable = 1;
+    h.f.upd_resetable = 1;
+    vm_obj_h o = NULL;
+    built = built && vm_obj_create(&o, i, &h, NULL) == NULL;
+  }
+  for (uint16_t i = PR_O_ENO_SUB; i <= PR_O_ENO_CHK; i++) {
+    built = built && mk(i, VM_OBJ_B, 1, NULL, true) != NULL;
+  }
+  ck("prime objects built", built);
+  if (!built) return;
+
+  // Accessors
+  bool accs = true;
+  accs = accs && ex_acc(PR_ACC_N, PR_O_N) != NULL;
+  accs = accs && ex_acc(PR_ACC_END, PR_O_END) != NULL;
+  accs = accs && ex_acc(PR_ACC_D, PR_O_D) != NULL;
+  accs = accs && ex_acc(PR_ACC_IS_DIV, PR_O_IS_DIV) != NULL;
+  accs = accs && ex_acc(PR_ACC_DIV_CNT, PR_O_DIV_CNT) != NULL;
+  ck("prime accessors built", accs);
+  if (!accs) return;
+
+  // Bytecodes
+  // Block 0: end = N - 1.0f
+  static const uint8_t c_sub1[] = {VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_SUB};
+  const uint32_t k_one[] = {kf(1.0f)};
+
+  // Block 1: FOR d = 2.0 to end step 1.0 (owns blocks 2 and 3)
+  const for_loop_t lp_div = {
+      .start = 2.0f,
+      .end = 2.0f,
+      .step = 1.0f,
+      .budget = 64,
+      .op = VM_FOR_OP_ADD,
+      .cmp = VM_FOR_CMP_LE,
+  };
+
+  // Block 2: is_div = ((N % d) == 0.0f) ? 1.0f : 0.0f
+  static const uint8_t c_mod_chk[] = {
+      VM_EXPR_IN, 0,
+      VM_EXPR_IN, 1,
+      VM_EXPR_MOD,
+      VM_EXPR_K, 0,
+      VM_EXPR_EQ
+  };
+  const uint32_t k_zero[] = {kf(0.0f)};
+
+  // Block 3: div_cnt = div_cnt + is_div
+  static const uint8_t c_add_div[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_ADD};
+
+  // Block 4: is_prime = (div_cnt == 0.0f) && (N >= 2.0f)
+  static const uint8_t c_prime_chk[] = {
+      VM_EXPR_IN, 0, VM_EXPR_K, 0, VM_EXPR_EQ,
+      VM_EXPR_IN, 1, VM_EXPR_K, 1, VM_EXPR_GE,
+      VM_EXPR_AND
+  };
+  const uint32_t k_chk[] = {kf(0.0f), kf(2.0f)};
+
+  // Blocks
+  bool blks = true;
+  blks = blks && ex_expr(PR_BLK_SUB, (const uint16_t[]){PR_ACC_N}, 1, PR_O_END, PR_O_ENO_SUB,
+                         k_one, 1, c_sub1, sizeof(c_sub1));
+  blks = blks && ex_for(PR_BLK_FOR, 2, 4, lp_div, (const uint16_t[]){VM_BLOCK_NO_ID, PR_ACC_END}, 2,
+                        (const uint16_t[]){PR_O_D}, 1, NULL, 0, PR_O_ENO_FOR, sizeof(vm_for_code_t));
+  blks = blks && ex_expr(PR_BLK_MOD, (const uint16_t[]){PR_ACC_N, PR_ACC_D}, 2, PR_O_IS_DIV, PR_O_ENO_MOD,
+                         k_zero, 1, c_mod_chk, sizeof(c_mod_chk));
+  blks = blks && ex_expr(PR_BLK_ADD, (const uint16_t[]){PR_ACC_DIV_CNT, PR_ACC_IS_DIV}, 2, PR_O_DIV_CNT, PR_O_ENO_ADD,
+                         NULL, 0, c_add_div, sizeof(c_add_div));
+  blks = blks && ex_expr(PR_BLK_CHK, (const uint16_t[]){PR_ACC_DIV_CNT, PR_ACC_N}, 2, PR_O_IS_PRIME, PR_O_ENO_CHK,
+                         k_chk, 2, c_prime_chk, sizeof(c_prime_chk));
+  ck("prime blocks built", blks);
+  if (!blks) return;
+
+  // Subscribe to is_prime
+  ck("prime subscribe", vm_sub_subscribe((const uint16_t[]){PR_O_IS_PRIME}, 1) == NULL);
+
+  // Test candidate numbers
+  struct {
+    float n;
+    bool expect_prime;
+    float expect_div_cnt;
+  } test_cases[] = {
+      {7.0f, true, 0.0f},
+      {9.0f, false, 1.0f},   // 3
+      {13.0f, true, 0.0f},
+      {15.0f, false, 2.0f},  // 3, 5
+      {2.0f, true, 0.0f},    // smallest prime
+      {1.0f, false, 0.0f},   // not prime
+      {29.0f, true, 0.0f},
+  };
+
+  for (unsigned idx = 0; idx < sizeof(test_cases) / sizeof(test_cases[0]); idx++) {
+    float candidate = test_cases[idx].n;
+    bool is_p = test_cases[idx].expect_prime;
+
+    *(float*)vm_obj_get_by_id(PR_O_N)->payload = candidate;
+    vm_obj_get_by_id(PR_O_N)->head.f.upd = 1;
+    *(float*)vm_obj_get_by_id(PR_O_DIV_CNT)->payload = 0.0f;
+    vm_obj_get_by_id(PR_O_DIV_CNT)->head.f.upd = 1;
+    s_pipe_sub_calls = 0;
+
+    vm_exec_pass();
+
+    float res = ex_f(PR_O_IS_PRIME);
+    float div_res = ex_f(PR_O_DIV_CNT);
+    ck(is_p ? "candidate identified as prime" : "candidate identified as composite",
+       (res != 0.0f) == is_p && near_f(div_res, test_cases[idx].expect_div_cnt));
+    ck("prime telemetry emitted", s_pipe_sub_calls == 1);
+  }
+
+  /* Step-by-step block-mode verification for N = 7 */
+  ck("select block mode for prime stepping", vm_exec_control(VM_EXEC_BLOCK_MODE) == NULL);
+  *(float*)vm_obj_get_by_id(PR_O_N)->payload = 7.0f;
+  vm_obj_get_by_id(PR_O_N)->head.f.upd = 1;
+  *(float*)vm_obj_get_by_id(PR_O_DIV_CNT)->payload = 0.0f;
+  vm_obj_get_by_id(PR_O_DIV_CNT)->head.f.upd = 1;
+
+  ck("queue first step", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  __atomic_store_n(&s_step_test_done, false, __ATOMIC_RELEASE);
+  bool started = xTaskCreate(ex_step_worker, "vm_prime_step", 4096, NULL, 5, NULL) == pdPASS;
+  ck("prime step worker started", started);
+  if (!started) { vm_exec_stop(); return; }
+
+  // Step 0: Block 0 computes end = 6.0f -> holds before FOR (block 1)
+  bool held = ex_wait_block(PR_BLK_FOR);
+  ck("step: end=6.0f computed, holds before FOR", held && near_f(ex_f(PR_O_END), 6.0f));
+
+  // Step 1: Dispatch FOR -> enters first iteration (d=2.0f) and holds before Block 2 inside span!
+  ck("step into FOR loop", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PR_BLK_MOD);
+  ck("step: FOR entered iteration d=2.0f, holds before MOD", held && near_f(ex_f(PR_O_D), 2.0f));
+
+  // Step 2: Dispatch MOD -> computes 7 % 2 != 0 -> holds before ADD (block 3)
+  ck("step MOD block", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PR_BLK_ADD);
+  ck("step: MOD computed is_div=0, holds before ADD", held && near_f(ex_f(PR_O_IS_DIV), 0.0f));
+
+  // Step 3: Dispatch ADD -> updates div_cnt=0 -> advances to next loop iteration (d=3.0f), holds before MOD
+  ck("step ADD block", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PR_BLK_MOD);
+  ck("step: second iteration d=3.0f, holds before MOD", held && near_f(ex_f(PR_O_D), 3.0f));
+
+  // Step through remaining iterations (d=3, 4, 5, 6)
+  // Each iteration has 2 blocks (MOD and ADD)
+  // d=3: ADD
+  vm_exec_control(VM_EXEC_NEXT); ex_wait_block(PR_BLK_ADD);
+  // d=4: MOD, ADD
+  vm_exec_control(VM_EXEC_NEXT); ex_wait_block(PR_BLK_MOD);
+  vm_exec_control(VM_EXEC_NEXT); ex_wait_block(PR_BLK_ADD);
+  // d=5: MOD, ADD
+  vm_exec_control(VM_EXEC_NEXT); ex_wait_block(PR_BLK_MOD);
+  vm_exec_control(VM_EXEC_NEXT); ex_wait_block(PR_BLK_ADD);
+  // d=6: MOD, ADD
+  vm_exec_control(VM_EXEC_NEXT); ex_wait_block(PR_BLK_MOD);
+  vm_exec_control(VM_EXEC_NEXT); ex_wait_block(PR_BLK_ADD);
+
+  // Loop finishes: advances out of FOR to Block 4 (PR_BLK_CHK)
+  ck("step out of loop", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  held = ex_wait_block(PR_BLK_CHK);
+  ck("step: loop completed, holds before CHK", held);
+
+  // Step 4: Dispatch CHK -> computes is_prime=1.0f -> scan finishes!
+  ck("step CHK block", vm_exec_control(VM_EXEC_NEXT) == NULL);
+  ck("step: prime scan completed", ex_wait_done());
+  ck("step: is_prime evaluated to 1.0f for 7", near_f(ex_f(PR_O_IS_PRIME), 1.0f));
+
+  vm_exec_stop();
+  vm_exec_set_sample_hook(NULL);
+  vm_sub_reset();
+  vm_loader_reset();
+}
+
+/* ==========================================================================
+   Runtime variable update (between scans) verification
+   ========================================================================== */
+
+#define OV_O_X 0      // mutable input variable (float)
+#define OV_O_Y 1      // block output (float, mutable, usr_protected)
+#define OV_O_K 2      // immutable constant (float = 10.0f, mutable = 0)
+#define OV_O_ENO 3    // ENO object (bool, mutable, usr_protected)
+
+#define OV_ACC_X 0
+#define OV_ACC_K 1
+
+#define OV_BLK_MUL 0
+
+static const uint8_t c_mul_xk[] = {VM_EXPR_IN, 0, VM_EXPR_IN, 1, VM_EXPR_MUL};
+
+static bool err_has_tag(err_h err, err_tag_e tag) {
+  for (err_h c = err; c != NULL; c = c->next_cause) {
+    if (c->tag == tag) return true;
+  }
+  return false;
+}
+
+void test_runtime_override(void) {
+  ESP_LOGI(TAG, "-- Runtime variable update between scans --");
+
+  vm_loader_reset();
+  vm_sub_reset();
+  (void)vm_sub_init();
+  vm_sub_set_sender(pipe_mock_sender);
+  s_pipe_sub_calls = 0;
+  s_pipe_sub_len = 0;
+
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 8, [VM_REG_ACC] = 4, [VM_REG_BLK] = 2};
+  ck("override arena opens", vm_store_open(DIRECT_POOL, counts) == NULL);
+
+  // 1. Objects:
+  // OV_O_X: mutable float variable (usr_protected = 0)
+  vm_obj_head_t hx = hd(VM_OBJ_F, 1);
+  hx.f.mutable = 1;
+  hx.f.upd_resetable = 1;
+  vm_obj_h ox = NULL;
+  bool built = (vm_obj_create(&ox, OV_O_X, &hx, "x") == NULL);
+  if (ox) *(float*)ox->payload = 0.0f;
+
+  // OV_O_Y: block output, mutable = 1, usr_protected = 1
+  vm_obj_head_t hy = hd(VM_OBJ_F, 1);
+  hy.f.mutable = 1;
+  hy.f.upd_resetable = 1;
+  hy.f.usr_protected = 1;
+  vm_obj_h oy = NULL;
+  built = built && (vm_obj_create(&oy, OV_O_Y, &hy, "y") == NULL);
+  if (oy) *(float*)oy->payload = 0.0f;
+
+  // OV_O_K: immutable constant (mutable = 0)
+  vm_obj_head_t hk = hd(VM_OBJ_F, 1);
+  hk.f.mutable = 0;
+  hk.f.upd_resetable = 0;
+  vm_obj_h ok = NULL;
+  built = built && (vm_obj_create(&ok, OV_O_K, &hk, "k") == NULL);
+  if (ok) *(float*)ok->payload = 10.0f;
+
+  // OV_O_ENO: block ENO, mutable = 1, usr_protected = 1
+  vm_obj_head_t he = hd(VM_OBJ_B, 1);
+  he.f.mutable = 1;
+  he.f.upd_resetable = 1;
+  he.f.usr_protected = 1;
+  vm_obj_h oe = NULL;
+  built = built && (vm_obj_create(&oe, OV_O_ENO, &he, "eno") == NULL);
+
+  ck("override objects built", built);
+  if (!built) return;
+
+  // 2. Accessors:
+  bool accs = true;
+  accs = accs && (ex_acc(OV_ACC_X, OV_O_X) != NULL);
+  accs = accs && (ex_acc(OV_ACC_K, OV_O_K) != NULL);
+  ck("override accessors built", accs);
+  if (!accs) return;
+
+  // 3. Block 0: Expression computing y = x * k (x * 10.0f)
+  vm_block_h b = NULL;
+  err_h eb = vm_block_create(&b, OV_BLK_MUL,
+                             &(vm_block_cfg_t){.block_idx = OV_BLK_MUL,
+                                               .block_type = VM_BLK_EXPR,
+                                               .in_cnt = 2,
+                                               .q_cnt = 1,
+                                               .en_cnt = 0,
+                                               .on_error = VM_BLK_ERR_STOP,
+                                               .custom_len = (uint16_t)vm_expr_size(0, sizeof(c_mul_xk)),
+                                               .in_acc_ids = (const uint16_t[]){OV_ACC_X, OV_ACC_K},
+                                               .out_obj_ids = (const uint16_t[]){OV_O_Y},
+                                               .eno_obj_id = OV_O_ENO});
+  ck("override block created", eb == NULL && b != NULL);
+  if (eb || !b) return;
+
+  vm_expr_code_t* code = (vm_expr_code_t*)vm_block_get_custom_data(b);
+  code->const_cnt = 0;
+  code->code_len = sizeof(c_mul_xk);
+  memcpy(code->consts, c_mul_xk, sizeof(c_mul_xk));
+
+  // 4. Subscribe to OV_O_Y (Object 1) for telemetry
+  uint8_t sub_pkt[] = {0x04, 0x47, 0x01, (uint8_t)(OV_O_Y & 0xFF), (uint8_t)(OV_O_Y >> 8)};
+  ck("subscribe to y telemetry", sys_interface_decode(sub_pkt, sizeof(sub_pkt)) == NULL);
+
+  // 5. Start VM running
+  vm_exec_set_mode(VM_RUN_RUNNING);
+  ck("VM running mode active", vm_exec_mode() == VM_RUN_RUNNING);
+
+  // 6. Baseline execution pass (x = 0.0f, k = 10.0f -> y = 0.0f)
+  vm_exec_pass();
+  ck("baseline pass y == 0.0f", near_f(ex_f(OV_O_Y), 0.0f));
+  s_pipe_sub_calls = 0;
+
+  // 7. Security / Protection Tests via incoming 0x43 packet:
+  // 7a: Attempt write to user-protected block output y (OV_O_Y): MUST REJECT with ERR_VM_OBJ_USR_PROTECTED
+  float try_val = 999.0f;
+  uint8_t f_bad_prot[13] = {
+      0x04, 0x43, 0x01,
+      (uint8_t)(OV_O_Y & 0xFF), (uint8_t)(OV_O_Y >> 8),
+      0x00, 0x00,
+      0x04, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+  };
+  memcpy(&f_bad_prot[9], &try_val, sizeof(try_val));
+  err_h err_prot = sys_interface_decode(f_bad_prot, sizeof(f_bad_prot));
+  ck("injection targeting usr_protected object rejected", err_has_tag(err_prot, ERR_VM_OBJ_USR_PROTECTED));
+  ck("protected object y payload unchanged", near_f(ex_f(OV_O_Y), 0.0f));
+  ck("no pending override queued for protected write", vm_override_pending_count() == 0);
+
+  // 7b: Attempt write to immutable constant k (OV_O_K): MUST REJECT with ERR_VM_OBJ_NOT_MUTABLE
+  uint8_t f_bad_mut[13] = {
+      0x04, 0x43, 0x01,
+      (uint8_t)(OV_O_K & 0xFF), (uint8_t)(OV_O_K >> 8),
+      0x00, 0x00,
+      0x04, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+  };
+  memcpy(&f_bad_mut[9], &try_val, sizeof(try_val));
+  err_h err_mut = sys_interface_decode(f_bad_mut, sizeof(f_bad_mut));
+  ck("injection targeting immutable object rejected", err_has_tag(err_mut, ERR_VM_OBJ_NOT_MUTABLE));
+  ck("immutable object k payload unchanged", near_f(ex_f(OV_O_K), 10.0f));
+  ck("no pending override queued for immutable write", vm_override_pending_count() == 0);
+
+  // 7c: Attempt write to unknown object ID 999: MUST REJECT with ERR_VM_ACCESSOR_UNKNOWN_ID
+  uint8_t f_bad_id[13] = {
+      0x04, 0x43, 0x01,
+      0xE7, 0x03,
+      0x00, 0x00,
+      0x04, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+  };
+  memcpy(&f_bad_id[9], &try_val, sizeof(try_val));
+  err_h err_id = sys_interface_decode(f_bad_id, sizeof(f_bad_id));
+  ck("injection targeting unknown object id rejected", err_has_tag(err_id, ERR_VM_ACCESSOR_UNKNOWN_ID));
+
+  // 8. Runtime Variable Update Between Scans:
+  // Step A: Send packet updating x = 5.0f
+  float new_x = 5.0f;
+  uint8_t f_good[13] = {
+      0x04, 0x43, 0x01,
+      (uint8_t)(OV_O_X & 0xFF), (uint8_t)(OV_O_X >> 8),
+      0x00, 0x00,
+      0x04, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+  };
+  memcpy(&f_good[9], &new_x, sizeof(new_x));
+  err_h err_good = sys_interface_decode(f_good, sizeof(f_good));
+  ck("valid runtime 0x43 packet accepted by decoder", err_good == NULL);
+  ck("override queued (pending count == 1)", vm_override_pending_count() == 1);
+  ck("mid-scan isolation: x NOT yet modified before pass", near_f(ex_f(OV_O_X), 0.0f));
+
+  // Step B: Run scan pass
+  vm_exec_pass();
+  ck("override drained at pass boundary (pending count == 0)", vm_override_pending_count() == 0);
+  ck("x updated to 5.0f at pass boundary", near_f(ex_f(OV_O_X), 5.0f));
+  ck("block 0 triggered and computed y = 50.0f", near_f(ex_f(OV_O_Y), 50.0f));
+  ck("telemetry emitted for updated y", s_pipe_sub_calls == 1);
+
+  // Step C: Second pass with NO new packet
+  vm_exec_pass();
+  ck("quiescent pass: y stays 50.0f", near_f(ex_f(OV_O_Y), 50.0f));
+  ck("quiescent pass: no extra telemetry emitted", s_pipe_sub_calls == 1);
+
+  // Step D: Second runtime update with x = 12.0f
+  float new_x2 = 12.0f;
+  memcpy(&f_good[9], &new_x2, sizeof(new_x2));
+  ck("second 0x43 packet accepted", sys_interface_decode(f_good, sizeof(f_good)) == NULL);
+  ck("second override queued (pending count == 1)", vm_override_pending_count() == 1);
+  ck("mid-scan isolation: x remains 5.0f before pass", near_f(ex_f(OV_O_X), 5.0f));
+
+  vm_exec_pass();
+  ck("override drained at pass boundary", vm_override_pending_count() == 0);
+  ck("x updated to 12.0f at pass boundary", near_f(ex_f(OV_O_X), 12.0f));
+  ck("block 0 computed y = 120.0f", near_f(ex_f(OV_O_Y), 120.0f));
+  ck("telemetry emitted for new y", s_pipe_sub_calls == 2);
+
+  // Cleanup
+  vm_exec_stop();
+  vm_exec_set_sample_hook(NULL);
+  vm_sub_reset();
+  vm_loader_reset();
+}
+
+
 

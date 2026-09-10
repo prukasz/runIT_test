@@ -25,3 +25,5 @@ not resolve to a runnable block.
 #define VM_BLK_FOR 5       // span owner: repeats the range after it -- vm_block_for.h
 #define VM_BLK_SET 6       // copies a payload, source -> target      -- vm_block_set.h
 #define VM_BLK_CLONE 7     // copies, building the destination first  -- vm_block_clone.h
+#define VM_BLK_EDGE 8      // edge detector (rising, falling, both)   -- vm_block_edge.h
+#define VM_BLK_TIMER 9     // timer (TON, TOF, TP + inverted)         -- vm_block_timer.h

@@ -1,9 +1,36 @@
 #include "vm_obj_access.h"
+
 #include <string.h>
-#include "esp_compiler.h"
+
 #include "vm_obj_dyn.h"
 
 #define OWNER OWNER_VM_ACCESSOR
+
+/*
+ * Object Access & Resolution Engine
+ *
+ * Logic Flow:
+ *   1. Internal Helpers:
+ *      - Permission validation (writable)
+ *      - Element indexing & tag matching (obj_elem, find_child_by_name)
+ *      - Read & index conversion (vm_get_as_*, payload_as_index)
+ *      - Accessor resolution walk (resolve_d, resolve_acc)
+ *      - Store conversion & dynamic slot management (vm_store_converted, slot_store)
+ *      - Tree comparison, copy, and clone engines (copy_values, copy_tree, shape_matches, clone_shape, clone_into)
+ *   2. Target Public APIs:
+ *      - Read APIs (vm_obj_get_payload, vm_obj_get_obj, vm_obj_get_owner, vm_obj_get_child)
+ *      - Write APIs (vm_obj_set_scalar, vm_obj_clear_quiet)
+ *      - Copy & Clone APIs (vm_obj_copy_content, vm_obj_shape_matches, vm_obj_schema_matches, vm_obj_clone_shape, vm_obj_clone_into)
+ *      - Link APIs (vm_obj_link, vm_obj_link_direct)
+ *      - Publication APIs (vm_obj_publish)
+ *      - User Mutation Boundary APIs (_usr variants)
+ */
+
+// ===========================================================================
+// 1. Internal Helpers
+// ===========================================================================
+
+// --- Permission Validation ---
 
 static err_h writable(vm_obj_h obj, bool user) {
   if (!obj) return vm_obj_null_obj_err();
@@ -14,36 +41,43 @@ static err_h writable(vm_obj_h obj, bool user) {
   return NULL;
 }
 
-err_h vm_obj_publish(vm_obj_h obj) {
-  SE_RET_IF_ERR(writable(obj, false));
-  obj->head.f.upd = 1;
-  return NULL;
-}
+// --- Element Indexing & Tag Matching ---
 
-err_h vm_obj_publish_usr(vm_obj_h obj) {
-  SE_RET_IF_ERR(writable(obj, true));
-  obj->head.f.upd = 1;
-  return NULL;
-}
-
-/* Everything vm_resolve_fast() misses funnels through resolve_d(), which walks
-   an accessor's index chain and returns both the payload and its owner object
-   -- only the walk itself has both in hand at once. */
-
-// one element of obj as a payload, bounds-checked (see vm_obj_elem_ptr())
+// one element of obj as a payload, bounds-checked (see vm_obj_get_elem_ptr())
 static __always_inline vm_payload_t obj_elem(vm_obj_h obj, uint32_t i) {
-  uint8_t* p = vm_obj_elem_ptr(obj, i);
+  uint8_t* p = vm_obj_get_elem_ptr(obj, i);
   if (unlikely(!p)) return (vm_payload_t){.ptr = NULL, .count = 0, .type = VM_OBJ_NONE, ._pad = 0};
   return (vm_payload_t){.ptr = p, .count = 1, .type = (uint8_t)obj->head.d.obj_t, ._pad = 0};
 }
 
-// ---------------------------------------------------------------------------
-// Read conversion -- one copy of each, shared by every pin. `src` is assumed
-// non-NULL and to point at an element of `type`. See VM_LOAD_CAST_TO in the
-// header for why these stay out of line.
-// ---------------------------------------------------------------------------
+// Index of `parent`'s child (a VM_OBJ_PTR array) tagged `name`, or -1. Linear
+// with a compare per child -- see VM_IDX_NAME in the header.
+static __always_inline int32_t find_child_by_name(vm_obj_h parent, const char* name, uint8_t n) {
+  if (unlikely(n == 0 || n > VM_OBJ_NAME_MAX)) return -1;
+  char first_char = name[0];
 
-float vm_read_as_f32(vm_obj_t_e type, const void* src) {
+  uint16_t cnt = vm_obj_get_items_cnt(parent);
+  vm_obj_h* children = (vm_obj_h*)parent->payload;
+  for (uint16_t i = 0; i < cnt; i++) {
+    vm_obj_h c = children[i];
+    if (unlikely(!c)) continue;  // unwired slot
+    uint8_t tag_len = 0;
+    const char* tag = vm_obj_get_tag(c, &tag_len);
+    if (tag == NULL || tag_len != n || tag[0] != first_char) continue;
+
+    // open-coded rather than memcmp(): n isn't a compile-time constant, so
+    // GCC emits a real call, and every same-prefix child (temp/time, val1/
+    // val2) was paying call8+entry/retw to compare one byte
+    uint8_t k = 1;
+    while (k < n && tag[k] == name[k]) k++;
+    if (k == n) return (int32_t)i;
+  }
+  return -1;
+}
+
+// --- Read & Index Conversions ---
+
+float vm_get_as_f32(vm_obj_t_e type, const void* src) {
   switch (type) {
     case VM_OBJ_U8:
     case VM_OBJ_B:
@@ -65,31 +99,7 @@ float vm_read_as_f32(vm_obj_t_e type, const void* src) {
   }
 }
 
-int32_t vm_read_as_i32(vm_obj_t_e type, const void* src) {
-  switch (type) {
-    case VM_OBJ_U8:
-    case VM_OBJ_B:
-    case VM_OBJ_STR:
-      return (int32_t)*(const uint8_t*)src;
-    case VM_OBJ_U32:
-      return (int32_t)*(const uint32_t*)src;
-    case VM_OBJ_I32:
-      return *(const int32_t*)src;
-    case VM_OBJ_U64: {
-      uint64_t v;
-      memcpy(&v, src, sizeof(v));
-      return (int32_t)v;
-    }
-    case VM_OBJ_F:
-      // rounds and saturates -- a plain cast would be UB, and this is
-      // reachable from ordinary user wiring, not just corruption
-      return (int32_t)vm_f_to_i(*(const float*)src);
-    default:
-      return 0;
-  }
-}
-
-int64_t vm_read_as_i64(vm_obj_t_e type, const void* src) {
+int64_t vm_get_as_i64(vm_obj_t_e type, const void* src) {
   switch (type) {
     case VM_OBJ_U8:
     case VM_OBJ_B:
@@ -105,74 +115,26 @@ int64_t vm_read_as_i64(vm_obj_t_e type, const void* src) {
       return (int64_t)v;
     }
     case VM_OBJ_F:
-      return vm_f_to_i(*(const float*)src);
+      return vm_internal_f_to_i(*(const float*)src);
     default:
       return 0;
   }
 }
 
-// Kept noinline: a float index is rare, but inlining it drags roundf and
-// __fixsfdi into resolve_d for every caller. Measured: taking it out of line
-// cost a by-ref access two calls (405 -> 418 cyc) and shrank everything else.
-static __attribute__((noinline)) uint32_t index_from_float(const void* src) {
-  return (uint32_t)vm_f_to_i(*(const float*)src);
+int32_t vm_get_as_i32(vm_obj_t_e type, const void* src) {
+  return (int32_t)vm_get_as_i64(type, src);
 }
 
 static __always_inline uint32_t payload_as_index(vm_payload_t p) {
   if (unlikely(!p.ptr)) return 0;
-  switch (p.type) {
-    case VM_OBJ_U8:
-    case VM_OBJ_B:
-    case VM_OBJ_STR:
-      return *(const uint8_t*)p.ptr;
-    case VM_OBJ_U32:
-    case VM_OBJ_I32:
-      return *(const uint32_t*)p.ptr;
-    case VM_OBJ_U64: {
-      uint64_t v;
-      memcpy(&v, p.ptr, sizeof(v));
-      return (uint32_t)v;
-    }
-    case VM_OBJ_F:
-      return index_from_float(p.ptr);
-    default:
-      return 0;
-  }
+  return (uint32_t)vm_get_as_i64((vm_obj_t_e)p.type, p.ptr);
 }
 
-// Index of `parent`'s child (a VM_OBJ_PTR array) tagged `name`, or -1. Linear
-// with a compare per child -- see VM_IDX_NAME in the header.
-static __always_inline int32_t find_child_by_name(vm_obj_h parent, const char* name, uint8_t n) {
-  if (unlikely(n == 0 || n > VM_OBJ_NAME_MAX)) return -1;
-  char first_char = name[0];
+// --- Accessor Resolution Walk ---
 
-  uint16_t cnt = vm_obj_items_cnt(parent);
-  vm_obj_h* children = (vm_obj_h*)parent->payload;
-  for (uint16_t i = 0; i < cnt; i++) {
-    vm_obj_h c = children[i];
-    if (unlikely(!c)) continue;  // unwired slot
-    uint8_t tag_len = 0;
-    const char* tag = vm_obj_tag(c, &tag_len);
-    if (tag == NULL || tag_len != n || tag[0] != first_char) continue;
-
-    // open-coded rather than memcmp(): n isn't a compile-time constant, so
-    // GCC emits a real call, and every same-prefix child (temp/time, val1/
-    // val2) was paying call8+entry/retw to compare one byte
-    uint8_t k = 1;
-    while (k < n && tag[k] == name[k]) k++;
-    if (k == n) return (int32_t)i;
-  }
-  return -1;
-}
-
-vm_obj_h vm_obj_find_child(vm_obj_h parent, const char* tag) {
-  if (unlikely(!parent || !tag || (vm_obj_t_e)parent->head.d.obj_t != VM_OBJ_PTR)) return NULL;
-  size_t len = strlen(tag);
-  if (unlikely(len == 0 || len > VM_OBJ_NAME_MAX)) return NULL;
-  int32_t idx = find_child_by_name(parent, tag, (uint8_t)len);
-  if (idx < 0) return NULL;
-  return ((vm_obj_h*)parent->payload)[idx];
-}
+/* Everything vm_resolve_fast() misses funnels through resolve_d(), which walks
+   an accessor's index chain and returns both the payload and its owner object
+   -- only the walk itself has both in hand at once. */
 
 // `for_write` gates the mutability check (reads never need it); lives here,
 // not in the SET entry points, because this is the last place still holding
@@ -183,10 +145,10 @@ static err_h resolve_d(const vm_accessor_t* acc, uint8_t depth, bool for_write, 
 
   if (unlikely(depth >= VM_ACCESSOR_MAX_DEPTH)) return vm_err_depth(acc->id);
 
-  vm_obj_h obj = vm_obj_by_id(acc->id);
+  vm_obj_h obj = vm_obj_get_by_id(acc->id);
   if (unlikely(!obj)) return vm_err_unknown_id(acc->id);
 
-  vm_payload_t p = vm_obj_as_payload(obj);
+  vm_payload_t p = vm_make_payload(obj);
   for (uint8_t i = 0; i < acc->count; i++) {
     const vm_index_t* idx = &acc->indices[i];
     uint32_t index;
@@ -248,53 +210,66 @@ static err_h resolve_d(const vm_accessor_t* acc, uint8_t depth, bool for_write, 
   return NULL;
 }
 
-err_h vm_obj_get_payload(vm_payload_t* target, const vm_accessor_t* source) {
-  *target = (vm_payload_t){0};  // deterministic output on resolution failure
-  vm_resolved_t r;
-  if (likely(vm_resolve_fast(source, false, &r))) {
-    *target = r.payload;
-    return NULL;
-  }
-  SE_RET_IF_ERR(resolve_d(source, 0, false, &r));
-  *target = r.payload;
-  return NULL;
+static __always_inline err_h resolve_acc(const vm_accessor_t* acc, bool for_write, vm_resolved_t* out) {
+  if (likely(vm_resolve_fast(acc, for_write, out))) return NULL;
+  return resolve_d(acc, 0, for_write, out);
 }
 
-err_h vm_get_obj(vm_obj_h* target, const vm_accessor_t* source) {
-  vm_resolved_t r;
-  if (unlikely(!vm_resolve_fast(source, false, &r))) {
-    SE_RET_IF_ERR(resolve_d(source, 0, false, &r));
-  }
+// --- Store & Dynamic Slot Management ---
 
-  // A chain landing on a pointer element means "the object behind this
-  // slot" (the point of a switch/demux cell), so follow it. `count > 0`
-  // matters: a chainless accessor names the object itself, so a PTR
-  // container must come back as-is rather than silently substituting child[0].
-  if (source->count > 0 && r.payload.type == VM_OBJ_PTR && r.payload.ptr && r.payload.count >= 1) {
-    vm_obj_h linked = *(vm_obj_h*)r.payload.ptr;
-    if (!linked) {
-      SE_RET_ERR(ERR_VM_ACCESSOR_NULL_OBJ, .id = source->id, .chain_pos = source->count, .parent_obj = (void*)r.owner);
+#define VM_VAL_CAST_TO(dst_ptr, val, type)                                                                                       \
+  do {                                                                                                                           \
+    switch (type) {                                                                                                              \
+      case VM_OBJ_U8:                                                                                                            \
+      case VM_OBJ_B:                                                                                                             \
+      case VM_OBJ_STR:                                                                                                           \
+        *(dst_ptr) = (__typeof__(*(dst_ptr)))(val).u8;                                                                           \
+        break;                                                                                                                   \
+      case VM_OBJ_U32:                                                                                                           \
+        *(dst_ptr) = (__typeof__(*(dst_ptr)))(val).u32;                                                                          \
+        break;                                                                                                                   \
+      case VM_OBJ_I32:                                                                                                           \
+        *(dst_ptr) = (__typeof__(*(dst_ptr)))(val).i32;                                                                          \
+        break;                                                                                                                   \
+      case VM_OBJ_U64:                                                                                                           \
+        *(dst_ptr) = (__typeof__(*(dst_ptr)))(val).u64;                                                                          \
+        break;                                                                                                                   \
+      case VM_OBJ_F:                                                                                                             \
+        *(dst_ptr) = (__typeof__(*(dst_ptr)))_Generic(*(dst_ptr), float: (val).f, double: (val).f, default: vm_internal_f_to_i((val).f)); \
+        break;                                                                                                                   \
+      default:                                                                                                                   \
+        *(dst_ptr) = (__typeof__(*(dst_ptr)))0;                                                                                  \
+        break;                                                                                                                   \
+    }                                                                                                                            \
+  } while (0)
+
+err_h vm_internal_store_converted(vm_obj_h owner, vm_payload_t slot, vm_val_t v, vm_obj_t_e src_type, uint16_t err_id) {
+  switch (slot.type) {
+    case VM_OBJ_U8:
+    case VM_OBJ_B:
+    case VM_OBJ_STR:
+      VM_VAL_CAST_TO((uint8_t*)slot.ptr, v, src_type);
+      break;
+    case VM_OBJ_U32:
+      VM_VAL_CAST_TO((uint32_t*)slot.ptr, v, src_type);
+      break;
+    case VM_OBJ_I32:
+      VM_VAL_CAST_TO((int32_t*)slot.ptr, v, src_type);
+      break;
+    case VM_OBJ_U64: {
+      uint64_t tmp;
+      VM_VAL_CAST_TO(&tmp, v, src_type);
+      memcpy(slot.ptr, &tmp, sizeof(tmp));
+      break;
     }
-    *target = linked;
-    return NULL;
+    case VM_OBJ_F:
+      VM_VAL_CAST_TO((float*)slot.ptr, v, src_type);
+      break;
+    default:
+      return vm_obj_not_scalar_err(owner, slot.type, err_id);
   }
-
-  *target = r.owner;
+  owner->head.f.upd = 1;
   return NULL;
-}
-
-err_h vm_obj_set_scalar(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type) {
-  vm_resolved_t r;
-  if (likely(vm_resolve_fast(target, true, &r))) {
-    return vm_store_inline(r.owner, r.payload, v, src_type, target->id);
-  }
-  SE_RET_IF_ERR(resolve_d(target, 0, true, &r));
-  return vm_store_inline(r.owner, r.payload, v, src_type, target->id);
-}
-
-void vm_obj_clear_quiet(vm_obj_h obj) {
-  if (!obj || !obj->head.f.mutable || (vm_obj_t_e)obj->head.d.obj_t == VM_OBJ_PTR) return;
-  if (obj->head.payload_size) memset(obj->payload, 0, obj->head.payload_size);
 }
 
 /*
@@ -306,7 +281,7 @@ The new child is retained before the old one is released. A program re-linking
 a cell to something that lives inside the tree it is replacing would otherwise
 free the subtree the new handle points into, one statement before installing
 it. Both calls fall straight out on an arena object (one bit -- see
-vm_obj_dyn_id), so a program's whole load-time wiring pays nothing for this.
+vm_obj_dyn_get_id), so a program's whole load-time wiring pays nothing for this.
 */
 static err_h slot_store(vm_obj_h owner, vm_obj_h* cell, vm_obj_h child) {
   vm_obj_h prev = *cell;
@@ -321,15 +296,7 @@ static err_h slot_store(vm_obj_h owner, vm_obj_h* cell, vm_obj_h child) {
   return NULL;
 }
 
-err_h vm_obj_link_direct(vm_obj_h cell, uint16_t index, vm_obj_h child) {
-  SE_CHECK_NOT_NULL(cell);
-  SE_CHECK_NOT_NULL(child);
-  if (!cell->head.f.mutable) return vm_obj_not_mutable_err(cell);
-  vm_payload_t slot = obj_elem(cell, index);
-  if (!slot.ptr) return vm_obj_oob_err(cell, index);
-  if (slot.type != VM_OBJ_PTR) return vm_obj_not_ptr_err(cell, slot.type);
-  return slot_store(cell, (vm_obj_h*)slot.ptr, child);
-}
+// --- Tree Copy, Clone & Comparison Engine ---
 
 /* One payload of plain values. `s.ptr == d.ptr` is a copy onto itself, which
    is a no-op rather than an error -- and skipping it also keeps memcpy() off
@@ -380,7 +347,7 @@ static err_h copy_tree(vm_payload_t s, vm_payload_t d, vm_obj_h d_owner, uint8_t
     }
     // checked per child: the walk writes into each of them, and mutability is
     // a property of the object, not of the accessor that reached its root
-    SE_RET_IF_ERR(copy_tree(vm_obj_as_payload(sc[i]), vm_obj_as_payload(dc[i]), dc[i], (uint8_t)(depth + 1), commit, user));
+    SE_RET_IF_ERR(copy_tree(vm_make_payload(sc[i]), vm_make_payload(dc[i]), dc[i], (uint8_t)(depth + 1), commit, user));
   }
 
   /* The parent's own bytes did not change, but what hangs under it did, and a
@@ -406,7 +373,7 @@ static bool shape_matches(vm_obj_h a, vm_obj_h b, uint8_t depth, bool schema) {
 
   vm_obj_h* ka = (vm_obj_h*)a->payload;
   vm_obj_h* kb = (vm_obj_h*)b->payload;
-  uint16_t n = vm_obj_items_cnt(a);
+  uint16_t n = vm_obj_get_items_cnt(a);
   for (uint16_t i = 0; i < n; i++) {
     if (!shape_matches(ka[i], kb[i], (uint8_t)(depth + 1), schema)) return false;
   }
@@ -415,34 +382,10 @@ static bool shape_matches(vm_obj_h a, vm_obj_h b, uint8_t depth, bool schema) {
 
 static err_h copy_content(const vm_accessor_t* source, const vm_accessor_t* target, bool user) {
   vm_resolved_t src, dst;
-  SE_RET_IF_ERR(resolve_d(source, 0, false, &src));
-  SE_RET_IF_ERR(resolve_d(target, 0, true, &dst));
+  SE_RET_IF_ERR(resolve_acc(source, false, &src));
+  SE_RET_IF_ERR(resolve_acc(target, true, &dst));
   SE_RET_IF_ERR(copy_tree(src.payload, dst.payload, dst.owner, 0, false, user));
   return copy_tree(src.payload, dst.payload, dst.owner, 0, true, user);
-}
-
-err_h vm_obj_get_owner(vm_obj_h* target, const vm_accessor_t* source) {
-  *target = NULL;
-  vm_resolved_t r;
-  if (!vm_resolve_fast(source, false, &r)) SE_RET_IF_ERR(resolve_d(source, 0, false, &r));
-  *target = r.owner;
-  return NULL;
-}
-
-err_h vm_obj_copy_content(const vm_accessor_t* source, const vm_accessor_t* target) {
-  return copy_content(source, target, false);
-}
-
-err_h vm_obj_copy_content_usr(const vm_accessor_t* source, const vm_accessor_t* target) {
-  return copy_content(source, target, true);
-}
-
-bool vm_obj_shape_matches(vm_obj_h a, vm_obj_h b) {
-  return shape_matches(a, b, 0, false);
-}
-
-bool vm_obj_schema_matches(vm_obj_h a, vm_obj_h b) {
-  return shape_matches(a, b, 0, true);
 }
 
 /*
@@ -472,7 +415,7 @@ static err_h clone_shape(vm_obj_h* out, vm_obj_h src, uint8_t depth) {
   h.f.upd_resetable = 1;
 
   uint8_t name_len = 0;
-  const char* name = vm_obj_tag(src, &name_len);
+  const char* name = vm_obj_get_tag(src, &name_len);
 
   vm_obj_h o = NULL;
   SE_RET_IF_ERR(vm_obj_dyn_create(&o, &h, name));
@@ -480,7 +423,7 @@ static err_h clone_shape(vm_obj_h* out, vm_obj_h src, uint8_t depth) {
   if ((vm_obj_t_e)h.d.obj_t == VM_OBJ_PTR) {
     vm_obj_h* sk = (vm_obj_h*)src->payload;
     vm_obj_h* dk = (vm_obj_h*)o->payload;
-    uint16_t n = vm_obj_items_cnt(src);
+    uint16_t n = vm_obj_get_items_cnt(src);
     for (uint16_t i = 0; i < n; i++) {
       if (!sk[i]) continue;  // unwired in the source, unwired in the copy
       vm_obj_h kid = NULL;
@@ -501,20 +444,14 @@ static err_h clone_shape(vm_obj_h* out, vm_obj_h src, uint8_t depth) {
   return NULL;
 }
 
-err_h vm_obj_clone_shape(vm_obj_h* out, vm_obj_h src) {
-  SE_CHECK_NOT_NULL(out);
-  SE_CHECK_NOT_NULL(src);
-  return clone_shape(out, src, 0);
-}
-
 static err_h clone_into(const vm_accessor_t* source, const vm_accessor_t* target, bool user) {
-  /* vm_get_obj(), not a payload resolve: a Clone wants the object behind the
+  /* vm_obj_get_obj(), not a payload resolve: a Clone wants the object behind the
      source, header and all, because the header is the shape it has to match. */
   vm_obj_h src = NULL;
-  SE_RET_IF_ERR(vm_get_obj(&src, source));
+  SE_RET_IF_ERR(vm_obj_get_obj(&src, source));
 
   vm_resolved_t slot;
-  SE_RET_IF_ERR(resolve_d(target, 0, true, &slot));
+  SE_RET_IF_ERR(resolve_acc(target, true, &slot));
   SE_RET_IF_ERR(writable(slot.owner, user));
   if (unlikely(slot.payload.type != VM_OBJ_PTR || !slot.payload.ptr)) {
     return vm_err_expected_ptr(target->id, target->count, (uint8_t)slot.payload.type, slot.owner);
@@ -529,32 +466,116 @@ static err_h clone_into(const vm_accessor_t* source, const vm_accessor_t* target
     vm_obj_h fresh = NULL;
     SE_RET_IF_ERR(clone_shape(&fresh, src, 0));
     // Fill before publication: src may live inside the tree being replaced.
-    err_h e = copy_tree(vm_obj_as_payload(src), vm_obj_as_payload(fresh), fresh, 0, true, user);
+    err_h e = copy_tree(vm_make_payload(src), vm_make_payload(fresh), fresh, 0, true, user);
     if (!e) e = slot_store(slot.owner, cell, fresh);
     if (e) vm_obj_dyn_release(fresh);
     return e;
   }
 
-  SE_RET_IF_ERR(copy_tree(vm_obj_as_payload(src), vm_obj_as_payload(*cell), *cell, 0, false, user));
-  SE_RET_IF_ERR(copy_tree(vm_obj_as_payload(src), vm_obj_as_payload(*cell), *cell, 0, true, user));
+  SE_RET_IF_ERR(copy_tree(vm_make_payload(src), vm_make_payload(*cell), *cell, 0, false, user));
+  SE_RET_IF_ERR(copy_tree(vm_make_payload(src), vm_make_payload(*cell), *cell, 0, true, user));
   slot.owner->head.f.upd = 1;  // a refilled snapshot is a publication too
   return NULL;
+}
+
+// ===========================================================================
+// 2. Target Public APIs
+// ===========================================================================
+
+// --- Read APIs ---
+
+err_h vm_obj_get_payload(vm_payload_t* target, const vm_accessor_t* source) {
+  *target = (vm_payload_t){0};  // deterministic output on resolution failure
+  vm_resolved_t r;
+  SE_RET_IF_ERR(resolve_acc(source, false, &r));
+  *target = r.payload;
+  return NULL;
+}
+
+err_h vm_obj_get_obj(vm_obj_h* target, const vm_accessor_t* source) {
+  *target = NULL;
+  vm_resolved_t r;
+  SE_RET_IF_ERR(resolve_acc(source, false, &r));
+
+  // A chain landing on a pointer element means "the object behind this
+  // slot" (the point of a switch/demux cell), so follow it. `count > 0`
+  // matters: a chainless accessor names the object itself, so a PTR
+  // container must come back as-is rather than silently substituting child[0].
+  if (source->count > 0 && r.payload.type == VM_OBJ_PTR && r.payload.ptr && r.payload.count >= 1) {
+    vm_obj_h linked = *(vm_obj_h*)r.payload.ptr;
+    if (!linked) {
+      SE_RET_ERR(ERR_VM_ACCESSOR_NULL_OBJ, .id = source->id, .chain_pos = source->count, .parent_obj = (void*)r.owner);
+    }
+    *target = linked;
+    return NULL;
+  }
+
+  *target = r.owner;
+  return NULL;
+}
+
+err_h vm_obj_get_owner(vm_obj_h* target, const vm_accessor_t* source) {
+  *target = NULL;
+  vm_resolved_t r;
+  SE_RET_IF_ERR(resolve_acc(source, false, &r));
+  *target = r.owner;
+  return NULL;
+}
+
+vm_obj_h vm_obj_get_child(vm_obj_h parent, const char* tag) {
+  if (unlikely(!parent || !tag || (vm_obj_t_e)parent->head.d.obj_t != VM_OBJ_PTR)) return NULL;
+  size_t len = strlen(tag);
+  if (unlikely(len == 0 || len > VM_OBJ_NAME_MAX)) return NULL;
+  int32_t idx = find_child_by_name(parent, tag, (uint8_t)len);
+  if (idx < 0) return NULL;
+  return ((vm_obj_h*)parent->payload)[idx];
+}
+
+// --- Write APIs ---
+
+err_h vm_obj_set_scalar(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type) {
+  vm_resolved_t r;
+  SE_RET_IF_ERR(resolve_acc(target, true, &r));
+  return vm_internal_store_inline(r.owner, r.payload, v, src_type, target->id);
+}
+
+void vm_obj_clear_quiet(vm_obj_h obj) {
+  if (!obj || !obj->head.f.mutable || (vm_obj_t_e)obj->head.d.obj_t == VM_OBJ_PTR) return;
+  if (obj->head.payload_size) memset(obj->payload, 0, obj->head.payload_size);
+}
+
+// --- Copy & Clone APIs ---
+
+err_h vm_obj_copy_content(const vm_accessor_t* source, const vm_accessor_t* target) {
+  return copy_content(source, target, false);
+}
+
+bool vm_obj_shape_matches(vm_obj_h a, vm_obj_h b) {
+  return shape_matches(a, b, 0, false);
+}
+
+bool vm_obj_schema_matches(vm_obj_h a, vm_obj_h b) {
+  return shape_matches(a, b, 0, true);
+}
+
+err_h vm_obj_clone_shape(vm_obj_h* out, vm_obj_h src) {
+  SE_CHECK_NOT_NULL(out);
+  SE_CHECK_NOT_NULL(src);
+  return clone_shape(out, src, 0);
 }
 
 err_h vm_obj_clone_into(const vm_accessor_t* source, const vm_accessor_t* target) {
   return clone_into(source, target, false);
 }
 
-err_h vm_obj_clone_into_usr(const vm_accessor_t* source, const vm_accessor_t* target) {
-  return clone_into(source, target, true);
-}
+// --- Link APIs ---
 
 err_h vm_obj_link(const vm_accessor_t* to_join, const vm_accessor_t* owner) {
   vm_obj_h child;
-  SE_RET_IF_ERR(vm_get_obj(&child, to_join));
+  SE_RET_IF_ERR(vm_obj_get_obj(&child, to_join));
 
   vm_resolved_t slot;
-  SE_RET_IF_ERR(resolve_d(owner, 0, true, &slot));
+  SE_RET_IF_ERR(resolve_acc(owner, true, &slot));
 
   if (slot.payload.type != VM_OBJ_PTR || !slot.payload.ptr) {
     return vm_err_expected_ptr(owner->id, owner->count, (uint8_t)slot.payload.type, slot.owner);
@@ -563,11 +584,31 @@ err_h vm_obj_link(const vm_accessor_t* to_join, const vm_accessor_t* owner) {
   return slot_store(slot.owner, (vm_obj_h*)slot.payload.ptr, child);
 }
 
+err_h vm_obj_link_direct(vm_obj_h cell, uint16_t index, vm_obj_h child) {
+  SE_CHECK_NOT_NULL(cell);
+  SE_CHECK_NOT_NULL(child);
+  if (!cell->head.f.mutable) return vm_obj_not_mutable_err(cell);
+  vm_payload_t slot = obj_elem(cell, index);
+  if (!slot.ptr) return vm_obj_oob_err(cell, index);
+  if (slot.type != VM_OBJ_PTR) return vm_obj_not_ptr_err(cell, slot.type);
+  return slot_store(cell, (vm_obj_h*)slot.ptr, child);
+}
+
+// --- Publication APIs ---
+
+err_h vm_obj_publish(vm_obj_h obj) {
+  SE_RET_IF_ERR(writable(obj, false));
+  obj->head.f.upd = 1;
+  return NULL;
+}
+
+// --- User Mutation Boundaries (_usr) ---
+
 err_h vm_obj_set_scalar_usr(const vm_accessor_t* target, vm_val_t v, vm_obj_t_e src_type) {
   vm_resolved_t r;
-  if (!vm_resolve_fast(target, true, &r)) SE_RET_IF_ERR(resolve_d(target, 0, true, &r));
+  SE_RET_IF_ERR(resolve_acc(target, true, &r));
   SE_RET_IF_ERR(writable(r.owner, true));
-  return vm_store_inline(r.owner, r.payload, v, src_type, target->id);
+  return vm_internal_store_inline(r.owner, r.payload, v, src_type, target->id);
 }
 
 err_h vm_obj_set_scalar_direct_usr(vm_obj_h obj, uint16_t index, vm_val_t v, vm_obj_t_e src_type) {
@@ -575,9 +616,23 @@ err_h vm_obj_set_scalar_direct_usr(vm_obj_h obj, uint16_t index, vm_val_t v, vm_
   return vm_obj_set_scalar_direct(obj, index, v, src_type);
 }
 
+err_h vm_obj_copy_content_usr(const vm_accessor_t* source, const vm_accessor_t* target) {
+  return copy_content(source, target, true);
+}
+
+err_h vm_obj_clone_into_usr(const vm_accessor_t* source, const vm_accessor_t* target) {
+  return clone_into(source, target, true);
+}
+
 err_h vm_obj_link_usr(const vm_accessor_t* child, const vm_accessor_t* target) {
   vm_resolved_t r;
-  SE_RET_IF_ERR(resolve_d(target, 0, true, &r));
+  SE_RET_IF_ERR(resolve_acc(target, true, &r));
   SE_RET_IF_ERR(writable(r.owner, true));
   return vm_obj_link(child, target);
+}
+
+err_h vm_obj_publish_usr(vm_obj_h obj) {
+  SE_RET_IF_ERR(writable(obj, true));
+  obj->head.f.upd = 1;
+  return NULL;
 }

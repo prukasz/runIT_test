@@ -4,6 +4,10 @@
 #include "vm_obj.h"
 #include "vm_obj_build.h"
 
+// ===========================================================================
+// 1. Constants & Types
+// ===========================================================================
+
 /**
  * @brief Live dynamic objects at once. A ceiling, not a budget -- the real
  * limit is the heap, and this exists so a runaway or malformed message is
@@ -15,7 +19,7 @@
 #define VM_OWNERSHIP_CYCLE 0u
 #define VM_OWNERSHIP_DEPTH 1u
 
-/** @brief "Not in the register" -- what vm_obj_dyn_id() returns for an object
+/** @brief "Not in the register" -- what vm_obj_dyn_get_id() returns for an object
  *  that is not registered, including every arena object. */
 #define VM_DYN_NO_ID 0xFFFFu
 
@@ -24,19 +28,23 @@ typedef struct vm_obj_dyn_meta_t {
   vm_obj_h obj;      // NULL marks a free slot -- the table is sparse
 } vm_obj_dyn_meta_t;
 
-/** @brief The register. Public only because vm_obj_dyn_id() and
- *  vm_obj_dyn_get() are inline; vm_obj_dyn.c owns every mutation of it. */
+/** @brief The register. Public only because vm_obj_dyn_get_id() and
+ *  vm_obj_dyn_get_by_id() are inline; vm_obj_dyn.c owns every mutation of it. */
 extern vm_obj_dyn_meta_t g_vm_dyn[VM_DYN_MAX];
+
+// ===========================================================================
+// 2. Helpers (Inspection & Registry Accessors)
+// ===========================================================================
 
 /** @brief Whether this object is heap-allocated and reference counted. Arena
  *  objects always answer false -- vm_obj_create() clears the flag and there is
  *  no cfg field that sets it. */
 static inline bool vm_obj_is_dynamic(vm_obj_h o) {
-  return o->head.f.dynamic != 0;
+  return o != NULL && o->head.f.dynamic != 0;
 }
 
 /**
- * @brief This object's slot in the register, or VM_DYN_NO_ID.
+ * @brief This object's slot in the dynamic register, or VM_DYN_NO_ID.
  *
  * Requires a live object handle (or NULL); never call with a released handle.
  * Found by comparing pointers, which is why nothing is bolted onto the object
@@ -51,7 +59,7 @@ static inline bool vm_obj_is_dynamic(vm_obj_h o) {
  * one bit and the scan runs only for objects that can actually be in the
  * register.
  */
-static inline uint16_t vm_obj_dyn_id(vm_obj_h o) {
+static inline uint16_t vm_obj_dyn_get_id(vm_obj_h o) {
   if (!o || !o->head.f.dynamic) return VM_DYN_NO_ID;
   for (uint16_t i = 0; i < VM_DYN_MAX; i++) {
     if (g_vm_dyn[i].obj == o) return i;
@@ -59,12 +67,16 @@ static inline uint16_t vm_obj_dyn_id(vm_obj_h o) {
   return VM_DYN_NO_ID;
 }
 
-/** @brief Direct register access, for teardown, telemetry and debug listings.
+/** @brief Direct register access by ID, for teardown, telemetry and debug listings.
  *  NULL where the slot is empty -- the register is sparse, so a walk covers
  *  [0, VM_DYN_MAX) and skips holes rather than stopping at the first one. */
-static inline vm_obj_h vm_obj_dyn_get(uint16_t id) {
+static inline vm_obj_h vm_obj_dyn_get_by_id(uint16_t id) {
   return (id < VM_DYN_MAX) ? g_vm_dyn[id].obj : NULL;
 }
+
+// ===========================================================================
+// 3. Target Public APIs (Lifecycle, Retain, Release, Link Validation)
+// ===========================================================================
 
 /**
  * @brief Allocate a dynamic object and register it, reference count zero.

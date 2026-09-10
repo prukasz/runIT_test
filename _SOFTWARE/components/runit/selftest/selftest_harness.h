@@ -7,6 +7,25 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#if defined(__has_include)
+  #if __has_include("runit_board_cfg.h")
+    #include "runit_board_cfg.h"
+  #endif
+#endif
+
+#ifndef RUNIT_TEST_SECTION_OBJ
+  #define RUNIT_TEST_SECTION_OBJ 1
+#endif
+#ifndef RUNIT_TEST_SECTION_LOADER
+  #define RUNIT_TEST_SECTION_LOADER 1
+#endif
+#ifndef RUNIT_TEST_SECTION_EXEC
+  #define RUNIT_TEST_SECTION_EXEC 1
+#endif
+#ifndef RUNIT_TEST_SECTION_SUB
+  #define RUNIT_TEST_SECTION_SUB 1
+#endif
+
 #include "sys_error.h"
 #include "vm_obj.h"
 #include "vm_obj_access.h"

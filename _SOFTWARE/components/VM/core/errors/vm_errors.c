@@ -1,19 +1,11 @@
 #include "vm_errors.h"
 #include <string.h>
 
-/*
-All noinline, and all cold. Nothing here runs on a working program, so the
-only thing that matters about the code is that it does not cost the paths that
-call it -- see the note in vm_errors.h.
+/* Cold-path error builders (explicit OWNER passed per subsystem). */
 
-There is no ambient `#define OWNER` in this file on purpose: three layers raise
-errors from here, and the owner is part of what identifies a trace. Every
-builder names its own.
-*/
-
-// ---------------------------------------------------------------------------
-// Accessor layer
-// ---------------------------------------------------------------------------
+/* ========================================================================= */
+/* Accessor Layer Errors                                                     */
+/* ========================================================================= */
 
 __attribute__((noinline)) err_h vm_err_depth(uint16_t id) {
   SE_RET_ERR_OWNED(OWNER_VM_ACCESSOR, ERR_VM_ACCESSOR_DEPTH_EXCEEDED, .id = id);
@@ -61,9 +53,9 @@ __attribute__((noinline)) err_h vm_obj_not_scalar_err(vm_obj_h owner, vm_obj_t_e
   SE_RET_ERR_OWNED(OWNER_VM_ACCESSOR, ERR_VM_ACCESSOR_TYPE_MISMATCH, .id = id, .chain_pos = 0, .expected = VM_OBJ_NONE, .actual = actual, .obj = (void*)owner);
 }
 
-// ---------------------------------------------------------------------------
-// Object layer
-// ---------------------------------------------------------------------------
+/* ========================================================================= */
+/* Object Layer Errors                                                       */
+/* ========================================================================= */
 
 __attribute__((noinline)) err_h vm_obj_null_obj_err(void) {
   SE_RET_ERR_OWNED(OWNER_VM_OBJ, ERR_NULL_PTR, 0);
@@ -81,9 +73,9 @@ __attribute__((noinline)) err_h vm_obj_not_ptr_err(vm_obj_h obj, uint8_t actual)
   SE_RET_ERR_OWNED(OWNER_VM_OBJ, ERR_VM_OBJ_NOT_PTR, .actual = actual, .obj = (void*)obj);
 }
 
-// ---------------------------------------------------------------------------
-// Block layer
-// ---------------------------------------------------------------------------
+/* ========================================================================= */
+/* Block Layer Errors                                                        */
+/* ========================================================================= */
 
 __attribute__((noinline)) err_h vm_block_err_pin_missing(uint16_t block_idx, uint8_t pin_id, bool is_out) {
   SE_RET_ERR_OWNED(OWNER_VM_BLOCK, ERR_VM_BLOCK_PIN_MISSING, .block_idx = block_idx, .pin_id = pin_id, .is_out = is_out ? 1 : 0);

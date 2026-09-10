@@ -1,4 +1,5 @@
 #pragma once
+
 #include <stdbool.h>
 #include <stdint.h>
 #include "sys_error.h"
@@ -7,157 +8,128 @@
 #include "vm_obj_access.h"
 
 /*
-Object construction -- the counterpart to vm_obj_access.h, which only ever
-reads and writes objects that already exist.
+ * VM Object & Accessor Construction
+ *
+ * Provides allocation, validation, and initialization for VM objects and
+ * accessors within the VM store (arena), along with accessor cache generation.
+ *
+ * Logic Flow:
+ *   1. Object Construction (vm_obj_create, vm_obj_shape, vm_obj_init)
+ *   2. Accessor Construction & Caching (vm_accessor_create, vm_accessor_set_*, vm_accessor_cache_build)
+ */
 
-Two callers, deliberately sharing one implementation: the program loader
-building the static object graph from an uploaded packet, and any block that
-has to build a shape at runtime. Both go through vm_store_alloc(), which
-carves the chunk, zeroes it and binds the id in one step; neither ever frees
-an individual object, since storage is reclaimed by resetting the whole
-store (see vm_store.h).
-
-Building a nested object is two steps, in this order:
-  1. create the children,
-  2. create the VM_OBJ_PTR parent and vm_obj_link_direct() each child in.
-A parent's payload holds vm_obj_h values, so every child must already exist
-and have a final address before the parent can point at it.
-*/
-
-/*
-An object is described by the same vm_obj_head_t it will be stored with -- there
-is no separate "config" type. One representation, so building an object, reading
-one back and cloning the shape of an existing one are all the same operation on
-the same struct.
-
-`payload_size` is **bytes, and the caller's arithmetic**. The VM does not
-multiply an element count by a type width anywhere, which means it also cannot
-catch that multiply overflowing: whoever converts a count into bytes owns that
-check. For an uploaded program that is vm_loader.c, which still raises
-ERR_VM_OBJ_TOO_LARGE before it ever gets here. Nothing downstream is put at
-risk by a wrong size, because vm_obj_elem_ptr() bounds every access against
-payload_size -- an undersized object refuses reads past its end rather than
-reaching into its neighbour.
-
-Three head fields are the creator's, not the caller's, and are overwritten
-whatever the caller left in them:
-
-  upd        always starts clear
-  tagged     derived from name_size
-  dynamic    set by the allocator -- vm_obj_create() clears it, and
-             vm_obj_dyn_create() sets it. A caller cannot ask for either.
-*/
+// ===========================================================================
+// 1. Object Construction
+// ===========================================================================
 
 /**
- * @brief Bump-allocate and initialise one object from its head.
+ * @brief Bump-allocate and initialize one object from its header descriptor.
  *
- * Payload and name bytes are zeroed, so a freshly created object reads as 0 /
- * empty rather than whatever the arena last held.
+ * Validates shape, allocates from VM arena (zero-initialized), binds registry ID,
+ * and initializes header and optional name tag.
  *
- * @param out Receives the new handle; set to NULL on any failure.
- * @param id Registry id to bind, or VM_ID_NONE to allocate without binding.
- * @param head Shape and flags. `payload_size` is bytes; `d.name_size` says how
- *             many bytes of @p name to copy.
- * @param name `head->d.name_size` bytes, not NUL-terminated and not read at all
- *             when that is 0.
- * @return err_h NULL on success. ERR_VM_OBJ_BAD_TYPE for a width-less type,
- *         ERR_VM_OBJ_EMPTY for payload_size 0 -- an object with no storage
- *         still has an address, and that address belongs to the next
- *         allocation -- ERR_VM_OBJ_RETENTIVE_PTR for a retentive pointer,
- *         ERR_VM_REG_OOB / ERR_VM_REG_DUP for the id, or ERR_BASE_NO_MEM when
- *         the arena is full, in which case vm_store has separately reported
- *         the requested and remaining byte counts.
+ * @param[out] out  Receives the new object handle (set to NULL on failure).
+ * @param[in]  id   Registry ID to bind, or VM_ID_NONE to allocate without binding.
+ * @param[in]  head Shape and descriptor flags.
+ * @param[in]  name Name tag bytes (length specified by head->d.name_size).
+ * @return err_h NULL on success, or error handle:
+ *         - ERR_VM_OBJ_BAD_TYPE: Invalid or widthless type.
+ *         - ERR_VM_OBJ_EMPTY: payload_size is zero.
+ *         - ERR_VM_OBJ_BAD_SIZE: payload_size not a multiple of element width.
+ *         - ERR_VM_OBJ_RETENTIVE_PTR: Pointer types cannot be retentive.
+ *         - ERR_VM_REG_OOB / ERR_VM_REG_DUP: Registry ID invalid or already taken.
+ *         - ERR_BASE_NO_MEM: Arena out of memory.
  *
  * @code
  * vm_obj_h temp;
- * vm_obj_head_t h = {.payload_size = sizeof(float)};
- * h.d.obj_t = VM_OBJ_F;
- * h.d.name_size = 4;
- * h.f.mutable = 1;
+ * vm_obj_head_t h = vm_make_obj_head(VM_OBJ_F, 1, VM_OBJ_F_MUTABLE, 4);
  * SE_RET_IF_ERR(vm_obj_create(&temp, 3, &h, "temp"));
  * @endcode
  */
 err_h vm_obj_create(vm_obj_h* out, uint16_t id, const vm_obj_head_t* head, const char* name);
 
 /**
- * @brief Validate a head and report the bytes one object of that shape needs.
+ * @brief Validate an object header and compute total allocation bytes required.
  *
- * Split out because there are two allocators -- the arena (vm_obj_create) and
- * the heap (vm_obj_dyn_create in vm_obj_dyn.h) -- and only the allocation
- * differs. Every rejection listed for vm_obj_create() is raised here, before
- * either of them spends anything.
+ * Validates type, non-zero payload size, element alignment, and retentive
+ * constraints. Shared by both arena and dynamic heap allocators.
  *
- * @param out_total Receives head + payload + name bytes; 0 on any failure.
+ * @param[in]  head      Object header to validate.
+ * @param[out] out_total Receives total bytes (sizeof(vm_obj_head_t) + payload + name).
+ * @return err_h NULL on success, or validation error handle.
  */
 err_h vm_obj_shape(const vm_obj_head_t* head, uint32_t* out_total);
 
 /**
- * @brief Copy a validated head into a freshly allocated object, plus its name.
+ * @brief Initialize a pre-allocated object handle with validated header and name.
  *
- * The other half of the same split. Assumes @p o is zeroed and at least
- * vm_obj_shape()'s byte count, which is only true if that call succeeded on
- * this same head -- there is no validation here. Forces the three creator-owned
- * flags described above.
+ * Copies header, forces `upd` to 0, sets `tagged` bit if name_size > 0,
+ * clears `dynamic` flag (default arena), and copies name bytes after payload.
+ *
+ * @param[in,out] o    Allocated object handle.
+ * @param[in]     head Validated header descriptor.
+ * @param[in]     name Optional name tag bytes.
  */
 void vm_obj_init(vm_obj_h o, const vm_obj_head_t* head, const char* name);
 
-/* ===========================================================================
-   Accessor construction
-
-   Same shape as the object side: create each accessor, bind it to an id, fill
-   its indices by position. The indices pointer addresses trailing storage in
-   the same allocation as the header, and expires with that arena allocation.
-
-   `VM_IDX_REF` takes an already-built accessor rather than an id on purpose:
-   requiring the target to exist before the referencing index is written makes
-   reference cycles impossible to construct, which is stronger than
-   VM_ACCESSOR_MAX_DEPTH catching them later at resolve time.
-   =========================================================================== */
+// ===========================================================================
+// 2. Accessor Construction & Caching
+// ===========================================================================
 
 /**
- * @brief Allocate an accessor plus its index array.
+ * @brief Allocate an accessor and its index array in the VM store.
  *
- * Indices start as `VM_IDX_LITERAL 0`; fill them with the setters below.
- * `idx_count == 0` is a whole-object accessor and allocates no index array.
+ * Contiguously allocates accessor header and index array.
+ * If idx_count == 0, creates a whole-object accessor without an index array.
  *
- * @return err_h ERR_VM_REG_OOB / ERR_VM_REG_DUP for the id, ERR_BASE_NO_MEM
- *         when the arena is full.
+ * @param[out] out         Receives the new accessor handle (NULL on failure).
+ * @param[in]  id          Registry ID to bind, or VM_ID_NONE.
+ * @param[in]  root_obj_id Target root object ID.
+ * @param[in]  idx_count   Number of index slots to allocate.
+ * @return err_h NULL on success, or error handle (ERR_VM_REG_*, ERR_BASE_NO_MEM).
  */
 err_h vm_accessor_create(vm_accessor_t** out, uint16_t id, uint16_t root_obj_id, uint8_t idx_count);
 
-/** @brief Set index `pos` to a fixed position. */
+/**
+ * @brief Set accessor index at position @p pos to a literal index.
+ *
+ * @param[in,out] acc   Accessor handle.
+ * @param[in]     pos   Index slot position (0 .. count-1).
+ * @param[in]     value Literal index value.
+ * @return err_h NULL on success, or ERR_VM_ACC_INDEX_OOB if pos >= count.
+ */
 err_h vm_accessor_set_literal(vm_accessor_t* acc, uint8_t pos, uint32_t value);
 
-/** @brief Set index `pos` to read its position live from `ref`. */
+/**
+ * @brief Set accessor index at position @p pos to read from another accessor.
+ *
+ * @param[in,out] acc Accessor handle.
+ * @param[in]     pos Index slot position (0 .. count-1).
+ * @param[in]     ref Target accessor reference.
+ * @return err_h NULL on success, or ERR_VM_ACC_INDEX_OOB if pos >= count.
+ */
 err_h vm_accessor_set_ref(vm_accessor_t* acc, uint8_t pos, const vm_accessor_t* ref);
 
 /**
- * @brief Set index `pos` to match a child tag.
+ * @brief Set accessor index at position @p pos to match a child tag name.
  *
- * Copies `name` into program storage NUL-terminated -- the wire form is not
- * terminated and the frame buffer does not outlive the load, so the accessor
- * cannot simply point at it. The copy is allocated unbound (VM_ID_NONE): it is
- * reached through the index, never by id.
+ * Allocates and copies @p name into VM store memory as a NUL-terminated string.
  *
- * @return err_h ERR_VM_OBJ_NAME_TOO_LONG past VM_OBJ_NAME_MAX, ERR_BASE_NO_MEM.
+ * @param[in,out] acc      Accessor handle.
+ * @param[in]     pos      Index slot position (0 .. count-1).
+ * @param[in]     name     Child tag name.
+ * @param[in]     name_len Length of name (must be <= VM_OBJ_NAME_MAX).
+ * @return err_h NULL on success, ERR_VM_OBJ_NAME_TOO_LONG, or ERR_BASE_NO_MEM.
  */
 err_h vm_accessor_set_name(vm_accessor_t* acc, uint8_t pos, const char* name, uint8_t name_len);
 
 /**
- * @brief Pre-resolve an accessor whose address cannot move, so every later
- *        access is four loads instead of a walk.
+ * @brief Pre-resolve an immutable accessor target into its resolution cache.
  *
- * Qualifies: a whole-object accessor, or one literal index on a root object
- * whose element is in range. Both are fixed for the life of the program --
- * see the VM_ACC_F_CACHED note in vm_obj_access.h for why a pointer slot
- * counts as fixed and a two-level chain does not.
+ * Pre-resolves whole-object accessors or single literal indices on root objects.
+ * Caches target payload and owner for 4-load fast path execution.
  *
- * Call after the root object exists and its indices are set. The loader does
- * this itself at the end of vm_loader_add_accessor(); code building accessors
- * directly has to call it. Skipping it costs speed and nothing else.
- *
- * @return true if the accessor is now cached, false if its shape does not
- *         qualify or the root object is missing -- never an error, since
- *         resolving the long way is always available.
+ * @param[in,out] acc Accessor to cache.
+ * @return true if successfully cached, false if dynamic, chained, or uncachable.
  */
 bool vm_accessor_cache_build(vm_accessor_t* acc);

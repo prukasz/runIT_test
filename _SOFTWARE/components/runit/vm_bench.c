@@ -1,4 +1,8 @@
 #include "vm_bench.h"
+#include "runit_board_cfg.h"
+
+#if RUNIT_ENABLE_VM_BENCH
+
 #include <esp_cpu.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -10,7 +14,6 @@
 #include "vm_blocks.h"
 #include "vm_obj_access.h"
 #include "vm_obj_build.h"
-
 
 #define OWNER OWNER_VM_BASE
 
@@ -137,10 +140,10 @@ static vm_block_h expr_fixture(uint8_t* buf, uint16_t block_idx, uint8_t in_cnt,
   b->cfg.custom_len = (uint16_t)vm_expr_size(k_cnt, code_len);
   b->cfg.eno = s_expr_eno;
 
-  for (uint8_t i = 0; i < in_cnt; i++) vm_block_inputs(b)[i] = s_expr_acc[i];
-  vm_block_outputs(b)[0] = s_expr_out;
+  for (uint8_t i = 0; i < in_cnt; i++) vm_block_get_inputs(b)[i] = s_expr_acc[i];
+  vm_block_get_outputs(b)[0] = s_expr_out;
 
-  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_custom_data(b);
+  vm_expr_code_t* c = (vm_expr_code_t*)vm_block_get_custom_data(b);
   c->const_cnt = k_cnt;
   c->code_len = code_len;
   for (uint8_t i = 0; i < k_cnt; i++) c->consts[i].u = ks[i];
@@ -239,9 +242,9 @@ static bool setup(void) {
   s_blk_scalar->cfg.block_type = 1;
   s_blk_scalar->cfg.in_cnt = 2;
   s_blk_scalar->cfg.q_cnt = 1;
-  vm_block_inputs(s_blk_scalar)[0] = s_flat_acc[0];
-  vm_block_inputs(s_blk_scalar)[1] = s_flat_acc[1];
-  vm_block_outputs(s_blk_scalar)[0] = s_flat;
+  vm_block_get_inputs(s_blk_scalar)[0] = s_flat_acc[0];
+  vm_block_get_inputs(s_blk_scalar)[1] = s_flat_acc[1];
+  vm_block_get_outputs(s_blk_scalar)[0] = s_flat;
 
   // 2. 1D Array block: inputs index into array elements (s_grid_acc[2], s_grid_acc[3])
   memset(s_blk_arr_buf, 0, sizeof(s_blk_arr_buf));
@@ -250,9 +253,9 @@ static bool setup(void) {
   s_blk_array->cfg.block_type = 1;
   s_blk_array->cfg.in_cnt = 2;
   s_blk_array->cfg.q_cnt = 1;
-  vm_block_inputs(s_blk_array)[0] = s_grid_acc[2];
-  vm_block_inputs(s_blk_array)[1] = s_grid_acc[3];
-  vm_block_outputs(s_blk_array)[0] = s_flat;
+  vm_block_get_inputs(s_blk_array)[0] = s_grid_acc[2];
+  vm_block_get_inputs(s_blk_array)[1] = s_grid_acc[3];
+  vm_block_get_outputs(s_blk_array)[0] = s_flat;
 
   // 3. Tag accessor block: inputs use tag matching ("r0"[1], "r1"[1])
   memset(s_blk_tag_buf, 0, sizeof(s_blk_tag_buf));
@@ -261,9 +264,9 @@ static bool setup(void) {
   s_blk_tag->cfg.block_type = 1;
   s_blk_tag->cfg.in_cnt = 2;
   s_blk_tag->cfg.q_cnt = 1;
-  vm_block_inputs(s_blk_tag)[0] = s_name_acc[1];
-  vm_block_inputs(s_blk_tag)[1] = s_name_acc[9];
-  vm_block_outputs(s_blk_tag)[0] = s_flat;
+  vm_block_get_inputs(s_blk_tag)[0] = s_name_acc[1];
+  vm_block_get_inputs(s_blk_tag)[1] = s_name_acc[9];
+  vm_block_get_outputs(s_blk_tag)[0] = s_flat;
 
   // 4. The expression blocks -- see the fixture note at the top of the file
   OKC(mk(&s_expr_in, OBJ_EXPR_IN, VM_OBJ_F, EXPR_IN_CNT, NULL));
@@ -388,11 +391,11 @@ static float bench_row_payload(void) {
   float acc = 0;
   for (int r = 0; r < GRID_N; r++) {
     vm_obj_h row = NULL;
-    if (vm_get_obj(&row, s_row_acc[r]) != NULL) continue;
-    vm_payload_t p = vm_obj_as_payload(row);
+    if (vm_obj_get_obj(&row, s_row_acc[r]) != NULL) continue;
+    vm_payload_t p = vm_make_payload(row);
     for (uint16_t i = 0; i < p.count; i++) {
       float v = 0;
-      VM_PAYLOAD_GET_VAL(v, vm_payload_at(p, i));
+      VM_PAYLOAD_GET_VAL(v, vm_payload_get_at(p, i));
       acc += v;
     }
   }
@@ -421,9 +424,9 @@ static void block_add_execute(vm_block_h block) {
     BLOCK_CALL(VM_OBJ_GET_VAL(b, in1), block);
     float sum = a + b;
     BLOCK_CALL(VM_OBJ_SET_VAL_AT(sum, out0, 0), block);
-    vm_block_set_ENO(block, true);
+    vm_block_set_eno(block, true);
   } else {
-    vm_block_set_ENO(block, false);
+    vm_block_set_eno(block, false);
   }
 }
 
@@ -642,3 +645,11 @@ void vm_bench_run(void) {
 
   ESP_LOGW(TAG, "==== benchmark done ====");
 }
+
+#else
+
+void vm_bench_run(void) {
+  // Benchmark disabled by RUNIT_ENABLE_VM_BENCH
+}
+
+#endif

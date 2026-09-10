@@ -16,7 +16,6 @@ void f_str(const char* s);
 void f_f32(float v);
 err_h f_send(void);
 
-err_h upload_open_sec(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint16_t sec_cnt, uint32_t total);
 err_h upload_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint32_t total);
 void add_obj_record_raw(uint16_t id, uint16_t payload_size, uint8_t type, uint8_t flags, const char* name);
 void add_obj_record(uint16_t id, uint16_t item_count, uint8_t type, uint8_t flags, const char* name);

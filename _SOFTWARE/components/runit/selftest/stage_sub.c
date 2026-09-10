@@ -29,9 +29,9 @@ void test_subscription(void) {
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(3);
-  add_obj_record(1, 1, VM_OBJ_F, VM_LOAD_F_MUTABLE | VM_LOAD_F_UPD_RESETABLE, "val_f");
-  add_obj_record(2, 1, VM_OBJ_U32, VM_LOAD_F_MUTABLE | VM_LOAD_F_UPD_RESETABLE, "val_u");
-  add_obj_record(3, 2, VM_OBJ_PTR, VM_LOAD_F_MUTABLE | VM_LOAD_F_UPD_RESETABLE, "tree");
+  add_obj_record(1, 1, VM_OBJ_F, VM_OBJ_F_MUTABLE | VM_OBJ_F_UPD_RESETABLE, "val_f");
+  add_obj_record(2, 1, VM_OBJ_U32, VM_OBJ_F_MUTABLE | VM_OBJ_F_UPD_RESETABLE, "val_u");
+  add_obj_record(3, 2, VM_OBJ_PTR, VM_OBJ_F_MUTABLE | VM_OBJ_F_UPD_RESETABLE, "tree");
   ck("sub: create objects", f_send() == NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x43);
@@ -56,7 +56,7 @@ void test_subscription(void) {
   ck("sub: no telemetry when not updated", s_mock_sub_calls == 0);
 
   // 4. Update OBJ 1 -> telemetry emitted
-  vm_obj_h o1 = vm_obj_by_id(1);
+  vm_obj_h o1 = vm_obj_get_by_id(1);
   ck("sub: obj 1 exists", o1 != NULL);
   if (o1) {
     *(float*)o1->payload = 25.5f;
@@ -88,7 +88,7 @@ void test_subscription(void) {
   ck("sub: subscribe to nested obj 3", f_send() == NULL && vm_sub_count() == 1);
 
   // Update child OBJ 2 inside tree
-  vm_obj_h o2 = vm_obj_by_id(2);
+  vm_obj_h o2 = vm_obj_get_by_id(2);
   ck("sub: obj 2 exists", o2 != NULL);
   if (o2) {
     *(uint32_t*)o2->payload = 200;

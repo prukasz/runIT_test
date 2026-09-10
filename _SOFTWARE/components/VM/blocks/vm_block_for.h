@@ -1,7 +1,7 @@
 #pragma once
 #include <math.h>
 #include "esp_compiler.h"
-#include "vm_block.h"
+#include "vm_block_support.h"
 #include "vm_exec.h"
 
 /*
@@ -60,38 +60,17 @@ _Static_assert(sizeof(vm_for_code_t) == 24, "wire format header size");
 
 static inline vm_for_code_t* vm_for_code_of(vm_block_h b) {
   if (unlikely(b->cfg.custom_len < sizeof(vm_for_code_t))) return NULL;
-  vm_for_code_t* c = (vm_for_code_t*)vm_block_custom_data(b);
+  vm_for_code_t* c = (vm_for_code_t*)vm_block_get_custom_data(b);
   if (unlikely(c->op >= VM_FOR_OP_CNT || c->cmp >= VM_FOR_CMP_CNT)) return NULL;
   return c;
 }
 
-static inline void vm_for_cfg_bad(vm_block_h b) {
-  g_vm_block_fault = true;
-  if (b->cfg.rt & VM_BLK_RT_CFG_BAD) return;
-  b->cfg.rt |= VM_BLK_RT_CFG_BAD;
-  VM_BLK_EMIT_ERR(ERR_VM_BLK_BAD_SHAPE, .blk_id = b->cfg.block_idx, .in_cnt = b->cfg.in_cnt, .q_cnt = b->cfg.q_cnt);
-}
-
 static inline void vm_for_bad_loop(vm_block_h b, vm_for_code_t* c, uint32_t turns, uint8_t reason) {
+  g_vm_block_fault = true;
   if (c->rt & VM_FOR_RT_BAD) return;
   c->rt |= VM_FOR_RT_BAD;
-  VM_BLK_EMIT_ERR(ERR_VM_FOR_BAD_LOOP, .block_idx = b->cfg.block_idx, .turns = turns, .cap = c->max_turns,
-                  .reason = reason);
-}
-
-static inline bool vm_for_param(float* out, vm_block_h b, uint8_t pin, float k) {
-  *out = k;
-  if (pin >= b->cfg.in_cnt) return true;
-
-  const vm_accessor_t* a = vm_block_inputs(b)[pin];
-  if (!a) return true;
-
-  err_h e = VM_OBJ_GET_VAL(*out, a);
-  if (unlikely(e)) {
-    vm_block_report_error(e, b->cfg.block_idx, b->cfg.block_type);
-    return false;
-  }
-  return true;
+  vm_block_report_error(VM_BLK_ERR_NEW(ERR_VM_FOR_BAD_LOOP, .block_idx = b->cfg.block_idx, .turns = turns, .cap = c->max_turns,
+                  .reason = reason), b->cfg.block_idx, b->cfg.block_type);
 }
 
 static inline float vm_for_advance(uint8_t op, float i, float step) {
@@ -113,7 +92,7 @@ static inline bool vm_for_keep_going(uint8_t cmp, float i, float end) {
 }
 
 static inline void vm_blk_for(vm_block_h b) {
-  const vm_span_t* sp = vm_block_span(b);
+  const vm_span_t* sp = vm_block_get_span(b);
   const vm_span_t range = sp ? *sp : (vm_span_t){0, 0};
   vm_block_claim_span(b, range.start, range.end);
 
@@ -121,30 +100,30 @@ static inline void vm_blk_for(vm_block_h b) {
 
   vm_for_code_t* c = vm_for_code_of(b);
   if (unlikely(!c)) {
-    vm_for_cfg_bad(b);
-    vm_block_set_ENO(b, false);
+    vm_block_cfg_bad(b);
+    vm_block_set_eno(b, false);
     return;
   }
 
   float i = 0.0f, end = 0.0f, step = 0.0f;
   bool go = owned;
   IF_BLOCK_ENABLED(b) {
-    go = go && vm_for_param(&i, b, VM_FOR_IN_START, c->k_start);
-    go = go && vm_for_param(&end, b, VM_FOR_IN_END, c->k_end);
-    go = go && vm_for_param(&step, b, VM_FOR_IN_STEP, c->k_step);
+    go = go && vm_block_param_f32(&i, b, VM_FOR_IN_START, c->k_start);
+    go = go && vm_block_param_f32(&end, b, VM_FOR_IN_END, c->k_end);
+    go = go && vm_block_param_f32(&step, b, VM_FOR_IN_STEP, c->k_step);
     go = go && isfinite(i) && isfinite(end) && isfinite(step);
   } else {
     go = false;
   }
 
   if (!go || !vm_for_keep_going(c->cmp, i, end)) {
-    vm_block_set_ENO(b, false);
+    vm_block_set_eno(b, false);
     return;
   }
 
-  vm_block_set_ENO(b, true);
+  vm_block_set_eno(b, true);
 
-  vm_obj_h idx = (b->cfg.q_cnt >= 1) ? vm_block_outputs(b)[0] : NULL;
+  vm_obj_h idx = (b->cfg.q_cnt >= 1) ? vm_block_get_outputs(b)[0] : NULL;
   const uint32_t budget = c->max_turns;
   uint32_t turns = 0;
 
@@ -163,6 +142,7 @@ static inline void vm_blk_for(vm_block_h b) {
     }
 
     vm_exec_run_range(range.start, range.end);
+    if (vm_exec_cancelled()) return;
     turns++;
 
     i = vm_for_advance(c->op, i, step);

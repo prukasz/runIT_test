@@ -1,5 +1,8 @@
 #include "selftest_harness.h"
 #include "vm_block.h"
+#include "vm_blocks.h"
+#include "vm_block_edge.h"
+#include "vm_block_timer.h"
 
 static uint16_t s_acc_id = 0;
 
@@ -17,7 +20,7 @@ void test_header_helpers(void) {
   ESP_LOGI(TAG, "-- A: header helpers / type tables --");
   direct_arena_reset();
 
-  /* The shift table is load-bearing: vm_obj_items_cnt() divides by shifting,
+  /* The shift table is load-bearing: vm_obj_get_items_cnt() divides by shifting,
      so a wrong entry silently returns the wrong element count everywhere.
      Check it against the size table for every real type. */
   const vm_obj_t_e types[] = {VM_OBJ_PTR, VM_OBJ_U8, VM_OBJ_U32, VM_OBJ_I32, VM_OBJ_F, VM_OBJ_B, VM_OBJ_STR, VM_OBJ_U64};
@@ -32,9 +35,9 @@ void test_header_helpers(void) {
       counts_ok = false;
       continue;
     }
-    if (vm_obj_items_cnt(o) != 3) counts_ok = false;
-    if (vm_obj_payload_size(o) != (uint16_t)(3 * w)) counts_ok = false;
-    if (vm_obj_type_size(o) != w) counts_ok = false;
+    if (vm_obj_get_items_cnt(o) != 3) counts_ok = false;
+    if (vm_obj_get_payload_size(o) != (uint16_t)(3 * w)) counts_ok = false;
+    if (vm_obj_get_type_size(o) != w) counts_ok = false;
   }
   ck("every type width is a non-zero power of two", widths_ok);
   ck("items_cnt/payload_size agree with width, all types", counts_ok);
@@ -68,25 +71,25 @@ void test_header_helpers(void) {
   vm_obj_head_t h64 = hd(VM_OBJ_U64, 4);
   bool elem_ok = vm_obj_create(&eo, VM_ID_NONE, &h64, NULL) == NULL && eo;
   if (elem_ok) {
-    elem_ok = vm_obj_elem_ptr(eo, 0) == eo->payload && vm_obj_elem_ptr(eo, 3) == eo->payload + 24 && vm_obj_elem_ptr(eo, 4) == NULL && vm_obj_elem_ptr(eo, 0x20000000u) == NULL &&  // would wrap to offset 0 if shifted unguarded
-              vm_obj_elem_ptr(eo, UINT32_MAX) == NULL;
+    elem_ok = vm_obj_get_elem_ptr(eo, 0) == eo->payload && vm_obj_get_elem_ptr(eo, 3) == eo->payload + 24 && vm_obj_get_elem_ptr(eo, 4) == NULL && vm_obj_get_elem_ptr(eo, 0x20000000u) == NULL &&  // would wrap to offset 0 if shifted unguarded
+              vm_obj_get_elem_ptr(eo, UINT32_MAX) == NULL;
   }
   ck("elem_ptr bounds, including a shift that would wrap", elem_ok);
 
   direct_arena_reset();
   vm_obj_h named = mk(0, VM_OBJ_U32, 2, "abc", true);
   vm_obj_h anon = mk(1, VM_OBJ_U32, 2, NULL, true);
-  ck("total_size includes name", named && vm_obj_total_size(named) == 4 + 8 + 3);
-  ck("total_size without name", anon && vm_obj_total_size(anon) == 4 + 8);
+  ck("total_size includes name", named && vm_obj_get_total_size(named) == 4 + 8 + 3);
+  ck("total_size without name", anon && vm_obj_get_total_size(anon) == 4 + 8);
   uint8_t nl = 0;
-  ck("untagged object has no tag", anon && vm_obj_tag(anon, &nl) == NULL);
-  ck("vm_obj_payload non-NULL when sized", named && vm_obj_payload(named) != NULL);
+  ck("untagged object has no tag", anon && vm_obj_get_tag(anon, &nl) == NULL);
+  ck("vm_obj_payload non-NULL when sized", named && vm_obj_get_payload_ptr(named) != NULL);
 
-  vm_payload_t p = vm_obj_as_payload(named);
+  vm_payload_t p = vm_make_payload(named);
   ck("as_payload type/count", p.type == VM_OBJ_U32 && p.count == 2 && p.ptr == named->payload);
-  vm_payload_t e1 = vm_payload_at(p, 1);
+  vm_payload_t e1 = vm_payload_get_at(p, 1);
   ck("payload_at steps by width", e1.ptr == (uint8_t*)p.ptr + 4 && e1.count == 1);
-  ck("payload_at out of range -> NULL", vm_payload_at(p, 2).ptr == NULL);
+  ck("payload_at out of range -> NULL", vm_payload_get_at(p, 2).ptr == NULL);
 }
 
 /* ==========================================================================
@@ -133,11 +136,11 @@ void test_conversion(void) {
   out_i = 0;
   ck("float -3.7 -> int -4", VM_OBJ_SET_VAL(in_f, &a_f) == NULL && VM_OBJ_GET_VAL(out_i, &a_f) == NULL && out_i == -4);
 
-  // vm_f_to_i guards: a plain cast of these to an integer would be UB
-  ck("f_to_i(NaN) == 0", vm_f_to_i(0.0f / 0.0f) == 0);
-  ck("f_to_i(+huge) saturates high", vm_f_to_i(1e30f) == INT64_MAX);
-  ck("f_to_i(-huge) saturates low", vm_f_to_i(-1e30f) == INT64_MIN);
-  ck("f_to_i rounds .5 away from zero", vm_f_to_i(2.5f) == 3 && vm_f_to_i(-2.5f) == -3);
+  // vm_internal_f_to_i guards: a plain cast of these to an integer would be UB
+  ck("f_to_i(NaN) == 0", vm_internal_f_to_i(0.0f / 0.0f) == 0);
+  ck("f_to_i(+huge) saturates high", vm_internal_f_to_i(1e30f) == INT64_MAX);
+  ck("f_to_i(-huge) saturates low", vm_internal_f_to_i(-1e30f) == INT64_MIN);
+  ck("f_to_i rounds .5 away from zero", vm_internal_f_to_i(2.5f) == 3 && vm_internal_f_to_i(-2.5f) == -3);
 
   /* Documented and deliberate: the destination's own range is NOT clamped,
      so narrowing still wraps. Pinned here so adding destination clamping
@@ -171,8 +174,9 @@ void test_conversion(void) {
   in_u32 = 7;
   (void)VM_OBJ_SET_VAL(in_u32, &a_u32);
   vm_payload_t praw = {.ptr = NULL, .count = 0, .type = VM_OBJ_STR, ._pad = 0};
-  vm_val_t vraw = vm_payload_read(praw);
-  ck("payload_read of NULL ptr is zero", vraw.u64 == 0);
+  uint32_t vraw = 999;
+  VM_PAYLOAD_GET_VAL(vraw, praw);
+  ck("payload_read of NULL ptr is zero", vraw == 0);
 }
 
 /* ==========================================================================
@@ -266,7 +270,7 @@ void test_resolution(void) {
   uint64_t sum = 0;
   for (uint16_t i = 0; i < arrp.count; i++) {
     uint64_t el = 0;
-    VM_PAYLOAD_GET_VAL(el, vm_payload_at(arrp, i));
+    VM_PAYLOAD_GET_VAL(el, vm_payload_get_at(arrp, i));
     sum += el;
   }
   ck("iterating the payload sums 10+20+30+40", sum == 100);
@@ -376,19 +380,19 @@ void test_nested(void) {
   static const vm_index_t i_r00[] = {{.kind = VM_IDX_LITERAL, .value = 0}, {.kind = VM_IDX_LITERAL, .value = 0}};
   static const vm_accessor_t a_r00 = {.id = N_ROOT, .count = 2, .indices = i_r00};
   vm_obj_h h = NULL;
-  ck("get_obj(root[0]) -> branch_a", vm_get_obj(&h, &a_r0) == NULL && h == br_a);
+  ck("get_obj(root[0]) -> branch_a", vm_obj_get_obj(&h, &a_r0) == NULL && h == br_a);
   h = NULL;
-  ck("get_obj(root[0][0]) -> leaf_x", vm_get_obj(&h, &a_r00) == NULL && h == leaf_x);
+  ck("get_obj(root[0][0]) -> leaf_x", vm_obj_get_obj(&h, &a_r00) == NULL && h == leaf_x);
 
   /* Iterating an array that lives two levels down: resolve to the object,
      then take its whole payload. A chain cannot express "the array itself"
      because its last step would land on the PTR slot. */
   uint32_t sum = 0;
-  if (vm_get_obj(&h, &a_r00) == NULL && h) {
-    vm_payload_t p = vm_obj_as_payload(h);
+  if (vm_obj_get_obj(&h, &a_r00) == NULL && h) {
+    vm_payload_t p = vm_make_payload(h);
     for (uint16_t i = 0; i < p.count; i++) {
       uint32_t el = 0;
-      VM_PAYLOAD_GET_VAL(el, vm_payload_at(p, i));
+      VM_PAYLOAD_GET_VAL(el, vm_payload_get_at(p, i));
       sum += el;
     }
   }
@@ -528,11 +532,14 @@ static void block_add_execute(vm_block_h block) {
     BLOCK_CALL(VM_OBJ_GET_VAL(b, in1), block);
     float sum = a + b;
     BLOCK_CALL(VM_OBJ_SET_VAL_AT(sum, out0, 0), block);
-    vm_block_set_ENO(block, true);
+    vm_block_set_eno(block, true);
   } else {
-    vm_block_set_ENO(block, false);
+    vm_block_set_eno(block, false);
   }
 }
+
+static void test_edge_block(void);
+static void test_timer_block(void);
 
 void test_block_api(void) {
   ESP_LOGI(TAG, "-- F: block API --");
@@ -558,12 +565,12 @@ void test_block_api(void) {
   blk->cfg.q_cnt = 1;
   blk->cfg.en_cnt = 0;
   blk->cfg.eno = eno;
-  vm_block_inputs(blk)[0] = &a_in;
-  vm_block_inputs(blk)[1] = NULL;  // declared but unwired
-  vm_block_outputs(blk)[0] = out;
+  vm_block_get_inputs(blk)[0] = &a_in;
+  vm_block_get_inputs(blk)[1] = NULL;  // declared but unwired
+  vm_block_get_outputs(blk)[0] = out;
 
   ck("vm_block_size accounts for every pin kind",
-     vm_block_size(2, 1, 3, 8) == sizeof(vm_block_data_t) + 2 * sizeof(vm_accessor_t*) + 1 * sizeof(vm_obj_h) + 3 * sizeof(vm_accessor_t*) + 8);
+     vm_block_calc_size(2, 1, 3, 8) == sizeof(vm_block_data_t) + 2 * sizeof(vm_accessor_t*) + 1 * sizeof(vm_obj_h) + 3 * sizeof(vm_accessor_t*) + 8);
 
   const vm_accessor_t* got_in = NULL;
   ck("get_in(0) returns the wired accessor", vm_block_get_in(&got_in, blk, 0) == NULL && got_in == &a_in);
@@ -577,7 +584,7 @@ void test_block_api(void) {
   // EN semantics
   ck("no EN source reads as enabled", vm_block_is_enabled(blk));
   blk->cfg.en_cnt = 1;
-  vm_block_en_list(blk)[0] = &a_gate;
+  vm_block_get_en_list(blk)[0] = &a_gate;
   *(uint8_t*)gate->payload = 0;
   ck("EN false disables", !vm_block_is_enabled(blk));
   *(uint8_t*)gate->payload = 1;
@@ -586,8 +593,8 @@ void test_block_api(void) {
   /* ANY -- branches rejoining: either path reaching the block runs it. */
   blk->cfg.en_cnt = 2;
   blk->cfg.en_mode = VM_BLK_EN_ANY;
-  vm_block_en_list(blk)[0] = &a_gate;
-  vm_block_en_list(blk)[1] = &a_gate2;
+  vm_block_get_en_list(blk)[0] = &a_gate;
+  vm_block_get_en_list(blk)[1] = &a_gate2;
   *(uint8_t*)gate->payload = 0;
   *(uint8_t*)gate2->payload = 0;
   ck("ANY with every source false disables", !vm_block_is_enabled(blk));
@@ -622,13 +629,13 @@ void test_block_api(void) {
      opposite of *absence*: en_cnt == 0 is a root and runs. */
   static const vm_accessor_t a_bad_gate = {.id = 900, .count = 0, .indices = NULL};
   blk->cfg.en_cnt = 1;
-  vm_block_en_list(blk)[0] = &a_bad_gate;
+  vm_block_get_en_list(blk)[0] = &a_bad_gate;
   ck("unresolvable EN reads as disabled", !vm_block_is_enabled(blk));
 
   /* ...and one broken source must not mask a working one that would enable. */
   blk->cfg.en_cnt = 2;
-  vm_block_en_list(blk)[0] = &a_bad_gate;
-  vm_block_en_list(blk)[1] = &a_gate;
+  vm_block_get_en_list(blk)[0] = &a_bad_gate;
+  vm_block_get_en_list(blk)[1] = &a_gate;
   *(uint8_t*)gate->payload = 1;
   ck("a broken source does not mask a working one", vm_block_is_enabled(blk));
 
@@ -636,19 +643,19 @@ void test_block_api(void) {
 
   // ENO
   *(uint8_t*)eno->payload = 0;
-  vm_block_set_ENO(blk, true);
+  vm_block_set_eno(blk, true);
   ck("set_ENO(true) writes 1", *(uint8_t*)eno->payload == 1);
-  vm_block_set_ENO(blk, false);
+  vm_block_set_eno(blk, false);
   ck("set_ENO(false) writes 0", *(uint8_t*)eno->payload == 0);
   blk->cfg.eno = NULL;
-  vm_block_set_ENO(blk, true);
+  vm_block_set_eno(blk, true);
   ck("set_ENO with no ENO object is a safe no-op", true);
 
   /* custom_data sits past *all three* arrays, so the enable list must move it
      -- checked with a non-zero en_cnt or the term would not be exercised. */
   blk->cfg.en_cnt = 2;
   ck("custom_data sits past every pin array",
-     (uint8_t*)vm_block_custom_data(blk) == s_blk + sizeof(vm_block_data_t) + 2 * sizeof(vm_accessor_t*) + 1 * sizeof(vm_obj_h) + 2 * sizeof(vm_accessor_t*));
+     (uint8_t*)vm_block_get_custom_data(blk) == s_blk + sizeof(vm_block_data_t) + 2 * sizeof(vm_accessor_t*) + 1 * sizeof(vm_obj_h) + 2 * sizeof(vm_accessor_t*));
   blk->cfg.en_cnt = 0;
 
   // --- block_add_execute execution tests ---
@@ -666,9 +673,9 @@ void test_block_api(void) {
 
   blk->cfg.en_cnt = 0;
   blk->cfg.eno = eno;
-  vm_block_inputs(blk)[0] = &acc_a;
-  vm_block_inputs(blk)[1] = &acc_b;
-  vm_block_outputs(blk)[0] = obj_sum;
+  vm_block_get_inputs(blk)[0] = &acc_a;
+  vm_block_get_inputs(blk)[1] = &acc_b;
+  vm_block_get_outputs(blk)[0] = obj_sum;
 
   block_add_execute(blk);
   ck("block_add_execute scalar: 12.5 + 7.5 == 20.0", *(float*)obj_sum->payload == 20.0f && *(uint8_t*)eno->payload == 1);
@@ -682,8 +689,8 @@ void test_block_api(void) {
   static const vm_index_t i_tag[] = {VM_IDX_BY_NAME("temp"), {.kind = VM_IDX_LITERAL, .value = 0}};
   static const vm_accessor_t acc_tag = {.id = 21, .count = 2, .indices = i_tag};
 
-  vm_block_inputs(blk)[0] = &acc_tag;
-  vm_block_inputs(blk)[1] = &acc_b;  // 7.5
+  vm_block_get_inputs(blk)[0] = &acc_tag;
+  vm_block_get_inputs(blk)[1] = &acc_b;  // 7.5
   *(float*)obj_sum->payload = 0.0f;
 
   block_add_execute(blk);
@@ -702,12 +709,458 @@ void test_block_api(void) {
   static const vm_accessor_t acc_arr2 = {.id = 30, .count = 1, .indices = i_lit2};
   static const vm_accessor_t acc_arr3 = {.id = 30, .count = 1, .indices = i_lit3};
 
-  vm_block_inputs(blk)[0] = &acc_arr2;
-  vm_block_inputs(blk)[1] = &acc_arr3;
+  vm_block_get_inputs(blk)[0] = &acc_arr2;
+  vm_block_get_inputs(blk)[1] = &acc_arr3;
   *(float*)obj_sum->payload = 0.0f;
 
   block_add_execute(blk);
   ck("block_add_execute 1D array: arr[2] (30.0) + arr[3] (40.0) == 70.0", *(float*)obj_sum->payload == 70.0f && *(uint8_t*)eno->payload == 1);
+
+  // Run edge detection block tests
+  test_edge_block();
+
+  // Run timer block tests
+  test_timer_block();
+}
+
+static void test_edge_block(void) {
+  ESP_LOGI(TAG, "-- F.edge: Edge Detection Block (Flow Control) --");
+
+  direct_arena_reset();
+
+  // Test objects (store has 32 object slots in direct arena)
+  vm_obj_h in_b = mk(0, VM_OBJ_B, 1, NULL, true);
+  vm_obj_h in_f = mk(1, VM_OBJ_F, 1, NULL, true);
+  vm_obj_h in_u32 = mk(2, VM_OBJ_U32, 1, NULL, true);
+  vm_obj_h in_i32 = mk(3, VM_OBJ_I32, 1, NULL, true);
+  vm_obj_h out_q = mk(4, VM_OBJ_B, 1, NULL, true);
+  vm_obj_h eno = mk(5, VM_OBJ_B, 1, NULL, true);
+  vm_obj_h gate = mk(6, VM_OBJ_B, 1, NULL, true);
+  ck("edge test fixtures built", in_b && in_f && in_u32 && in_i32 && out_q && eno && gate);
+
+  static const vm_index_t i0[] = {{.kind = VM_IDX_LITERAL, .value = 0}};
+  static const vm_accessor_t a_b = {.id = 0, .count = 1, .indices = i0};
+  static const vm_accessor_t a_f = {.id = 1, .count = 1, .indices = i0};
+  static const vm_accessor_t a_u32 = {.id = 2, .count = 1, .indices = i0};
+  static const vm_accessor_t a_i32 = {.id = 3, .count = 1, .indices = i0};
+  static const vm_accessor_t a_gate = {.id = 6, .count = 1, .indices = i0};
+
+  // Dedicated buffer for edge block structure (up to 2 inputs, 1 output, 1 en, custom_data)
+  static uint8_t s_edge_raw[sizeof(vm_block_data_t) + 2 * sizeof(vm_accessor_t*) + sizeof(vm_obj_h) + sizeof(vm_accessor_t*) + sizeof(vm_block_edge_data_t) + 32] __attribute__((aligned(8)));
+  memset(s_edge_raw, 0, sizeof(s_edge_raw));
+  vm_block_h eb = (vm_block_h)s_edge_raw;
+  eb->cfg.block_idx = 42;
+  eb->cfg.block_type = VM_BLK_EDGE;
+  eb->cfg.in_cnt = 1;
+  eb->cfg.q_cnt = 1;
+  eb->cfg.en_cnt = 0;
+  eb->cfg.custom_len = sizeof(vm_block_edge_data_t);
+  eb->cfg.eno = eno;
+  vm_block_get_inputs(eb)[0] = &a_b;
+  vm_block_get_outputs(eb)[0] = out_q;
+
+  vm_block_edge_data_t* edata = (vm_block_edge_data_t*)vm_block_get_custom_data(eb);
+
+  // 1. Guard: custom_len too small
+  eb->cfg.custom_len = 10;
+  g_vm_block_fault = false;
+  vm_blk_edge(eb);
+  ck("edge block rejects undersized custom_len", g_vm_block_fault && *(uint8_t*)eno->payload == 0);
+  eb->cfg.custom_len = sizeof(vm_block_edge_data_t);
+  g_vm_block_fault = false;
+
+  // 2. Boolean Rising Edge
+  vm_block_edge_init_data(edata, VM_EDGE_RISING, 0, 0);
+  *(uint8_t*)in_b->payload = 0;
+  *(uint8_t*)eno->payload = 0;
+  *(uint8_t*)out_q->payload = 0;
+
+  // Scan 1: initial 0 -> sets prev_val = 0, no edge
+  vm_blk_edge(eb);
+  ck("rising edge: scan 1 (initial 0) -> ENO=0", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  // Scan 2: still 0 -> no edge
+  vm_blk_edge(eb);
+  ck("rising edge: scan 2 (steady 0) -> ENO=0", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  // Scan 3: 0 -> 1 -> rising edge triggers!
+  *(uint8_t*)in_b->payload = 1;
+  vm_blk_edge(eb);
+  ck("rising edge: scan 3 (0 -> 1) -> ENO=1, Q=1", *(uint8_t*)eno->payload == 1 && *(uint8_t*)out_q->payload == 1);
+
+  // Scan 4: steady 1 -> ENO falls back to 0 (pulse fires once!)
+  vm_blk_edge(eb);
+  ck("rising edge: scan 4 (steady 1) -> ENO=0, Q=0 (single pass pulse)", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  // Scan 5: 1 -> 0 -> falling (ignored by rising edge)
+  *(uint8_t*)in_b->payload = 0;
+  vm_blk_edge(eb);
+  ck("rising edge: scan 5 (1 -> 0 falling) -> ENO=0", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  // Scan 6: 0 -> 1 -> rising edge fires again!
+  *(uint8_t*)in_b->payload = 1;
+  vm_blk_edge(eb);
+  ck("rising edge: scan 6 (0 -> 1 second time) -> ENO=1, Q=1", *(uint8_t*)eno->payload == 1 && *(uint8_t*)out_q->payload == 1);
+
+  // Scan 7: steady 1 -> pulse drops back to 0
+  vm_blk_edge(eb);
+  ck("rising edge: scan 7 (steady 1) -> ENO=0", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  // 3. Boolean Falling Edge
+  vm_block_edge_init_data(edata, VM_EDGE_FALLING, 0, 0);
+  *(uint8_t*)in_b->payload = 1;
+  vm_blk_edge(eb); // scan 1: initial 1 -> initialized, no edge
+  ck("falling edge: scan 1 (initial 1) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(uint8_t*)in_b->payload = 0;
+  vm_blk_edge(eb); // scan 2: 1 -> 0 falling edge!
+  ck("falling edge: scan 2 (1 -> 0) -> ENO=1, Q=1", *(uint8_t*)eno->payload == 1 && *(uint8_t*)out_q->payload == 1);
+
+  vm_blk_edge(eb); // scan 3: steady 0 -> drops to 0
+  ck("falling edge: scan 3 (steady 0) -> ENO=0, Q=0", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  *(uint8_t*)in_b->payload = 1;
+  vm_blk_edge(eb); // scan 4: 0 -> 1 rising (ignored)
+  ck("falling edge: scan 4 (0 -> 1 rising ignored) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  // 4. Boolean Both Edges
+  vm_block_edge_init_data(edata, VM_EDGE_BOTH, 0, 0);
+  *(uint8_t*)in_b->payload = 0;
+  vm_blk_edge(eb); // scan 1: initial 0 -> initialized
+  ck("both edges: scan 1 (initial 0) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(uint8_t*)in_b->payload = 1;
+  vm_blk_edge(eb); // scan 2: 0 -> 1 triggers
+  ck("both edges: scan 2 (0 -> 1 toggle) -> ENO=1", *(uint8_t*)eno->payload == 1);
+
+  vm_blk_edge(eb); // scan 3: steady 1 -> drops
+  ck("both edges: scan 3 (steady 1) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(uint8_t*)in_b->payload = 0;
+  vm_blk_edge(eb); // scan 4: 1 -> 0 triggers
+  ck("both edges: scan 4 (1 -> 0 toggle) -> ENO=1", *(uint8_t*)eno->payload == 1);
+
+  vm_blk_edge(eb); // scan 5: steady 0 -> drops
+  ck("both edges: scan 5 (steady 0) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  // 5. Float with change_by threshold (Rising, threshold = 5.0f)
+  vm_block_get_inputs(eb)[0] = &a_f;
+  vm_block_edge_init_data(edata, VM_EDGE_RISING, 5.0f, 0);
+  *(float*)in_f->payload = 10.0f;
+  vm_blk_edge(eb); // scan 1: initial 10.0
+  ck("float rising: scan 1 (initial 10.0) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(float*)in_f->payload = 12.0f; // delta = +2.0 (< 5.0)
+  vm_blk_edge(eb);
+  ck("float rising: scan 2 (+2.0 < threshold 5.0) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(float*)in_f->payload = 18.0f; // delta = +6.0 (>= 5.0) -> triggers!
+  vm_blk_edge(eb);
+  ck("float rising: scan 3 (+6.0 >= threshold 5.0) -> ENO=1, Q=1", *(uint8_t*)eno->payload == 1 && *(uint8_t*)out_q->payload == 1);
+
+  vm_blk_edge(eb); // steady 18.0 -> pulse drops
+  ck("float rising: scan 4 (steady 18.0) -> ENO=0, Q=0", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  *(float*)in_f->payload = 12.0f; // drop (falling, ignored)
+  vm_blk_edge(eb);
+  ck("float rising: scan 5 (decrease) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(float*)in_f->payload = 20.0f; // delta = +8.0 (>= 5.0) -> triggers!
+  vm_blk_edge(eb);
+  ck("float rising: scan 6 (+8.0 >= threshold 5.0) -> ENO=1", *(uint8_t*)eno->payload == 1);
+
+  // 6. U32 with change_by threshold (Both, threshold = 10)
+  vm_block_get_inputs(eb)[0] = &a_u32;
+  vm_block_edge_init_data(edata, VM_EDGE_BOTH, 0, 10);
+  *(uint32_t*)in_u32->payload = 100;
+  vm_blk_edge(eb); // scan 1: initial 100
+  ck("u32 both: scan 1 (initial 100) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(uint32_t*)in_u32->payload = 104; // delta = 4 (< 10)
+  vm_blk_edge(eb);
+  ck("u32 both: scan 2 (+4 < 10) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(uint32_t*)in_u32->payload = 125; // delta = +21 (>= 10)
+  vm_blk_edge(eb);
+  ck("u32 both: scan 3 (+21 >= 10) -> ENO=1", *(uint8_t*)eno->payload == 1);
+
+  vm_blk_edge(eb); // steady 125
+  ck("u32 both: scan 4 (steady 125) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(uint32_t*)in_u32->payload = 70; // delta = -55 (|delta| >= 10)
+  vm_blk_edge(eb);
+  ck("u32 both: scan 5 (-55 drop >= 10) -> ENO=1", *(uint8_t*)eno->payload == 1);
+
+  vm_blk_edge(eb); // steady 70
+  ck("u32 both: scan 6 (steady 70) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  // 7. I32 with negative delta (Falling, threshold = 15)
+  vm_block_get_inputs(eb)[0] = &a_i32;
+  vm_block_edge_init_data(edata, VM_EDGE_FALLING, 0, 15);
+  *(int32_t*)in_i32->payload = 10;
+  vm_blk_edge(eb); // scan 1: initial 10
+  ck("i32 falling: scan 1 (initial 10) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(int32_t*)in_i32->payload = 20; // increase (ignored)
+  vm_blk_edge(eb);
+  ck("i32 falling: scan 2 (+10 increase ignored) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(int32_t*)in_i32->payload = 0; // drop of 20 (>= 15)
+  vm_blk_edge(eb);
+  ck("i32 falling: scan 3 (-20 drop >= 15) -> ENO=1", *(uint8_t*)eno->payload == 1);
+
+  vm_blk_edge(eb); // steady 0
+  ck("i32 falling: scan 4 (steady 0) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  // 8. EN Gating test
+  vm_block_get_inputs(eb)[0] = &a_b;
+  eb->cfg.en_cnt = 1;
+  vm_block_get_en_list(eb)[0] = &a_gate;
+  edata = (vm_block_edge_data_t*)vm_block_get_custom_data(eb);
+  vm_block_edge_init_data(edata, VM_EDGE_RISING, 0, 0);
+
+  *(uint8_t*)gate->payload = 0; // gate closed (disabled)
+  *(uint8_t*)in_b->payload = 0;
+  vm_blk_edge(eb);
+
+  *(uint8_t*)in_b->payload = 1; // edge occurs, but block is disabled!
+  vm_blk_edge(eb);
+  ck("EN disabled: rising edge blocked -> ENO=0, Q=0", *(uint8_t*)eno->payload == 0 && *(uint8_t*)out_q->payload == 0);
+
+  *(uint8_t*)gate->payload = 1; // gate opened (enabled)
+  *(uint8_t*)in_b->payload = 0;
+  vm_blk_edge(eb); // initialize/re-sync
+  *(uint8_t*)in_b->payload = 1; // rising edge with gate open!
+  vm_blk_edge(eb);
+  ck("EN enabled: rising edge passes -> ENO=1, Q=1", *(uint8_t*)eno->payload == 1 && *(uint8_t*)out_q->payload == 1);
+
+  // 9. Optional dynamic hysteresis via in[1]
+  vm_obj_h th_dyn = mk(7, VM_OBJ_F, 1, NULL, true);
+  static const vm_accessor_t a_th = {.id = 7, .count = 1, .indices = i0};
+  ck("dynamic threshold fixture built", th_dyn != NULL);
+
+  eb->cfg.en_cnt = 0;
+  eb->cfg.in_cnt = 2;
+  vm_block_get_inputs(eb)[0] = &a_f;
+  vm_block_get_inputs(eb)[1] = &a_th;
+  edata = (vm_block_edge_data_t*)vm_block_get_custom_data(eb);
+  // Hardcoded change_by is 5.0f, but dynamic threshold is set to 10.0f
+  vm_block_edge_init_data(edata, VM_EDGE_RISING, 5.0f, 0);
+  *(float*)th_dyn->payload = 10.0f;
+
+  *(float*)in_f->payload = 100.0f;
+  vm_blk_edge(eb); // scan 1: initial 100.0f
+  ck("dyn th: scan 1 (initial 100.0) -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  // Delta +6.0f: greater than hardcoded 5.0f, but LESS than dynamic 10.0f!
+  *(float*)in_f->payload = 106.0f;
+  vm_blk_edge(eb);
+  ck("dyn th: +6.0 below dynamic threshold 10.0 -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  // Delta +12.0f: greater than dynamic 10.0f -> triggers!
+  *(float*)in_f->payload = 118.0f;
+  vm_blk_edge(eb);
+  ck("dyn th: +12.0 exceeds dynamic threshold 10.0 -> ENO=1, Q=1", *(uint8_t*)eno->payload == 1 && *(uint8_t*)out_q->payload == 1);
+
+  vm_blk_edge(eb); // steady -> drops
+  ck("dyn th: steady -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  // Runtime threshold tuning: drop threshold to 2.0f
+  *(float*)th_dyn->payload = 2.0f;
+  *(float*)in_f->payload = 121.0f; // delta +3.0f >= 2.0f -> triggers!
+  vm_blk_edge(eb);
+  ck("dyn th: lowered to 2.0, +3.0 triggers -> ENO=1", *(uint8_t*)eno->payload == 1);
+
+  // Fallback: unwire in[1] (set to NULL), should fall back to hardcoded 5.0f
+  vm_block_get_inputs(eb)[1] = NULL;
+  *(float*)in_f->payload = 124.0f; // delta +3.0f < hardcoded 5.0f
+  vm_blk_edge(eb);
+  ck("dyn th fallback: unwired in[1] falls back to hardcoded 5.0 -> ENO=0", *(uint8_t*)eno->payload == 0);
+
+  *(float*)in_f->payload = 130.0f; // delta +6.0f >= hardcoded 5.0f -> triggers!
+  vm_blk_edge(eb);
+  ck("dyn th fallback: +6.0 exceeds hardcoded 5.0 -> ENO=1", *(uint8_t*)eno->payload == 1);
+}
+
+static void test_timer_block(void) {
+  ESP_LOGI(TAG, "-- F.timer: Timer Block (TON, TOF, TP + Inverted) --");
+
+  direct_arena_reset();
+
+  // Test objects (IDs 0..5)
+  vm_obj_h in_b = mk(0, VM_OBJ_B, 1, NULL, true);
+  vm_obj_h in_pt = mk(1, VM_OBJ_U32, 1, NULL, true);
+  vm_obj_h out_q = mk(2, VM_OBJ_B, 1, NULL, true);
+  vm_obj_h out_et = mk(3, VM_OBJ_U32, 1, NULL, true);
+  vm_obj_h eno = mk(4, VM_OBJ_B, 1, NULL, true);
+  vm_obj_h gate = mk(5, VM_OBJ_B, 1, NULL, true);
+  ck("timer test fixtures built", in_b && in_pt && out_q && out_et && eno && gate);
+
+  static const vm_index_t i0[] = {{.kind = VM_IDX_LITERAL, .value = 0}};
+  static const vm_accessor_t a_in = {.id = 0, .count = 1, .indices = i0};
+  static const vm_accessor_t a_pt = {.id = 1, .count = 1, .indices = i0};
+  static const vm_accessor_t a_gate = {.id = 5, .count = 1, .indices = i0};
+
+  static uint8_t s_tmr_raw[sizeof(vm_block_data_t) + 2 * sizeof(vm_accessor_t*) + 2 * sizeof(vm_obj_h) + sizeof(vm_accessor_t*) + sizeof(vm_block_timer_data_t) + 32] __attribute__((aligned(8)));
+  memset(s_tmr_raw, 0, sizeof(s_tmr_raw));
+  vm_block_h tb = (vm_block_h)s_tmr_raw;
+  tb->cfg.block_idx = 43;
+  tb->cfg.block_type = VM_BLK_TIMER;
+  tb->cfg.in_cnt = 2;
+  tb->cfg.q_cnt = 2; // out[0]=Q, out[1]=ET
+  tb->cfg.en_cnt = 0;
+  tb->cfg.custom_len = sizeof(vm_block_timer_data_t);
+  tb->cfg.eno = eno;
+  vm_block_get_inputs(tb)[0] = &a_in;
+  vm_block_get_inputs(tb)[1] = NULL; // unwired by default
+  vm_block_get_outputs(tb)[0] = out_q;
+  vm_block_get_outputs(tb)[1] = out_et;
+
+  vm_block_timer_data_t* tdata = (vm_block_timer_data_t*)vm_block_get_custom_data(tb);
+
+  // 1. Guard: undersized custom_len
+  tb->cfg.custom_len = 16;
+  g_vm_block_fault = false;
+  vm_blk_timer(tb);
+  ck("timer block rejects undersized custom_len", g_vm_block_fault && *(uint8_t*)eno->payload == 0);
+  tb->cfg.custom_len = sizeof(vm_block_timer_data_t);
+  g_vm_block_fault = false;
+
+  // 2. TON (On-Delay) with hardcoded PT = 100ms
+  vm_block_timer_init_data(tdata, VM_TIMER_TON, 100, false);
+  *(uint8_t*)in_b->payload = 0;
+  g_vm_pass_ms = 1000;
+  vm_blk_timer(tb);
+  ck("TON: initial false -> Q=0, ET=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 0 && *(uint8_t*)eno->payload == 0);
+
+  // Start TON at t=1000
+  *(uint8_t*)in_b->payload = 1;
+  g_vm_pass_ms = 1000;
+  vm_blk_timer(tb);
+  ck("TON: t=1000 starts timer -> Q=0, ET=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 0 && *(uint8_t*)eno->payload == 0);
+
+  // t=1050 (50ms elapsed, < 100ms)
+  g_vm_pass_ms = 1050;
+  vm_blk_timer(tb);
+  ck("TON: t=1050 (50ms) -> Q=0, ET=50", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 50 && *(uint8_t*)eno->payload == 0);
+
+  // t=1100 (100ms elapsed == PT) -> times out!
+  g_vm_pass_ms = 1100;
+  vm_blk_timer(tb);
+  ck("TON: t=1100 (100ms) -> Q=1, ET=100, ENO=1", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 100 && *(uint8_t*)eno->payload == 1);
+
+  // t=1150 (holds Q=1, clamps ET=100)
+  g_vm_pass_ms = 1150;
+  vm_blk_timer(tb);
+  ck("TON: t=1150 (>PT) -> Q=1, ET=100", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 100 && *(uint8_t*)eno->payload == 1);
+
+  // Input drops -> immediate reset
+  *(uint8_t*)in_b->payload = 0;
+  g_vm_pass_ms = 1160;
+  vm_blk_timer(tb);
+  ck("TON: IN=0 -> resets Q=0, ET=0, ENO=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 0 && *(uint8_t*)eno->payload == 0);
+
+  // 3. TOF (Off-Delay) with hardcoded PT = 100ms
+  vm_block_timer_init_data(tdata, VM_TIMER_TOF, 100, false);
+  *(uint8_t*)in_b->payload = 1;
+  g_vm_pass_ms = 2000;
+  vm_blk_timer(tb);
+  ck("TOF: IN=1 -> Q=1, ET=0, ENO=1", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 0 && *(uint8_t*)eno->payload == 1);
+
+  // IN falls 1 -> 0 at t=2000
+  *(uint8_t*)in_b->payload = 0;
+  g_vm_pass_ms = 2000;
+  vm_blk_timer(tb);
+  ck("TOF: IN falls to 0 -> starts off-delay, Q stays 1, ET=0", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 0);
+
+  // t=2060 (60ms elapsed < 100ms)
+  g_vm_pass_ms = 2060;
+  vm_blk_timer(tb);
+  ck("TOF: t=2060 (60ms) -> Q=1, ET=60", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 60 && *(uint8_t*)eno->payload == 1);
+
+  // t=2100 (100ms elapsed == PT) -> expired!
+  g_vm_pass_ms = 2100;
+  vm_blk_timer(tb);
+  ck("TOF: t=2100 (100ms) -> expired Q=0, ET=100, ENO=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 100 && *(uint8_t*)eno->payload == 0);
+
+  // 4. TP (Pulse Timer) with hardcoded PT = 100ms
+  vm_block_timer_init_data(tdata, VM_TIMER_TP, 100, false);
+  *(uint8_t*)in_b->payload = 0;
+  g_vm_pass_ms = 3000;
+  vm_blk_timer(tb);
+  ck("TP: initial false -> Q=0, ET=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 0);
+
+  // Rising edge 0 -> 1 at t=3000
+  *(uint8_t*)in_b->payload = 1;
+  g_vm_pass_ms = 3000;
+  vm_blk_timer(tb);
+  ck("TP: 0->1 rising edge -> Q=1, ET=0, ENO=1", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 0 && *(uint8_t*)eno->payload == 1);
+
+  // IN drops early at t=3040 -> pulse continues!
+  *(uint8_t*)in_b->payload = 0;
+  g_vm_pass_ms = 3040;
+  vm_blk_timer(tb);
+  ck("TP: IN drops early -> pulse continues Q=1, ET=40", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 40 && *(uint8_t*)eno->payload == 1);
+
+  // t=3100 (100ms == PT) -> pulse completes
+  g_vm_pass_ms = 3100;
+  vm_blk_timer(tb);
+  ck("TP: t=3100 (100ms) -> pulse ends Q=0, ET=100, ENO=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 100 && *(uint8_t*)eno->payload == 0);
+
+  // 5. Inverted mode (TON_INV)
+  vm_block_timer_init_data(tdata, VM_TIMER_TON_INV, 100, false);
+  *(uint8_t*)in_b->payload = 1;
+  g_vm_pass_ms = 4000;
+  vm_blk_timer(tb);
+  ck("TON_INV: timing (< PT) -> inverted Q=1, ENO=1", *(uint8_t*)out_q->payload == 1 && *(uint8_t*)eno->payload == 1);
+
+  g_vm_pass_ms = 4100;
+  vm_blk_timer(tb);
+  ck("TON_INV: timed out (>= PT) -> inverted Q=0, ENO=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 100 && *(uint8_t*)eno->payload == 0);
+
+  // 6. Dynamic PT via in[1]
+  vm_block_get_inputs(tb)[1] = &a_pt;
+  vm_block_timer_init_data(tdata, VM_TIMER_TON, 50, false); // hardcoded is 50ms
+  *(uint32_t*)in_pt->payload = 200; // dynamic PT is 200ms
+
+  *(uint8_t*)in_b->payload = 1;
+  g_vm_pass_ms = 5000;
+  vm_blk_timer(tb); // start at 5000
+
+  g_vm_pass_ms = 5100; // +100ms: exceeds hardcoded 50ms, but LESS than dynamic 200ms!
+  vm_blk_timer(tb);
+  ck("Dynamic PT: 100ms < 200ms dynamic PT -> Q=0, ET=100", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 100);
+
+  g_vm_pass_ms = 5200; // +200ms == dynamic PT -> times out!
+  vm_blk_timer(tb);
+  ck("Dynamic PT: 200ms >= 200ms dynamic PT -> Q=1, ET=200", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 200);
+
+  // Fallback to hardcoded PT when in[1] is unwired
+  vm_block_get_inputs(tb)[1] = NULL;
+  *(uint8_t*)in_b->payload = 0;
+  g_vm_pass_ms = 5300;
+  vm_blk_timer(tb); // reset
+
+  *(uint8_t*)in_b->payload = 1;
+  g_vm_pass_ms = 5300;
+  vm_blk_timer(tb); // start with hardcoded 50ms
+
+  g_vm_pass_ms = 5360; // +60ms >= hardcoded 50ms!
+  vm_blk_timer(tb);
+  ck("Dynamic PT fallback: 60ms >= hardcoded 50ms -> Q=1", *(uint8_t*)out_q->payload == 1 && *(uint32_t*)out_et->payload == 50);
+
+  // 7. EN gating
+  tb->cfg.en_cnt = 1;
+  vm_block_get_inputs(tb)[1] = NULL;
+  vm_block_get_en_list(tb)[0] = &a_gate;
+  tdata = (vm_block_timer_data_t*)vm_block_get_custom_data(tb);
+  vm_block_timer_init_data(tdata, VM_TIMER_TON, 100, false);
+
+  *(uint8_t*)gate->payload = 0; // disabled
+  *(uint8_t*)in_b->payload = 1;
+  g_vm_pass_ms = 6000;
+  vm_blk_timer(tb);
+  ck("EN disabled: timer stands down -> Q=0, ET=0, ENO=0", *(uint8_t*)out_q->payload == 0 && *(uint32_t*)out_et->payload == 0 && *(uint8_t*)eno->payload == 0);
 }
 
 
@@ -786,13 +1239,13 @@ void test_obj_construction(void) {
   h.d.name_size = 15;
   ck("15-char name is accepted", vm_obj_create(&max, VM_ID_NONE, &h, "abcdefghijklmno") == NULL && max);
   uint8_t tl = 0;
-  const char* tag = max ? vm_obj_tag(max, &tl) : NULL;
+  const char* tag = max ? vm_obj_get_tag(max, &tl) : NULL;
   ck("tag reads back with its length", tag && tl == 15 && memcmp(tag, "abcdefghijklmno", 15) == 0);
   /* The name lives *after* the payload. That placement is what lets every
      value access skip a branch on `tagged`, so pin the address, not just the
      bytes -- moving it back to the front would still pass a content check. */
   ck("tag sits at payload + payload_size", tag == (const char*)(max->payload + max->head.payload_size));
-  ck("total_size covers header + payload + name", vm_obj_total_size(max) == 4 + 8 + 15);
+  ck("total_size covers header + payload + name", vm_obj_get_total_size(max) == 4 + 8 + 15);
 
   /* The arena hands back whatever the previous program left in it, so
      vm_store_alloc() zeroes what it carves. Dirty a first object's storage,
@@ -917,9 +1370,9 @@ void test_names_and_accessor_build(void) {
      about to be handed out again, so every id must read NULL for the whole
      window between teardown and the next successful load. */
   vm_store_reset();
-  ck("after reset every object id resolves NULL", vm_obj_by_id(0) == NULL && vm_obj_by_id(1) == NULL);
-  ck("after reset every accessor id resolves NULL", vm_accessor_by_id(5) == NULL);
-  ck("after reset every block id resolves NULL", vm_block_by_id(0) == NULL);
+  ck("after reset every object id resolves NULL", vm_obj_get_by_id(0) == NULL && vm_obj_get_by_id(1) == NULL);
+  ck("after reset every accessor id resolves NULL", vm_accessor_get_by_id(5) == NULL);
+  ck("after reset every block id resolves NULL", vm_block_get_by_id(0) == NULL);
   ck("resolution fails closed against a detached store", VM_OBJ_GET_VAL(v, &a_exact) != NULL);
   ck("alloc against a detached store -> REG_OOB", vm_store_alloc(&p, VM_REG_OBJ, 0, 8) != NULL);
 }
@@ -956,9 +1409,9 @@ void test_access_edges(void) {
      pointer here would hand a relay or encoder block child[0] instead of the
      container it was wired to, with nothing to indicate the substitution. */
   vm_obj_h h = NULL;
-  ck("get_obj on a whole PTR object returns the container", vm_get_obj(&h, &w_box) == NULL && h == box);
+  ck("get_obj on a whole PTR object returns the container", vm_obj_get_obj(&h, &w_box) == NULL && h == box);
   h = NULL;
-  ck("get_obj on a whole scalar object returns it", vm_get_obj(&h, &w_arr) == NULL && h == arr);
+  ck("get_obj on a whole scalar object returns it", vm_obj_get_obj(&h, &w_arr) == NULL && h == arr);
 
   // a chainless write has no element to land on, so it takes the first
   uint32_t v = 42;
@@ -1058,10 +1511,10 @@ void test_access_edges(void) {
   ck("double source narrows to float", VM_OBJ_SET_VAL(d, &w_fsel) == NULL && VM_OBJ_GET_VAL(f_out, &w_fsel) == NULL && f_out == 2.5f);
 
   // ---- payload stepping
-  vm_payload_t bp = vm_obj_as_payload(box);
-  ck("payload_at steps a PTR payload by a pointer width", vm_payload_at(bp, 1).ptr == (uint8_t*)box->payload + sizeof(void*));
+  vm_payload_t bp = vm_make_payload(box);
+  ck("payload_at steps a PTR payload by a pointer width", vm_payload_get_at(bp, 1).ptr == (uint8_t*)box->payload + sizeof(void*));
   uint32_t z = 7;
-  VM_PAYLOAD_GET_VAL(z, vm_payload_at(vm_obj_as_payload(arr), 99));
+  VM_PAYLOAD_GET_VAL(z, vm_payload_get_at(vm_make_payload(arr), 99));
   ck("payload_at past the end reads as 0, not as garbage", z == 0);
 }
 
@@ -1082,8 +1535,8 @@ void test_strings(void) {
   vm_obj_h bytes = mk(3, VM_OBJ_U8, 8, NULL, true);
   ck("string fixtures built", s && s2 && s_short && bytes);
 
-  ck("a STR element is one byte wide", vm_obj_type_size(s) == 1);
-  ck("8 chars is 8 items in 8 bytes", vm_obj_items_cnt(s) == 8 && vm_obj_payload_size(s) == 8);
+  ck("a STR element is one byte wide", vm_obj_get_type_size(s) == 1);
+  ck("8 chars is 8 items in 8 bytes", vm_obj_get_items_cnt(s) == 8 && vm_obj_get_payload_size(s) == 8);
 
   memcpy(s->payload, "hello", 5);
 
@@ -1109,7 +1562,7 @@ void test_strings(void) {
   char out[9] = {0};
   for (uint16_t i = 0; resolved && i < sp.count; i++) {
     uint8_t ch = 0;
-    VM_PAYLOAD_GET_VAL(ch, vm_payload_at(sp, i));
+    VM_PAYLOAD_GET_VAL(ch, vm_payload_get_at(sp, i));
     out[i] = (char)ch;
   }
   ck("iterating the payload reads the text back", memcmp(out, "hello\0\0\0", 8) == 0);

@@ -43,11 +43,11 @@ static inline bool pin_fresh(const vm_accessor_t* acc) {
 
 bool vm_block_input_fresh(vm_block_h b, uint8_t pin) {
   if (unlikely(pin >= b->cfg.in_cnt)) return false;
-  return pin_fresh(vm_block_inputs(b)[pin]);
+  return pin_fresh(vm_block_get_inputs(b)[pin]);
 }
 
 bool vm_block_triggered(vm_block_h b) {
-  const vm_accessor_t** ins = vm_block_inputs(b);
+  const vm_accessor_t** ins = vm_block_get_inputs(b);
   for (uint8_t i = 0; i < b->cfg.in_cnt; i++) {
     if (pin_fresh(ins[i])) {
       b->cfg.rt |= VM_BLK_RT_TRIGGERED;
@@ -75,7 +75,7 @@ void vm_block_claim_span(vm_block_h b, uint16_t start, uint16_t end) {
     return;
   }
 
-  vm_span_t* sp = (vm_span_t*)vm_block_custom_data(b);
+  vm_span_t* sp = (vm_span_t*)vm_block_get_custom_data(b);
   sp->start = start;
   sp->end = end;
   b->cfg.rt |= VM_BLK_RT_SPAN;

@@ -4,6 +4,8 @@
 #include "vm_block_for.h"
 #include "vm_block_clone.h"
 #include "vm_block_set.h"
+#include "vm_block_edge.h"
+#include "vm_block_timer.h"
 
 /*
 The palette, entire.
@@ -32,6 +34,8 @@ const vm_block_fn g_vm_blocks[] = {
     [VM_BLK_FOR] = vm_blk_for,
     [VM_BLK_SET] = vm_blk_set,
     [VM_BLK_CLONE] = vm_blk_clone,
+    [VM_BLK_EDGE] = vm_blk_edge,
+    [VM_BLK_TIMER] = vm_blk_timer,
 };
 
 const uint16_t g_vm_blocks_cnt = (uint16_t)(sizeof(g_vm_blocks) / sizeof(g_vm_blocks[0]));

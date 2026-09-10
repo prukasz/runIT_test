@@ -97,7 +97,7 @@ typedef struct sys_power_usb_pd_contract {
 ## Manager API Functions
 
 ### Declarative Contract Binding
-Device adapters publish their contracts declaratively via `sys_device_class_t.contracts[SYS_DEVICE_CONTRACT_POWER_*]` when installed via `sys_device_install_cfg()`. Legacy manual registration functions (`sys_power_register_*`) have been removed.
+* Device adapters publish their contracts declaratively via `sys_device_class_t.contracts[SYS_DEVICE_CONTRACT_POWER_*]` when installed via `sys_device_install_cfg()`.
 
 ### Power Budget API
 * **`sys_power_set_limits(max_mv, max_ma, max_mw)`**: Sets system safety limits. This function can only be called once at startup (secure write-once constructor).

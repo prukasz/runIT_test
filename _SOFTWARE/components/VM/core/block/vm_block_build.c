@@ -29,12 +29,12 @@ err_h vm_block_create(vm_block_h* out, uint16_t id, const vm_block_cfg_t* cfg) {
      its own constant. Any other id must resolve. */
   for (uint8_t i = 0; i < cfg->in_cnt; i++) {
     if (cfg->in_acc_ids[i] == VM_BLOCK_NO_ID) continue;
-    if (!vm_accessor_by_id(cfg->in_acc_ids[i])) {
+    if (!vm_accessor_get_by_id(cfg->in_acc_ids[i])) {
       SE_RET_ERR(ERR_VM_BLK_BAD_REF, .blk_id = cfg->block_idx, .ref_id = cfg->in_acc_ids[i], .slot = i, .kind = REF_KIND_IN);
     }
   }
   for (uint8_t i = 0; i < cfg->q_cnt; i++) {
-    if (!vm_obj_by_id(cfg->out_obj_ids[i])) {
+    if (!vm_obj_get_by_id(cfg->out_obj_ids[i])) {
       SE_RET_ERR(ERR_VM_BLK_BAD_REF, .blk_id = cfg->block_idx, .ref_id = cfg->out_obj_ids[i], .slot = i, .kind = REF_KIND_OUT);
     }
   }
@@ -43,7 +43,7 @@ err_h vm_block_create(vm_block_h* out, uint16_t id, const vm_block_cfg_t* cfg) {
      by a NO_ID entry: a listed source that does not resolve is a malformed
      program, exactly like an unwired numbered pin. */
   for (uint8_t i = 0; i < cfg->en_cnt; i++) {
-    if (!vm_accessor_by_id(cfg->en_acc_ids[i])) {
+    if (!vm_accessor_get_by_id(cfg->en_acc_ids[i])) {
       SE_RET_ERR(ERR_VM_BLK_BAD_REF, .blk_id = cfg->block_idx, .ref_id = cfg->en_acc_ids[i], .slot = i, .kind = REF_KIND_EN);
     }
   }
@@ -51,13 +51,13 @@ err_h vm_block_create(vm_block_h* out, uint16_t id, const vm_block_cfg_t* cfg) {
   /* ENO stays optional, and is the one place NO_ID is still meaningful. */
   vm_obj_h eno = NULL;
   if (cfg->eno_obj_id != VM_BLOCK_NO_ID) {
-    eno = vm_obj_by_id(cfg->eno_obj_id);
+    eno = vm_obj_get_by_id(cfg->eno_obj_id);
     if (!eno) {
       SE_RET_ERR(ERR_VM_BLK_BAD_REF, .blk_id = cfg->block_idx, .ref_id = cfg->eno_obj_id, .slot = 0, .kind = REF_KIND_ENO);
     }
   }
 
-  size_t total = vm_block_size(cfg->in_cnt, cfg->q_cnt, cfg->en_cnt, cfg->custom_len);
+  size_t total = vm_block_calc_size(cfg->in_cnt, cfg->q_cnt, cfg->en_cnt, cfg->custom_len);
   vm_block_h b = NULL;
   // allocates, zeroes and binds the id in one step -- see vm_store.h
   SE_RET_IF_ERR(vm_store_alloc((void**)&b, VM_REG_BLK, id, (uint32_t)total));
@@ -74,21 +74,21 @@ err_h vm_block_create(vm_block_h* out, uint16_t id, const vm_block_cfg_t* cfg) {
 
   /* Pointers, not ids, from here on -- resolving once at load is what removes
      the invalid-id failure mode from every later access. */
-  const vm_accessor_t** ins = vm_block_inputs(b);
+  const vm_accessor_t** ins = vm_block_get_inputs(b);
   for (uint8_t i = 0; i < cfg->in_cnt; i++) {
     // NO_ID stays NULL: the pin exists, nothing is wired to it
-    ins[i] = (cfg->in_acc_ids[i] == VM_BLOCK_NO_ID) ? NULL : vm_accessor_by_id(cfg->in_acc_ids[i]);
+    ins[i] = (cfg->in_acc_ids[i] == VM_BLOCK_NO_ID) ? NULL : vm_accessor_get_by_id(cfg->in_acc_ids[i]);
   }
 
-  vm_obj_h* outs = vm_block_outputs(b);
+  vm_obj_h* outs = vm_block_get_outputs(b);
   for (uint8_t i = 0; i < cfg->q_cnt; i++) {
-    outs[i] = vm_obj_by_id(cfg->out_obj_ids[i]);
+    outs[i] = vm_obj_get_by_id(cfg->out_obj_ids[i]);
     outs[i]->head.f.usr_protected = 1;
   }
   if (eno) eno->head.f.usr_protected = 1;
 
-  const vm_accessor_t** ens = vm_block_en_list(b);
-  for (uint8_t i = 0; i < cfg->en_cnt; i++) ens[i] = vm_accessor_by_id(cfg->en_acc_ids[i]);
+  const vm_accessor_t** ens = vm_block_get_en_list(b);
+  for (uint8_t i = 0; i < cfg->en_cnt; i++) ens[i] = vm_accessor_get_by_id(cfg->en_acc_ids[i]);
 
   *out = b;
   return NULL;

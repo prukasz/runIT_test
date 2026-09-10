@@ -8,13 +8,13 @@
 
 static uint16_t live_objects(void) {
   uint16_t n = 0;
-  for (uint16_t i = 0; i < VM_DYN_MAX; i++) n += vm_obj_dyn_get(i) != NULL;
+  for (uint16_t i = 0; i < VM_DYN_MAX; i++) n += vm_obj_dyn_get_by_id(i) != NULL;
   return n;
 }
 
 static vm_obj_h dynamic(vm_obj_t_e type, uint16_t n) {
   vm_obj_h obj = NULL;
-  vm_obj_head_t h = vm_obj_head(type, n, VM_OBJ_F_MUTABLE | VM_OBJ_F_UPD_RESETABLE, 0);
+  vm_obj_head_t h = vm_make_obj_head(type, n, VM_OBJ_F_MUTABLE | VM_OBJ_F_UPD_RESETABLE, 0);
   ck("dynamic fixture created", vm_obj_dyn_create(&obj, &h, NULL) == NULL);
   return obj;
 }
@@ -36,10 +36,10 @@ void test_object_contracts(void) {
   vm_obj_h b = dynamic(VM_OBJ_PTR, 1);
   vm_obj_h leaf = dynamic(VM_OBJ_U32, 1);
   ck("shared dynamic child links", !vm_obj_link_direct(a, 0, leaf) && !vm_obj_link_direct(b, 0, leaf));
-  ck("sharing counts each owning slot", g_vm_dyn[vm_obj_dyn_id(leaf)].ref_cnt == 2);
+  ck("sharing counts each owning slot", g_vm_dyn[vm_obj_dyn_get_id(leaf)].ref_cnt == 2);
   ck("dynamic parent links", !vm_obj_link_direct(a, 1, b));
   a->head.f.upd = b->head.f.upd = 0;
-  uint16_t leaf_id = vm_obj_dyn_id(leaf);
+  uint16_t leaf_id = vm_obj_dyn_get_id(leaf);
   ck("back edge rejected before replacing a child", vm_obj_link_direct(b, 0, a) != NULL && child(b, 0) == leaf);
   ck("rejected link preserves counts and freshness", g_vm_dyn[leaf_id].ref_cnt == 2 && !b->head.f.upd);
   ck("self ownership rejected", vm_obj_link_direct(a, 0, a) != NULL && child(a, 0) == leaf);
@@ -79,7 +79,7 @@ void test_object_contracts(void) {
   vm_obj_link_direct(schema_b, 0, renamed);
   vm_accessor_t sa = {.id = 9}, sb = {.id = 10};
   ck("nested storage shapes agree while schemas differ", vm_obj_shape_matches(schema_a, schema_b) && !vm_obj_schema_matches(schema_a, schema_b));
-  ck("nested rename replaces field identity", !vm_obj_clone_into(&sa, &dst) && !vm_obj_clone_into(&sb, &dst) && vm_obj_find_child(child(holder, 0), "temp") == NULL && value(vm_obj_find_child(child(holder, 0), "pressure")) == 99);
+  ck("nested rename replaces field identity", !vm_obj_clone_into(&sa, &dst) && !vm_obj_clone_into(&sb, &dst) && vm_obj_get_child(child(holder, 0), "temp") == NULL && value(vm_obj_get_child(child(holder, 0), "pressure")) == 99);
 
   // Source is owned solely by the destination tree that Clone replaces.
   a = dynamic(VM_OBJ_PTR, 1);
@@ -157,19 +157,19 @@ void test_object_contracts(void) {
   for (uint16_t i = live_objects(); i < VM_DYN_MAX; i++) (void)dynamic(VM_OBJ_U8, 1);
   ck("exhausted Clone keeps the old destination", vm_obj_clone_into(&other, &dst) != NULL && child(holder, 0) == source && !holder->head.f.upd);
   vm_store_reset();
-  ck("storage reset frees both allocation domains", live_objects() == 0 && !vm_obj_by_id(0));
+  ck("storage reset frees both allocation domains", live_objects() == 0 && !vm_obj_get_by_id(0));
 
-  ck("program opens for lifecycle test", !vm_loader_open(4, 4, 1, 0, 2048));
+  ck("program opens for lifecycle test", !vm_loader_open(4, 4, 1, 2048));
   vm_obj_h program_holder = mk(0, VM_OBJ_PTR, 1, NULL, true);
   leaf = dynamic(VM_OBJ_U32, 1);
   vm_obj_link_direct(program_holder, 0, leaf);
   const uint16_t subscribed[] = {0};
   vm_sub_subscribe(subscribed, 1);
   vm_exec_set_mode(VM_RUN_RUNNING);
-  vm_obj_head_t h = vm_obj_head(VM_OBJ_U32, 1, VM_OBJ_F_MUTABLE, 0);
+  vm_obj_head_t h = vm_make_obj_head(VM_OBJ_U32, 1, VM_OBJ_F_MUTABLE, 0);
   ck("upload initialization cannot mutate a running program", vm_loader_add_obj(1, &h, NULL) != NULL);
-  ck("failed open retains program and run mode", vm_loader_open(4, 4, 1, 0, 1) != NULL && vm_obj_by_id(0) == program_holder && vm_exec_mode() == VM_RUN_RUNNING && vm_sub_count() == 1 && live_objects() == 1);
-  ck("successful open owns all teardown", !vm_loader_open(8, 4, 2, 0, 2048) && !vm_obj_by_id(0) && live_objects() == 0 && vm_sub_count() == 0 && vm_exec_mode() == VM_RUN_STOPPED);
+  ck("failed open retains program and run mode", vm_loader_open(4, 4, 1, 1) != NULL && vm_obj_get_by_id(0) == program_holder && vm_exec_mode() == VM_RUN_RUNNING && vm_sub_count() == 1 && live_objects() == 1);
+  ck("successful open owns all teardown", !vm_loader_open(8, 4, 2, 2048) && !vm_obj_get_by_id(0) && live_objects() == 0 && vm_sub_count() == 0 && vm_exec_mode() == VM_RUN_STOPPED);
 
   vm_obj_h result = mk(0, VM_OBJ_U32, 1, NULL, true);
   vm_obj_h eno = mk(1, VM_OBJ_B, 1, NULL, true);
@@ -193,7 +193,7 @@ void test_object_contracts(void) {
   g_vm_block_fault = false;
   vm_blk_set(writer);
   ck("SET block cannot forge another block's output", g_vm_block_fault && value(result) == 0);
-  vm_block_inputs(writer)[1] = holder_acc;  // fixture wiring before the next invocation
+  vm_block_get_inputs(writer)[1] = holder_acc;  // fixture wiring before the next invocation
   g_vm_block_fault = false;
   vm_blk_clone(writer);
   ck("CLONE block cannot replace a protected holder", g_vm_block_fault && child(guarded_holder, 0) == NULL && live_objects() == 0);
@@ -201,5 +201,5 @@ void test_object_contracts(void) {
   (void)leaf;
   vm_sub_subscribe(subscribed, 1);
   vm_loader_reset();
-  ck("program reset clears objects, subscriptions and mode", live_objects() == 0 && !vm_obj_by_id(0) && vm_sub_count() == 0 && vm_loader_state() == VM_LOAD_EMPTY && vm_exec_mode() == VM_RUN_STOPPED);
+  ck("program reset clears objects, subscriptions and mode", live_objects() == 0 && !vm_obj_get_by_id(0) && vm_sub_count() == 0 && vm_loader_state() == VM_LOAD_EMPTY && vm_exec_mode() == VM_RUN_STOPPED);
 }

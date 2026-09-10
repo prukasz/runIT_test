@@ -38,7 +38,7 @@ void selftest_reset_counts(void) {
 
 // --- Common Arena & Object Helpers ---
 void direct_arena_reset(void) {
-  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 32, [VM_REG_ACC] = 24, [VM_REG_BLK] = 8, [VM_REG_SEC] = 4};
+  const uint16_t counts[VM_REG_CNT] = {[VM_REG_OBJ] = 32, [VM_REG_ACC] = 24, [VM_REG_BLK] = 8};
   (void)vm_store_open(DIRECT_POOL, counts);
 }
 
@@ -110,18 +110,13 @@ err_h f_send(void) {
   return sys_interface_decode(s_frame, s_len);
 }
 
-err_h upload_open_sec(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint16_t sec_cnt, uint32_t total) {
+err_h upload_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint32_t total) {
   f_begin(VM_LOADER_CLASS_HEADER, 0x41);
   f_u16(obj_cnt);
   f_u16(acc_cnt);
   f_u16(blk_cnt);
-  f_u16(sec_cnt);
   f_u32(total);
   return f_send();
-}
-
-err_h upload_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint32_t total) {
-  return upload_open_sec(obj_cnt, acc_cnt, blk_cnt, 0, total);
 }
 
 void add_obj_record_raw(uint16_t id, uint16_t payload_size, uint8_t type, uint8_t flags, const char* name) {
@@ -130,10 +125,10 @@ void add_obj_record_raw(uint16_t id, uint16_t payload_size, uint8_t type, uint8_
   head.payload_size = payload_size;
   head.d.obj_t = type & 0x0F;
   head.d.name_size = name ? (uint8_t)strlen(name) : 0;
-  head.f.mutable = (flags & VM_LOAD_F_MUTABLE) != 0;
-  head.f.upd_resetable = (flags & VM_LOAD_F_UPD_RESETABLE) != 0;
-  head.f.retentive = (flags & VM_LOAD_F_RETENTIVE) != 0;
-  head.f.usr_protected = (flags & VM_LOAD_F_USR_PROTECTED) != 0;
+  head.f.mutable = (flags & VM_OBJ_F_MUTABLE) != 0;
+  head.f.upd_resetable = (flags & VM_OBJ_F_UPD_RESETABLE) != 0;
+  head.f.retentive = (flags & VM_OBJ_F_RETENTIVE) != 0;
+  head.f.usr_protected = (flags & VM_OBJ_F_USR_PROTECTED) != 0;
   f_blob(&head, sizeof(head));
   if (name && head.d.name_size) f_str(name);
 }
@@ -180,6 +175,7 @@ void acc_record(uint16_t acc_id, uint16_t root_id, uint8_t idx_count) {
 }
 
 // --- Forward Declarations of Stage Functions ---
+#if RUNIT_TEST_SECTION_OBJ
 // Group 1: Object model & Accessors
 void test_header_helpers(void);
 void test_conversion(void);
@@ -193,15 +189,18 @@ void test_access_edges(void);
 void test_strings(void);
 void test_resolution_cache(void);
 void test_object_contracts(void);
+#endif
 
+#if RUNIT_TEST_SECTION_LOADER
 // Group 2: Loader & Wire Protocol
 void test_upload(void);
 void test_malformed(void);
 void test_block_upload(void);
 void test_dynamic_objects(void);
 void test_palette(void);
-void test_sections(void);
+#endif
 
+#if RUNIT_TEST_SECTION_EXEC
 // Group 3: Execution Runtime & Control Blocks
 void test_exec_pass(void);
 void test_events(void);
@@ -211,12 +210,20 @@ void test_for(void);
 void test_set(void);
 void test_clone(void);
 void test_json_pipeline(void);
+void test_step_selection_pipeline(void);
+void test_math_pi(void);
+void test_math_primes(void);
+void test_runtime_override(void);
+#endif
 
+#if RUNIT_TEST_SECTION_SUB
 // Group 4: Subscription & Telemetry
 void test_subscription(void);
+#endif
 
 // --- Extensible Stage Registry ---
 static const selftest_stage_t s_stages[] = {
+#if RUNIT_TEST_SECTION_OBJ
     // Group 1: Object model & Accessors
     {"A", "header helpers / type tables", test_header_helpers, true},
     {"B", "value conversion", test_conversion, true},
@@ -230,15 +237,18 @@ static const selftest_stage_t s_stages[] = {
     {"I", "access edges", test_access_edges, true},
     {"J", "string objects", test_strings, true},
     {"OBJ", "ownership, schema and mutation contracts", test_object_contracts, true},
+#endif
 
+#if RUNIT_TEST_SECTION_LOADER
     // Group 2: Loader & Wire Protocol
     {"L", "upload protocol", test_upload, true},
     {"N", "block upload", test_block_upload, true},
     {"M", "malformed packets", test_malformed, true},
     {"O", "dynamic objects", test_dynamic_objects, true},
     {"P", "palette resolution", test_palette, true},
-    {"Q", "sections", test_sections, true},
+#endif
 
+#if RUNIT_TEST_SECTION_EXEC
     // Group 3: Execution Runtime & Control Blocks
     {"R", "the pass", test_exec_pass, true},
     {"S", "events", test_events, true},
@@ -248,9 +258,16 @@ static const selftest_stage_t s_stages[] = {
     {"W", "set block", test_set, true},
     {"X", "the Clone block", test_clone, true},
     {"Y", "clone, compute, write back", test_json_pipeline, true},
+    {"PIPE", "selection pipeline step-by-step & telemetry", test_step_selection_pipeline, true},
+    {"PI", "Nilakantha pi series calculation", test_math_pi, true},
+    {"PRIME", "prime tester (trial division in loop)", test_math_primes, true},
+    {"OVERRIDE", "runtime variable update between scans", test_runtime_override, true},
+#endif
 
+#if RUNIT_TEST_SECTION_SUB
     // Group 4: Subscription & Telemetry
     {"SUB", "subscription & telemetry", test_subscription, true},
+#endif
 };
 
 // --- Test Runner Entry Point ---

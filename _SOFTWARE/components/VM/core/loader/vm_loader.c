@@ -26,14 +26,13 @@ void vm_loader_reset(void) {
   vm_exec_program_unlock(VM_RUN_STOPPED);
 }
 
-err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint16_t sec_cnt, uint32_t total_size) {
+err_h vm_loader_open(uint16_t obj_cnt, uint16_t acc_cnt, uint16_t blk_cnt, uint32_t total_size) {
   vm_run_mode_e previous = vm_exec_program_lock();
 
   const uint16_t counts[VM_REG_CNT] = {
       [VM_REG_OBJ] = obj_cnt,
       [VM_REG_ACC] = acc_cnt,
       [VM_REG_BLK] = blk_cnt,
-      [VM_REG_SEC] = sec_cnt,
   };
   err_h e = vm_store_open(total_size, counts);
   if (e) {
@@ -52,8 +51,7 @@ err_h vm_loader_add_obj(uint16_t id, const vm_obj_head_t* head, const char* name
   SE_RET_IF_ERR(require_state(VM_LOAD_OPEN));
   SE_CHECK_NOT_NULL(head);
 
-  /* Checked before the 4-bit obj_t field is used: an out-of-range type
-     would otherwise index the width table out of bounds. */
+  // Validate type before indexing width table
   if (!vm_type_ok(head->d.obj_t)) {
     SE_RET_ERR(ERR_VM_OBJ_BAD_TYPE, .type = head->d.obj_t);
   }
@@ -67,16 +65,15 @@ err_h vm_loader_set_data(uint16_t id, uint16_t start_idx, const uint8_t* data, u
   SE_RET_IF_ERR(require_state(VM_LOAD_OPEN));
   SE_CHECK_NOT_NULL(data);
 
-  vm_obj_h obj = vm_obj_by_id(id);
+  vm_obj_h obj = vm_obj_get_by_id(id);
   if (!obj) {
     SE_RET_ERR(ERR_VM_ACCESSOR_UNKNOWN_ID, .id = id);
   }
 
-  uint16_t items = vm_obj_items_cnt(obj);
+  uint16_t items = vm_obj_get_items_cnt(obj);
 
   if ((vm_obj_t_e)obj->head.d.obj_t == VM_OBJ_PTR) {
-    /* Children arrive as ids, never as addresses -- a pointer is meaningless
-       outside this boot's arena. Two bytes each, little-endian. */
+    // Child IDs (2 bytes little-endian)
     if ((len & 1u) != 0) {
       SE_RET_ERR(ERR_VM_LOAD_DATA_RANGE, .id = id, .start_idx = start_idx, .len = len, .items = items);
     }
@@ -86,9 +83,8 @@ err_h vm_loader_set_data(uint16_t id, uint16_t start_idx, const uint8_t* data, u
     }
     for (uint16_t i = 0; i < n; i++) {
       uint16_t child_id = (uint16_t)(data[i * 2] | ((uint16_t)data[i * 2 + 1] << 8));
-      vm_obj_h child = vm_obj_by_id(child_id);
+      vm_obj_h child = vm_obj_get_by_id(child_id);
       if (!child) {
-        // forward reference, or an id the program never created
         SE_RET_ERR(ERR_VM_ACCESSOR_UNKNOWN_ID, .id = child_id);
       }
       SE_RET_IF_ERR(vm_obj_link_direct(obj, (uint16_t)(start_idx + i), child));
@@ -96,7 +92,7 @@ err_h vm_loader_set_data(uint16_t id, uint16_t start_idx, const uint8_t* data, u
     return NULL;
   }
 
-  uint8_t w = vm_obj_type_size(obj);
+  uint8_t w = vm_obj_get_type_size(obj);
   if (w == 0 || (len % w) != 0) {
     SE_RET_ERR(ERR_VM_LOAD_DATA_RANGE, .id = id, .start_idx = start_idx, .len = len, .items = items);
   }
@@ -140,9 +136,8 @@ err_h vm_loader_add_accessor(uint16_t acc_id, uint16_t root_obj_id, uint8_t idx_
         }
         uint16_t ref_id = (uint16_t)(idx_data[off] | ((uint16_t)idx_data[off + 1] << 8));
         off += 2;
-        /* Must already be built. Requiring that is what makes a reference
-           cycle unconstructable rather than merely depth-capped later. */
-        vm_accessor_t* ref = vm_accessor_by_id(ref_id);
+        // Target accessor must already exist to prevent reference cycles
+        vm_accessor_t* ref = vm_accessor_get_by_id(ref_id);
         if (!ref) {
           SE_RET_ERR(ERR_VM_REG_OOB, .kind = VM_REG_ACC, .id = ref_id, .count = g_vm_store.reg[VM_REG_ACC].count);
         }
@@ -166,9 +161,7 @@ err_h vm_loader_add_accessor(uint16_t acc_id, uint16_t root_obj_id, uint8_t idx_
     }
   }
 
-  /* Pre-resolve now the indices are set. Objects arrive before accessors, so
-     the root is normally already there; if it is not, this returns false and
-     the accessor just resolves the long way. Nothing to check. */
+  // Pre-resolve cache if root object is available
   (void)vm_accessor_cache_build(acc);
   return NULL;
 }
@@ -177,17 +170,7 @@ err_h vm_loader_add_block(uint16_t blk_id, const vm_block_cfg_t* cfg) {
   SE_RET_IF_ERR(require_state(VM_LOAD_OPEN));
   SE_CHECK_NOT_NULL(cfg);
 
-  /* Against the block table before anything is built. `block_type` used to be
-     carried and stored with nothing reading it, which meant a program could
-     name a type nothing knows how to run and find out by being silently
-     skipped on every pass forever. Checked first for the same reason the id
-     is: a rejected block should cost the arena nothing, so the retry still
-     fits.
-
-     This is the only shape check there is. What a block *takes in* -- pin
-     counts, private-state size, types -- is not described anywhere yet, so a
-     program that declares the wrong custom_len for its type is still its own
-     problem. That table comes with the palette. */
+  // Validate block_type against the palette before allocating arena memory
   SE_RET_IF_ERR(vm_exec_check_block_type(blk_id, cfg->block_type));
 
   vm_block_h blk = NULL;
@@ -195,11 +178,6 @@ err_h vm_loader_add_block(uint16_t blk_id, const vm_block_cfg_t* cfg) {
   return NULL;
 }
 
-err_h vm_loader_add_section(uint16_t sec_id, uint16_t start, uint16_t end) {
-  SE_RET_IF_ERR(require_state(VM_LOAD_OPEN));
-  SE_RET_IF_ERR(vm_section_create(sec_id, start, end));
-  return NULL;
-}
 
 vm_load_state_e vm_loader_state(void) {
   return s_state;

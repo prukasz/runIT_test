@@ -36,14 +36,20 @@ Pin configs and device id / adresses shall not be changed
    path, so a timing win cannot quietly be a correctness loss.
    --------------------------------------------------------------------------- */
 #define RUNIT_SKIP_DEVICE_INIT 1
-#define RUNIT_ENABLE_VM_SELFTEST 1
+#define RUNIT_ENABLE_VM_SELFTEST 0
 #define RUNIT_ENABLE_VM_BENCH 0
+
+/* Granular test section toggles (when RUNIT_ENABLE_VM_SELFTEST is 1) */
+#define RUNIT_TEST_SECTION_OBJ 1     // Group 1: Object model, accessors, contracts (A-K, OBJ)
+#define RUNIT_TEST_SECTION_LOADER 1  // Group 2: Loader & wire protocol (L, N, M, O, P)
+#define RUNIT_TEST_SECTION_EXEC 1    // Group 3: Execution, blocks, math (R, BLK, S-Y, PIPE, PI, PRIME, OVERRIDE)
+#define RUNIT_TEST_SECTION_SUB 1     // Group 4: Subscriptions & telemetry (SUB)
 
 #define RUNIT_BOARD_POWER_LIMIT_MV 21000
 #define RUNIT_BOARD_POWER_LIMIT_MA 5500
 #define RUNIT_BOARD_POWER_BUDGET_MW (RUNIT_BOARD_POWER_LIMIT_MV * RUNIT_BOARD_POWER_LIMIT_MA / 1000)
 
-err_h sys_start_i2c(void) {
+static inline err_h sys_start_i2c(void) {
   i2c_master_bus_config_t bus0_cfg = {
       .i2c_port = I2C_NUM_0,
       .sda_io_num = SYS_PIN_I2C_0_SDA,
@@ -64,13 +70,13 @@ err_h sys_start_i2c(void) {
 }
 
 /*System-level power budget config (board mounted) - device creation lives in runit_board_devices.h*/
-err_h sys_power_static_config(void) {
+static inline err_h sys_power_static_config(void) {
   SE_ORIGIN_CALL(sys_power_set_limits(RUNIT_BOARD_POWER_LIMIT_MV, RUNIT_BOARD_POWER_LIMIT_MA, RUNIT_BOARD_POWER_BUDGET_MW));
   ESP_LOGI("static_config", "power limits configured");
   return NULL;
 }
 
-err_h sys_ble_static_config() {
+static inline err_h sys_ble_static_config(void) {
   SE_ORIGIN_CALL(sys_ble_init());
 
   sys_ble_svc_cfg_t runit_svc_cfg = {.uuid = SYS_BLE_SVC_RUNIT, .is_primary = true};

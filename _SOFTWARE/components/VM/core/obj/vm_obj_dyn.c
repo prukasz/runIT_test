@@ -4,6 +4,20 @@
 
 #define OWNER OWNER_VM_OBJ
 
+/*
+ * Dynamic Object Subsystem (Heap-Allocated, Reference-Counted DAGs)
+ *
+ * Logic Flow:
+ *   1. Internal Helpers:
+ *      - Ownership DAG height & cycle validator (ownership_height)
+ *      - Recursive reference-counted release (dyn_release)
+ *   2. Target Public APIs:
+ *      - Link graph pre-validation (vm_obj_dyn_check_link)
+ *      - Allocation & dynamic registration (vm_obj_dyn_create)
+ *      - Reference counting (vm_obj_dyn_retain, vm_obj_dyn_release)
+ *      - Allocator teardown (vm_obj_dyn_reset)
+ */
+
 /* Same caps as the program pool: internal DRAM only. A message tree is walked
    by accessors on every pass that reads it, so putting it behind the PSRAM
    cache would make access cost depend on what else is resident. */
@@ -17,6 +31,10 @@ typedef struct {
   uint8_t visiting[VM_DYN_MAX];
   uint8_t height[VM_DYN_MAX];
 } ownership_check_t;
+
+// ===========================================================================
+// 1. Internal Helpers
+// ===========================================================================
 
 /* Validate all dynamic roots, including ancestors of the changed object.
    Checking only the inserted subtree misses a chain grown from its tail.
@@ -34,9 +52,9 @@ static err_h ownership_height(ownership_check_t* check, uint16_t id, uint8_t dep
   vm_obj_h o = g_vm_dyn[id].obj;
   if (o->head.d.obj_t == VM_OBJ_PTR) {
     vm_obj_h* kids = (vm_obj_h*)o->payload;
-    for (uint16_t i = 0; i < vm_obj_items_cnt(o); i++) {
+    for (uint16_t i = 0; i < vm_obj_get_items_cnt(o); i++) {
       vm_obj_h kid = &kids[i] == check->cell ? check->child : kids[i];
-      uint16_t kid_id = vm_obj_dyn_id(kid);
+      uint16_t kid_id = vm_obj_dyn_get_id(kid);
       if (kid_id == VM_DYN_NO_ID) continue;  // arena children have program lifetime
       SE_RET_IF_ERR(ownership_height(check, kid_id, (uint8_t)(depth + 1)));
       uint8_t next = (uint8_t)(check->height[kid_id] + 1);
@@ -50,6 +68,37 @@ static err_h ownership_height(ownership_check_t* check, uint16_t id, uint8_t dep
   check->height[id] = height;
   return NULL;
 }
+
+static void dyn_release(vm_obj_h o, uint8_t depth) {
+  uint16_t id = vm_obj_dyn_get_id(o);
+  if (id == VM_DYN_NO_ID) return;  // arena object or NULL; o must not be a freed handle
+
+  if (g_vm_dyn[id].ref_cnt > 1) {
+    g_vm_dyn[id].ref_cnt--;
+    return;
+  }
+
+  // Legal ownership is a bounded DAG, validated before every link mutation.
+  g_vm_dyn[id].obj = NULL;
+  g_vm_dyn[id].ref_cnt = 0;
+
+  /* Children go first -- reading the payload after free() would be a
+     use-after-free. Arena children fall out of dyn_release() immediately, so a
+     tree holding both kinds needs no test here. */
+  if ((vm_obj_t_e)o->head.d.obj_t == VM_OBJ_PTR && depth < VM_DYN_MAX_DEPTH) {
+    vm_obj_h* kids = (vm_obj_h*)o->payload;
+    uint16_t n = vm_obj_get_items_cnt(o);
+    for (uint16_t i = 0; i < n; i++) {
+      if (kids[i]) dyn_release(kids[i], (uint8_t)(depth + 1));
+    }
+  }
+
+  heap_caps_free(o);
+}
+
+// ===========================================================================
+// 2. Target Public APIs
+// ===========================================================================
 
 err_h vm_obj_dyn_check_link(vm_obj_h owner, vm_obj_h* cell, vm_obj_h child) {
   if (!owner->head.f.dynamic || *cell == child) return NULL;
@@ -99,35 +148,8 @@ err_h vm_obj_dyn_create(vm_obj_h* out, const vm_obj_head_t* head, const char* na
 
 void vm_obj_dyn_retain(vm_obj_h o) {
   // no-op on an arena object, so link paths need no type test of their own
-  uint16_t id = vm_obj_dyn_id(o);
+  uint16_t id = vm_obj_dyn_get_id(o);
   if (id != VM_DYN_NO_ID) g_vm_dyn[id].ref_cnt++;
-}
-
-static void dyn_release(vm_obj_h o, uint8_t depth) {
-  uint16_t id = vm_obj_dyn_id(o);
-  if (id == VM_DYN_NO_ID) return;  // arena object or NULL; o must not be a freed handle
-
-  if (g_vm_dyn[id].ref_cnt > 1) {
-    g_vm_dyn[id].ref_cnt--;
-    return;
-  }
-
-  // Legal ownership is a bounded DAG, validated before every link mutation.
-  g_vm_dyn[id].obj = NULL;
-  g_vm_dyn[id].ref_cnt = 0;
-
-  /* Children go first -- reading the payload after free() would be a
-     use-after-free. Arena children fall out of dyn_release() immediately, so a
-     tree holding both kinds needs no test here. */
-  if ((vm_obj_t_e)o->head.d.obj_t == VM_OBJ_PTR && depth < VM_DYN_MAX_DEPTH) {
-    vm_obj_h* kids = (vm_obj_h*)o->payload;
-    uint16_t n = vm_obj_items_cnt(o);
-    for (uint16_t i = 0; i < n; i++) {
-      if (kids[i]) dyn_release(kids[i], (uint8_t)(depth + 1));
-    }
-  }
-
-  heap_caps_free(o);
 }
 
 void vm_obj_dyn_release(vm_obj_h o) {

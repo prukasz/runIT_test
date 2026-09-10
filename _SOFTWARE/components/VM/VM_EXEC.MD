@@ -1,11 +1,9 @@
 # VM Execution Model & Target Look
 
-Consolidated from [[VM_DESIGN_QA.md]]. This was written as the **design target**;
-the execution architecture below is now built (`core/exec/`, see [[VM.MD]]).
-What is **not** built is the palette — the one `.c` per block type the model
-keeps referring to (`CASE IO`, `SERVO ANGLE`, latch, pulse, `FOR`, `ON EVENT`).
-So every mechanism here runs, and there is as yet nothing registered for it to
-run. Section 3 marks what landed.
+This document specifies the execution model and runtime semantics for the runIT VM:
+- **Core Engine**: Implemented in `core/exec/` and `core/block/` (see [[VM.MD]]).
+- **Execution Units**: Topological block-by-block scan passes with span jumps for nested flow control.
+- **Palette**: Dispatch table in `blocks/` providing concrete block behaviours (`EXPR`, `BRANCH`, `FOR`, `SET`, `CLONE`, `EDGE`, `TIMER`).
 
 ---
 
@@ -541,44 +539,24 @@ objects, subscriptions, registries, and runtime state and leaves execution
 stopped. Failure to reserve a new pool preserves the prior program and run mode.
 Lifecycle calls belong to the control task, never to a block or sample hook.
 
-Clone publishes a replacement only after building and filling it. Matching
-schemas include field names and reuse storage after write-policy preflight.
-Field writes mark their owner; a producer explicitly publishes its containing
-message when the aggregate is complete. There is no implicit parent propagation.
-
-* **Live patch** of data-only objects while running — applied at the drain point,
-  same as an override. Structural change is a full reload.
-* **Retention** is per-value, either automatic (simplified) or hand-picked.
-* The device holds **one active program**, plus stored packet sets that can be
-  replayed to switch — the same mechanism as an action.
-* **Step mode**: run exactly one scan, then stop.
+* **Live patch** of data-only objects while running — applied at the drain point, same as an override. Structural change is a full reload.
+* **Retention** is per-value, either automatic or hand-picked via NVS.
+* **Single Active Program**: The device holds one active program in memory; stored packet sets can be replayed to switch programs.
+* **Step mode**: Run exactly one scan, then stop.
 * Trends/history are explicitly out of scope for the MCU.
 
 ---
 
-## 3. What this changes against the current code
+## 3. Architecture Summary
 
-| | now | needed |
-| :--- | :--- | :--- |
-| Enable | ~~single `cfg.en` accessor~~ | **done** — `en_cnt` + list + `en_mode` (any/all), header 20 → 16 B |
-| Section id on a block | ~~`cfg.section_idx`~~ | **done** — removed; the section's list is the only copy |
-| Unwired input | ~~loader rejected every unresolvable id~~ | **done** — `VM_BLOCK_NO_ID` ⇒ NULL slot; `connected_in` dropped |
-| On-error | ~~nothing~~ | **done** — `cfg.on_error` in struct + wire; supervisor must honour it |
-| Sections | ~~do not exist~~ | **done** — `vm_section_t` = `[start, end)` over the global order, `VM_REG_SEC`, packet `0x46`; atomic units for freeze/resume, *not* schedules |
-| Non-activation | ~~nothing~~ | **done** — `vm_block_set_ENO(b, false)` and nothing else: outputs keep their values, ENO drops quietly, and the `upd` sweep withdraws freshness |
-| `block_type` | ~~copied, only used in error payloads~~ | **done** — `vm_exec_check_block_type()` at load refuses a type no function claims; nothing else is described yet |
-| User write protection | reserved header bit | **done** — `usr_protected`, producer output protection, `_usr` scalar/copy/clone/link APIs |
-| Watchdog | ~~nothing~~ | **done** — volatile `(seq << 16) | block_id`, sampled by a 20 ms `esp_timer` (task-dispatch, not ISR — see [[VM.MD]]) |
-| Clock | ~~nothing references one~~ | **done** — in `vm_exec.h`: `vm_clock_us()` live, `vm_now_ms()` latched per pass so a pass is one instant |
-| Dispatch | ~~`block_type` stored, nothing reads it~~ | **done** — one `static const` table in flash, indexed by `block_type`; one `.c` per block type still to write |
-| Events | ~~none~~ | **done** — `vm_event.h`, but *simplified*: two buffers swapped once per pass, an event lives one scan cycle, blocks **ask** rather than being routed to. Unhandled events are dropped by design |
-| `upd` | ~~set on write, read by nobody~~ | **done** — swept end of pass, after the sample hook, respecting `upd_resetable`, dynamic objects included |
-| Open packet | ~~`obj_cnt, acc_cnt, blk_cnt, total_size`~~ | **done** — `sec_cnt` added; `0x41` body is now 12 bytes |
-| Supervisor | ~~nothing~~ | **done** — `vm_exec_pass()`, freeze points, span jumping, `cfg.on_error`, core-1 task at one tick per pass. Calls every block and decides nothing else |
-| Latch / pulse | nothing | palette blocks — the only way transient activation reaches a time gate |
-| Palette | nothing registered | one `.c` per block type; until then `0x45` refuses every type. A *description* of what each takes in comes with it |
-| Loader | `OPEN` → build → done | accept `0x43` against a *running* program, applied at drain |
-| Retention | none | NVS, keyed by name not id |
+Key execution principles implemented in the VM:
+- **Execution Order**: Block-by-block in topological scan order; loops and conditional branches run nested blocks via spans (`vm_block_claim_span`).
+- **Composite Gating**: Blocks compose update-driven (`vm_block_input_fresh`) and enable-driven (`vm_block_is_enabled`) activation.
+- **Quiet Non-Activation**: Inactive blocks call `vm_block_set_ENO(b, false)`, quietly withdrawing flow without wiping data or triggering downstream update sweeps.
+- **User Protection**: Block construction automatically sets `usr_protected` on output objects and ENO, preventing mutations from user scripts.
+- **Supervisor Task**: Core-1 FreeRTOS task running at 1 tick per pass (`vm_exec_pass`), orchestrating span jumps, error policies (`cfg.on_error`), and telemetry hooks.
+- **Watchdog & Timing**: Volatile sequence/block watchdog sampled via 20 ms `esp_timer`; scan timestamp latched per pass instant via `vm_now_ms()`.
+- **Three Registries**: Flat 10-byte open packet initializes Object, Accessor, and Block registries (`VM_REG_OBJ`, `VM_REG_ACC`, `VM_REG_BLK`).
 
 ---
 

@@ -1,7 +1,6 @@
 #include "selftest_frame.h"
 #include "vm_blocks.h"
 #include "vm_exec.h"
-#include "vm_section.h"
 
 /* One 0x45 record: header, then in ids, out ids, en ids, private state.
    `en_acc` keeps its single-source spelling for brevity -- VM_BLOCK_NO_ID
@@ -35,18 +34,18 @@ void test_upload(void) {
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
-  add_obj_record(OBJ_TEMP, 1, VM_OBJ_F, VM_LOAD_F_MUTABLE, "temp");
+  add_obj_record(OBJ_TEMP, 1, VM_OBJ_F, VM_OBJ_F_MUTABLE, "temp");
   ck("0x42 before open -> BAD_STATE", f_send() != NULL);
 
   ck("0x41 open", upload_open(3, 4, 0, 640) == NULL && vm_loader_state() == VM_LOAD_OPEN);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(3);
-  add_obj_record(OBJ_MSG, 2, VM_OBJ_PTR, VM_LOAD_F_MUTABLE, NULL);
-  add_obj_record(OBJ_TEMP, 1, VM_OBJ_F, VM_LOAD_F_MUTABLE, "temp");
-  add_obj_record(OBJ_HUM, 1, VM_OBJ_F, VM_LOAD_F_MUTABLE, "hum");
+  add_obj_record(OBJ_MSG, 2, VM_OBJ_PTR, VM_OBJ_F_MUTABLE, NULL);
+  add_obj_record(OBJ_TEMP, 1, VM_OBJ_F, VM_OBJ_F_MUTABLE, "temp");
+  add_obj_record(OBJ_HUM, 1, VM_OBJ_F, VM_OBJ_F_MUTABLE, "hum");
   ck("0x42 create 3 objects", f_send() == NULL);
-  ck("objects reachable by id", vm_obj_by_id(OBJ_MSG) && vm_obj_by_id(OBJ_TEMP) && vm_obj_by_id(OBJ_HUM));
+  ck("objects reachable by id", vm_obj_get_by_id(OBJ_MSG) && vm_obj_get_by_id(OBJ_TEMP) && vm_obj_get_by_id(OBJ_HUM));
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x43);
   f_u8(3);
@@ -75,10 +74,10 @@ void test_upload(void) {
   got = -1.0f;
   ck("msg[\"temp\"] alone yields PTR slot -> 0", VM_OBJ_GET_VAL(got, &acc_short) == NULL && got == 0.0f);
   vm_obj_h child = NULL;
-  ck("vm_get_obj follows the trailing PTR", vm_get_obj(&child, &acc_short) == NULL && child == vm_obj_by_id(OBJ_TEMP));
-  ck("vm_obj_find_child finds tagged child", vm_obj_find_child(vm_obj_by_id(OBJ_MSG), "temp") == vm_obj_by_id(OBJ_TEMP));
-  ck("vm_obj_find_child returns NULL on missing tag", vm_obj_find_child(vm_obj_by_id(OBJ_MSG), "missing") == NULL);
-  ck("vm_obj_find_child returns NULL on non-PTR parent", vm_obj_find_child(vm_obj_by_id(OBJ_TEMP), "temp") == NULL);
+  ck("vm_get_obj follows the trailing PTR", vm_obj_get_obj(&child, &acc_short) == NULL && child == vm_obj_get_by_id(OBJ_TEMP));
+  ck("vm_obj_get_child finds tagged child", vm_obj_get_child(vm_obj_get_by_id(OBJ_MSG), "temp") == vm_obj_get_by_id(OBJ_TEMP));
+  ck("vm_obj_get_child returns NULL on missing tag", vm_obj_get_child(vm_obj_get_by_id(OBJ_MSG), "missing") == NULL);
+  ck("vm_obj_get_child returns NULL on non-PTR parent", vm_obj_get_child(vm_obj_get_by_id(OBJ_TEMP), "temp") == NULL);
 
   // accessors uploaded as frames
   f_begin(VM_LOADER_CLASS_HEADER, 0x44);
@@ -91,11 +90,11 @@ void test_upload(void) {
   acc_record(1, OBJ_TEMP, 0);
   ck("0x44 create accessors", f_send() == NULL);
 
-  vm_accessor_t* a0 = vm_accessor_by_id(0);
+  vm_accessor_t* a0 = vm_accessor_get_by_id(0);
   got = 0.0f;
   ck("loaded accessor resolves (name copy survived the frame)", a0 && VM_OBJ_GET_VAL(got, a0) == NULL && got == 60.0f);
-  ck("same id yields the identical pointer -- sharing works", vm_accessor_by_id(0) == a0);
-  ck("whole-object accessor has no indices", vm_accessor_by_id(1) && vm_accessor_by_id(1)->count == 0);
+  ck("same id yields the identical pointer -- sharing works", vm_accessor_get_by_id(0) == a0);
+  ck("whole-object accessor has no indices", vm_accessor_get_by_id(1) && vm_accessor_get_by_id(1)->count == 0);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x44);
   f_u8(1);
@@ -131,28 +130,28 @@ void test_malformed(void) {
      payload. */
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
-  add_obj_record_raw(7, 5, VM_OBJ_U32, VM_LOAD_F_MUTABLE, NULL);
-  ck("0x42 payload that is not a whole number of elements -> OBJ_BAD_SIZE", f_send() != NULL && vm_obj_by_id(7) == NULL);
+  add_obj_record_raw(7, 5, VM_OBJ_U32, VM_OBJ_F_MUTABLE, NULL);
+  ck("0x42 payload that is not a whole number of elements -> OBJ_BAD_SIZE", f_send() != NULL && vm_obj_get_by_id(7) == NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
-  add_obj_record_raw(7, 0, VM_OBJ_U32, VM_LOAD_F_MUTABLE, NULL);
+  add_obj_record_raw(7, 0, VM_OBJ_U32, VM_OBJ_F_MUTABLE, NULL);
   ck("0x42 zero payload -> OBJ_EMPTY", f_send() != NULL);
 
   /* An out-of-range type must be caught before it is used to index tables. */
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
-  add_obj_record(7, 1, 15, VM_LOAD_F_MUTABLE, NULL);
-  ck("0x42 type past the table -> OBJ_BAD_TYPE, not a truncated type", f_send() != NULL && vm_obj_by_id(7) == NULL);
+  add_obj_record(7, 1, 15, VM_OBJ_F_MUTABLE, NULL);
+  ck("0x42 type past the table -> OBJ_BAD_TYPE, not a truncated type", f_send() != NULL && vm_obj_get_by_id(7) == NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
-  add_obj_record(OBJ_TEMP, 1, VM_OBJ_F, VM_LOAD_F_MUTABLE, "dup");
+  add_obj_record(OBJ_TEMP, 1, VM_OBJ_F, VM_OBJ_F_MUTABLE, "dup");
   ck("0x42 duplicate id -> TABLE_DUP", f_send() != NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(1);
-  add_obj_record(900, 1, VM_OBJ_F, VM_LOAD_F_MUTABLE, NULL);
+  add_obj_record(900, 1, VM_OBJ_F, VM_OBJ_F_MUTABLE, NULL);
   ck("0x42 id past table -> TABLE_OOB", f_send() != NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x43);
@@ -211,8 +210,8 @@ void test_malformed(void) {
   ck("0x41 total_size past the hard ceiling -> TOO_BIG", upload_open(2, 0, 0, VM_STORE_MAX_POOL + 1) != NULL);
   ck("0x41 zero total_size -> TOO_BIG", upload_open(2, 0, 0, 0) != NULL);
   ck("after failed open, state is EMPTY", vm_loader_state() == VM_LOAD_EMPTY);
-  ck("after failed open, ids resolve NULL", vm_obj_by_id(OBJ_TEMP) == NULL);
-  ck("after failed open, accessor ids resolve NULL", vm_accessor_by_id(0) == NULL);
+  ck("after failed open, ids resolve NULL", vm_obj_get_by_id(OBJ_TEMP) == NULL);
+  ck("after failed open, accessor ids resolve NULL", vm_accessor_get_by_id(0) == NULL);
 }
 
 void test_block_upload(void) {
@@ -223,10 +222,10 @@ void test_block_upload(void) {
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(4);
-  add_obj_record(0, 2, VM_OBJ_F, VM_LOAD_F_MUTABLE, NULL);   // in values
-  add_obj_record(1, 1, VM_OBJ_F, VM_LOAD_F_MUTABLE, NULL);   // out
-  add_obj_record(2, 1, VM_OBJ_B, VM_LOAD_F_MUTABLE, NULL);   // eno
-  add_obj_record(3, 1, VM_OBJ_B, VM_LOAD_F_MUTABLE, NULL);   // en source
+  add_obj_record(0, 2, VM_OBJ_F, VM_OBJ_F_MUTABLE, NULL);   // in values
+  add_obj_record(1, 1, VM_OBJ_F, VM_OBJ_F_MUTABLE, NULL);   // out
+  add_obj_record(2, 1, VM_OBJ_B, VM_OBJ_F_MUTABLE, NULL);   // eno
+  add_obj_record(3, 1, VM_OBJ_B, VM_OBJ_F_MUTABLE, NULL);   // en source
   ck("0x42 objects for the block", f_send() == NULL);
 
   // accessors: in0 = obj0[0], in1 = obj0[1], en = obj3 (chainless)
@@ -248,28 +247,28 @@ void test_block_upload(void) {
   add_block_record(0, 100, VM_BLK_EXPR, ins, 2, outs, 1, 2, 2, custom, sizeof(custom));
   ck("0x45 creates a block", f_send() == NULL);
 
-  vm_block_h b = vm_block_by_id(0);
+  vm_block_h b = vm_block_get_by_id(0);
   ck("block is bound to its id", b != NULL);
   if (!b) return;
 
   ck("block header round-trips", b->cfg.block_idx == 100 && b->cfg.block_type == VM_BLK_EXPR && b->cfg.in_cnt == 2 && b->cfg.q_cnt == 1 && b->cfg.custom_len == 4 && b->cfg.on_error == VM_BLK_ERR_STOP);
-  ck("ids resolved to pointers, not kept as ids", vm_block_inputs(b)[0] == vm_accessor_by_id(0) && vm_block_inputs(b)[1] == vm_accessor_by_id(1) && vm_block_outputs(b)[0] == vm_obj_by_id(1));
-  ck("EN and ENO resolved", b->cfg.en_cnt == 1 && vm_block_en_list(b)[0] == vm_accessor_by_id(2) && b->cfg.eno == vm_obj_by_id(2));
-  ck("private state arrived", memcmp(vm_block_custom_data(b), custom, sizeof(custom)) == 0);
-  ck("total_size matches the shape", vm_block_total_size(b) == vm_block_size(2, 1, 1, 4));
+  ck("ids resolved to pointers, not kept as ids", vm_block_get_inputs(b)[0] == vm_accessor_get_by_id(0) && vm_block_get_inputs(b)[1] == vm_accessor_get_by_id(1) && vm_block_get_outputs(b)[0] == vm_obj_get_by_id(1));
+  ck("EN and ENO resolved", b->cfg.en_cnt == 1 && vm_block_get_en_list(b)[0] == vm_accessor_get_by_id(2) && b->cfg.eno == vm_obj_get_by_id(2));
+  ck("private state arrived", memcmp(vm_block_get_custom_data(b), custom, sizeof(custom)) == 0);
+  ck("total_size matches the shape", vm_block_get_total_size(b) == vm_block_calc_size(2, 1, 1, 4));
 
   /* The block is wired to real objects, so it must actually work end to end --
      the point of resolving at load is that execution never touches an id. */
-  ((float*)vm_obj_by_id(0)->payload)[0] = 2.5f;
-  ((float*)vm_obj_by_id(0)->payload)[1] = 4.0f;
-  *(uint8_t*)vm_obj_by_id(3)->payload = 1;  // EN true
+  ((float*)vm_obj_get_by_id(0)->payload)[0] = 2.5f;
+  ((float*)vm_obj_get_by_id(0)->payload)[1] = 4.0f;
+  *(uint8_t*)vm_obj_get_by_id(3)->payload = 1;  // EN true
   float a = 0, c = 0;
   const vm_accessor_t* pin = NULL;
   bool got = vm_block_get_in(&pin, b, 0) == NULL && VM_OBJ_GET_VAL(a, pin) == NULL;
   ck("an uploaded block reads through its own pin", got && a == 2.5f);
   ck("an uploaded block is enabled by its EN object", vm_block_is_enabled(b));
   vm_obj_h q = NULL;
-  ck("uploaded block writes its output", vm_block_get_out(&q, b, 0) == NULL && VM_OBJ_SET_VAL_AT(6.5f, q, 0) == NULL && VM_OBJ_GET_VAL(c, vm_accessor_by_id(1)) == NULL);
+  ck("uploaded block writes its output", vm_block_get_out(&q, b, 0) == NULL && VM_OBJ_SET_VAL_AT(6.5f, q, 0) == NULL && VM_OBJ_GET_VAL(c, vm_accessor_get_by_id(1)) == NULL);
 
   // references are the whole risk with blocks: every one of these must refuse
   add_block_record(1, 101, VM_BLK_EXPR, (uint16_t[]){99}, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
@@ -284,7 +283,7 @@ void test_block_upload(void) {
   add_block_record(1, 101, VM_BLK_EXPR, ins, 2, outs, 1, VM_BLOCK_NO_ID, 99, NULL, 0);
   ck("unknown ENO object id -> BAD_REF", f_send() != NULL);
 
-  ck("a refused block leaves its id unbound", vm_block_by_id(1) == NULL);
+  ck("a refused block leaves its id unbound", vm_block_get_by_id(1) == NULL);
 
   /* NO_ID is legal on an input (the pin stays unwired and the block falls back
      to its own constant), on EN and on ENO -- but never on an output. */
@@ -292,11 +291,11 @@ void test_block_upload(void) {
   ck("NO_ID output -> BAD_REF", f_send() != NULL);
 
   add_block_record(1, 101, VM_BLK_EXPR, (uint16_t[]){0, VM_BLOCK_NO_ID}, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
-  ck("NO_ID input leaves the pin unwired", f_send() == NULL && vm_block_by_id(1) && vm_block_inputs(vm_block_by_id(1))[0] == vm_accessor_by_id(0) && vm_block_inputs(vm_block_by_id(1))[1] == NULL);
+  ck("NO_ID input leaves the pin unwired", f_send() == NULL && vm_block_get_by_id(1) && vm_block_get_inputs(vm_block_get_by_id(1))[0] == vm_accessor_get_by_id(0) && vm_block_get_inputs(vm_block_get_by_id(1))[1] == NULL);
   const vm_accessor_t* unwired = NULL;
-  ck("an unwired pin reports PIN_UNLINKED, not garbage", vm_block_get_in(&unwired, vm_block_by_id(1), 1) != NULL && unwired == NULL);
-  ck("absent EN and NO_ID ENO leave both empty", vm_block_by_id(1)->cfg.en_cnt == 0 && vm_block_by_id(1)->cfg.eno == NULL);
-  ck("a block with no EN is enabled by default", vm_block_is_enabled(vm_block_by_id(1)));
+  ck("an unwired pin reports PIN_UNLINKED, not garbage", vm_block_get_in(&unwired, vm_block_get_by_id(1), 1) != NULL && unwired == NULL);
+  ck("absent EN and NO_ID ENO leave both empty", vm_block_get_by_id(1)->cfg.en_cnt == 0 && vm_block_get_by_id(1)->cfg.eno == NULL);
+  ck("a block with no EN is enabled by default", vm_block_is_enabled(vm_block_get_by_id(1)));
 
   /* A merge: two enable sources on one block, as a real en_cnt == 2 record.
      Accessor 2 is the chainless gate on obj3; accessor 0 reads obj0[0], a
@@ -307,24 +306,24 @@ void test_block_upload(void) {
   f_u16(0); f_u16(1);  // inputs
   f_u16(1);            // output
   f_u16(2); f_u16(0);  // two enable sources
-  ck("0x45 accepts a two-source enable list", f_send() == NULL && vm_block_by_id(2) && vm_block_by_id(2)->cfg.en_cnt == 2);
-  ck("en_mode round-trips", vm_block_by_id(2)->cfg.en_mode == VM_BLK_EN_ANY);
+  ck("0x45 accepts a two-source enable list", f_send() == NULL && vm_block_get_by_id(2) && vm_block_get_by_id(2)->cfg.en_cnt == 2);
+  ck("en_mode round-trips", vm_block_get_by_id(2)->cfg.en_mode == VM_BLK_EN_ANY);
   ck("merge resolves both sources to pointers",
-     vm_block_en_list(vm_block_by_id(2))[0] == vm_accessor_by_id(2) && vm_block_en_list(vm_block_by_id(2))[1] == vm_accessor_by_id(0));
-  *(uint8_t*)vm_obj_by_id(3)->payload = 0;    // first source false
-  ((float*)vm_obj_by_id(0)->payload)[0] = 0;  // second source false
-  ck("ANY with both sources false is disabled", !vm_block_is_enabled(vm_block_by_id(2)));
-  ((float*)vm_obj_by_id(0)->payload)[0] = 2.5f;
-  ck("ANY enabled by either source", vm_block_is_enabled(vm_block_by_id(2)));
+     vm_block_get_en_list(vm_block_get_by_id(2))[0] == vm_accessor_get_by_id(2) && vm_block_get_en_list(vm_block_get_by_id(2))[1] == vm_accessor_get_by_id(0));
+  *(uint8_t*)vm_obj_get_by_id(3)->payload = 0;    // first source false
+  ((float*)vm_obj_get_by_id(0)->payload)[0] = 0;  // second source false
+  ck("ANY with both sources false is disabled", !vm_block_is_enabled(vm_block_get_by_id(2)));
+  ((float*)vm_obj_get_by_id(0)->payload)[0] = 2.5f;
+  ck("ANY enabled by either source", vm_block_is_enabled(vm_block_get_by_id(2)));
 
   /* Same wiring, ALL mode: now one true source is no longer enough. */
-  vm_block_by_id(2)->cfg.en_mode = VM_BLK_EN_ALL;
-  ck("ALL with only one source true is disabled", !vm_block_is_enabled(vm_block_by_id(2)));
-  *(uint8_t*)vm_obj_by_id(3)->payload = 1;
-  ck("ALL enabled only once every source is true", vm_block_is_enabled(vm_block_by_id(2)));
-  ((float*)vm_obj_by_id(0)->payload)[0] = 0;
-  ck("ALL disabled again as soon as one source drops", !vm_block_is_enabled(vm_block_by_id(2)));
-  ((float*)vm_obj_by_id(0)->payload)[0] = 2.5f;
+  vm_block_get_by_id(2)->cfg.en_mode = VM_BLK_EN_ALL;
+  ck("ALL with only one source true is disabled", !vm_block_is_enabled(vm_block_get_by_id(2)));
+  *(uint8_t*)vm_obj_get_by_id(3)->payload = 1;
+  ck("ALL enabled only once every source is true", vm_block_is_enabled(vm_block_get_by_id(2)));
+  ((float*)vm_obj_get_by_id(0)->payload)[0] = 0;
+  ck("ALL disabled again as soon as one source drops", !vm_block_is_enabled(vm_block_get_by_id(2)));
+  ((float*)vm_obj_get_by_id(0)->payload)[0] = 2.5f;
 
   add_block_record(1, 102, VM_BLK_EXPR, ins, 2, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
   ck("duplicate block id -> TABLE_DUP", f_send() != NULL);
@@ -358,14 +357,14 @@ void test_block_upload(void) {
      not reset-then-allocate. Ask for more than the ceiling and check the
      loaded block is still there and still resolves. */
   ck("a rejected open leaves the running program intact",
-     upload_open(4, 3, 2, VM_STORE_MAX_POOL + 1) != NULL && vm_block_by_id(0) != NULL && vm_block_by_id(0)->cfg.block_idx == 100 && vm_obj_by_id(1) != NULL);
+     upload_open(4, 3, 2, VM_STORE_MAX_POOL + 1) != NULL && vm_block_get_by_id(0) != NULL && vm_block_get_by_id(0)->cfg.block_idx == 100 && vm_obj_get_by_id(1) != NULL);
 
   uint32_t before = vm_store_capacity();
   ck("a successful open re-sizes the pool to the new program", upload_open(1, 0, 0, 256) == NULL && vm_store_capacity() == 256 && before != 256);
-  ck("the previous program is gone after a successful reopen", vm_block_by_id(0) == NULL);
+  ck("the previous program is gone after a successful reopen", vm_block_get_by_id(0) == NULL);
 
   vm_loader_reset();
-  ck("reset detaches the block registry", vm_block_by_id(0) == NULL);
+  ck("reset detaches the block registry", vm_block_get_by_id(0) == NULL);
   ck("reset releases the pool", vm_store_capacity() == 0);
 }
 
@@ -390,32 +389,32 @@ void test_dynamic_objects(void) {
   dh.f.mutable = 1;
   ck("dynamic create succeeds", vm_obj_dyn_create(&d, &dh, "temp") == NULL && d);
   ck("it is flagged dynamic", d && vm_obj_is_dynamic(d));
-  ck("it is in the register, owned by nobody", vm_obj_dyn_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_id(d)].ref_cnt == 0);
-  ck("dyn_get round-trips the slot", vm_obj_dyn_get(vm_obj_dyn_id(d)) == d);
+  ck("it is in the register, owned by nobody", vm_obj_dyn_get_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_get_id(d)].ref_cnt == 0);
+  ck("dyn_get round-trips the slot", vm_obj_dyn_get_by_id(vm_obj_dyn_get_id(d)) == d);
 
   // it is an ordinary object otherwise -- shape, tag and payload all work
   uint8_t tl = 0;
-  const char* tag = d ? vm_obj_tag(d, &tl) : NULL;
+  const char* tag = d ? vm_obj_get_tag(d, &tl) : NULL;
   ck("a dynamic object carries its tag like any other", tag && tl == 4 && memcmp(tag, "temp", 4) == 0);
   if (d) *(float*)d->payload = 1.5f;
   ck("a dynamic object holds a value like any other", d && *(float*)d->payload == 1.5f);
 
   // arena objects are inert to all of this
   vm_obj_h arena = mk(0, VM_OBJ_U8, 1, NULL, true);
-  ck("an arena object is not dynamic and not registered", arena && !vm_obj_is_dynamic(arena) && vm_obj_dyn_id(arena) == VM_DYN_NO_ID);
+  ck("an arena object is not dynamic and not registered", arena && !vm_obj_is_dynamic(arena) && vm_obj_dyn_get_id(arena) == VM_DYN_NO_ID);
   vm_obj_dyn_retain(arena);
   vm_obj_dyn_release(arena);
-  ck("retain/release are no-ops on an arena object", vm_obj_by_id(0) == arena);
+  ck("retain/release are no-ops on an arena object", vm_obj_get_by_id(0) == arena);
 
   // refcount: two holders, so the first release must not free
   vm_obj_dyn_retain(d);
   vm_obj_dyn_retain(d);
-  ck("two references counted", vm_obj_dyn_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_id(d)].ref_cnt == 2);
+  ck("two references counted", vm_obj_dyn_get_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_get_id(d)].ref_cnt == 2);
   vm_obj_dyn_release(d);
-  ck("one release leaves it alive", vm_obj_dyn_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_id(d)].ref_cnt == 1);
-  uint16_t d_id = vm_obj_dyn_id(d);
+  ck("one release leaves it alive", vm_obj_dyn_get_id(d) != VM_DYN_NO_ID && g_vm_dyn[vm_obj_dyn_get_id(d)].ref_cnt == 1);
+  uint16_t d_id = vm_obj_dyn_get_id(d);
   vm_obj_dyn_release(d);
-  ck("the last release frees it and clears the slot", vm_obj_dyn_get(d_id) == NULL);
+  ck("the last release frees it and clears the slot", vm_obj_dyn_get_by_id(d_id) == NULL);
 
   /* A parent releasing must take its dynamic children with it, and leave any
      arena child alone -- one tree can hold both. */
@@ -437,12 +436,12 @@ void test_dynamic_objects(void) {
     vm_obj_dyn_retain(arena);  // no-op, but the link path calls it unconditionally
     vm_obj_dyn_retain(parent);
   }
-  ck("tree registered", vm_obj_dyn_id(parent) != VM_DYN_NO_ID && vm_obj_dyn_id(kid_a) != VM_DYN_NO_ID && vm_obj_dyn_id(kid_b) != VM_DYN_NO_ID);
+  ck("tree registered", vm_obj_dyn_get_id(parent) != VM_DYN_NO_ID && vm_obj_dyn_get_id(kid_a) != VM_DYN_NO_ID && vm_obj_dyn_get_id(kid_b) != VM_DYN_NO_ID);
 
-  uint16_t parent_id = vm_obj_dyn_id(parent), kid_a_id = vm_obj_dyn_id(kid_a), kid_b_id = vm_obj_dyn_id(kid_b);
+  uint16_t parent_id = vm_obj_dyn_get_id(parent), kid_a_id = vm_obj_dyn_get_id(kid_a), kid_b_id = vm_obj_dyn_get_id(kid_b);
   vm_obj_dyn_release(parent);
-  ck("releasing the parent frees both dynamic children", !vm_obj_dyn_get(parent_id) && !vm_obj_dyn_get(kid_a_id) && !vm_obj_dyn_get(kid_b_id));
-  ck("the arena child survives the cascade", vm_obj_by_id(0) == arena && arena->head.f.dynamic == 0);
+  ck("releasing the parent frees both dynamic children", !vm_obj_dyn_get_by_id(parent_id) && !vm_obj_dyn_get_by_id(kid_a_id) && !vm_obj_dyn_get_by_id(kid_b_id));
+  ck("the arena child survives the cascade", vm_obj_get_by_id(0) == arena && arena->head.f.dynamic == 0);
 
   // the register is a bound, and hitting it is a clean rejection
   uint16_t made = 0;
@@ -461,14 +460,14 @@ void test_dynamic_objects(void) {
   vm_obj_dyn_reset();
   uint16_t live = 0;
   for (uint16_t i = 0; i < VM_DYN_MAX; i++) {
-    if (vm_obj_dyn_get(i)) live++;
+    if (vm_obj_dyn_get_by_id(i)) live++;
   }
   ck("reset empties the register regardless of refcounts", live == 0);
 
   // a rejected shape must cost neither a slot nor an allocation
   vm_obj_h bad = NULL;
   vm_obj_head_t bh = hd(VM_OBJ_F, 0);
-  ck("dynamic create rejects a zero payload", vm_obj_dyn_create(&bad, &bh, NULL) != NULL && bad == NULL && vm_obj_dyn_get(0) == NULL);
+  ck("dynamic create rejects a zero payload", vm_obj_dyn_create(&bad, &bh, NULL) != NULL && bad == NULL && vm_obj_dyn_get_by_id(0) == NULL);
 }
 
 /* ==========================================================================
@@ -499,8 +498,8 @@ void test_palette(void) {
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x42);
   f_u8(2);
-  add_obj_record(0, 1, VM_OBJ_B, VM_LOAD_F_MUTABLE, NULL);
-  add_obj_record(1, 1, VM_OBJ_B, VM_LOAD_F_MUTABLE, NULL);
+  add_obj_record(0, 1, VM_OBJ_B, VM_OBJ_F_MUTABLE, NULL);
+  add_obj_record(1, 1, VM_OBJ_B, VM_OBJ_F_MUTABLE, NULL);
   ck("0x42 objects", f_send() == NULL);
 
   f_begin(VM_LOADER_CLASS_HEADER, 0x44);
@@ -515,74 +514,16 @@ void test_palette(void) {
      then being silently skipped on every pass -- a program that runs, reports
      nothing, and does less than it says. */
   add_block_record(0, 0, 200, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
-  ck("a block_type nothing registered -> UNKNOWN_TYPE", f_send() != NULL && vm_block_by_id(0) == NULL);
-  ck("a refused block costs no arena", vm_block_by_id(0) == NULL);
+  ck("a block_type nothing registered -> UNKNOWN_TYPE", f_send() != NULL && vm_block_get_by_id(0) == NULL);
+  ck("a refused block costs no arena", vm_block_get_by_id(0) == NULL);
 
   add_block_record(0, 0, VM_BLK_EXPR, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, NULL, 0);
-  ck("a registered type is accepted", f_send() == NULL && vm_block_by_id(0) != NULL);
+  ck("a registered type is accepted", f_send() == NULL && vm_block_get_by_id(0) != NULL);
 
   /* Private state is the type's own business, so any length loads. The block
      is the only thing that knows what those bytes mean. */
   uint8_t custom[4] = {1, 2, 3, 4};
   add_block_record(1, 1, VM_BLK_EXPR, ins, 1, outs, 1, VM_BLOCK_NO_ID, VM_BLOCK_NO_ID, custom, 4);
-  ck("private state of any length loads -- nothing describes it yet", f_send() == NULL && vm_block_by_id(1) != NULL);
+  ck("private state of any length loads -- nothing describes it yet", f_send() == NULL && vm_block_get_by_id(1) != NULL);
 }
 
-/* ==========================================================================
-   Q -- sections
-
-   A section says nothing about whether or when its blocks run -- every section
-   runs every pass. What it says is where the pass may be interrupted, which is
-   why the ranges have to partition the order rather than merely fit inside it.
-   ========================================================================== */
-
-void test_sections(void) {
-  ESP_LOGI(TAG, "-- Q: sections --");
-  direct_arena_reset();
-
-  /* Three blocks to have an order to carve up. Shape does not matter here;
-     these go in through the direct API, which is below the palette check. */
-  vm_obj_h q = mk(0, VM_OBJ_B, 1, NULL, true);
-  uint16_t outs[1] = {0};
-  for (uint16_t i = 0; i < 3; i++) {
-    vm_block_h b = NULL;
-    (void)vm_block_create(&b, i,
-                          &(vm_block_cfg_t){.block_idx = i, .block_type = VM_BLK_EXPR, .q_cnt = 1, .out_obj_ids = outs, .eno_obj_id = VM_BLOCK_NO_ID});
-  }
-  ck("three blocks to section", q && vm_block_by_id(2) != NULL);
-
-  // vm_section_count() is the declared id space, like every other registry's
-  // count -- not how many are bound
-  ck("a range inside the order binds", vm_section_create(0, 0, 2) == NULL && vm_section_by_id(0) != NULL);
-  const vm_section_t* s0 = vm_section_by_id(0);
-  ck("the range round-trips", s0 && s0->start == 0 && s0->end == 2);
-
-  ck("an overlapping range -> SEC_OVERLAP", vm_section_create(1, 1, 3) != NULL && vm_section_by_id(1) == NULL);
-  ck("the rest of the order binds", vm_section_create(1, 2, 3) == NULL);
-  ck("a range past the last block -> SEC_BAD_RANGE", vm_section_create(2, 2, 9) != NULL);
-  ck("an empty range -> SEC_BAD_RANGE", vm_section_create(2, 1, 1) != NULL);
-  ck("a reversed range -> SEC_BAD_RANGE", vm_section_create(2, 3, 1) != NULL);
-  ck("a rejected section leaves its id unbound", vm_section_by_id(2) == NULL);
-}
-
-/* ==========================================================================
-   R -- the pass
-
-   Builds a small program by the direct API and runs passes over it
-   synchronously, so every assertion is about a pass that has already finished
-   rather than about one happening on the other core.
-
-   It is built out of the shipping palette -- EXPR, SWITCH and FOR -- because
-   there is nothing else left to build it out of, and that is the point: there
-   is no test-only block type and no test-only seam anywhere in the exec layer.
-   What the supervisor promises is asserted through blocks a client could have
-   compiled.
-
-   Counting is the one thing the palette does not hand over for free. The
-   placeholders used to keep a `calls` counter in their private state; the
-   replacement is ex_counter() below, an EXPR that reads the object it writes
-   and adds one to it. Because that object is not `upd_resetable` and starts
-   life `upd`, the end-of-pass sweep never withdraws its freshness -- so the
-   block triggers on every dispatch and its value is exactly how many times the
-   supervisor called it.
-   ========================================================================== */
