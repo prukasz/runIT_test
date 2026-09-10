@@ -58,28 +58,12 @@ _Static_assert(sizeof(vm_for_code_t) == 24, "wire format header size");
 #define VM_FOR_BAD_CAPPED 0u
 #define VM_FOR_BAD_NOT_FINITE 1u
 
-static inline vm_for_code_t* vm_for_code_of(vm_block_h b) {
-  if (unlikely(b->cfg.custom_len < sizeof(vm_for_code_t))) return NULL;
-  vm_for_code_t* c = (vm_for_code_t*)vm_block_get_custom_data(b);
-  if (unlikely(c->op >= VM_FOR_OP_CNT || c->cmp >= VM_FOR_CMP_CNT)) return NULL;
-  return c;
-}
-
 static inline void vm_for_bad_loop(vm_block_h b, vm_for_code_t* c, uint32_t turns, uint8_t reason) {
   g_vm_block_fault = true;
   if (c->rt & VM_FOR_RT_BAD) return;
   c->rt |= VM_FOR_RT_BAD;
   vm_block_report_error(VM_BLK_ERR_NEW(ERR_VM_FOR_BAD_LOOP, .block_idx = b->cfg.block_idx, .turns = turns, .cap = c->max_turns,
                   .reason = reason), b->cfg.block_idx, b->cfg.block_type);
-}
-
-static inline float vm_for_advance(uint8_t op, float i, float step) {
-  switch (op) {
-    case VM_FOR_OP_ADD: return i + step;
-    case VM_FOR_OP_SUB: return i - step;
-    case VM_FOR_OP_MUL: return i * step;
-    default: return i / step;
-  }
 }
 
 static inline bool vm_for_keep_going(uint8_t cmp, float i, float end) {
@@ -98,8 +82,13 @@ static inline void vm_blk_for(vm_block_h b) {
 
   const bool owned = (b->cfg.rt & VM_BLK_RT_SPAN) != 0;
 
-  vm_for_code_t* c = vm_for_code_of(b);
-  if (unlikely(!c)) {
+  if (unlikely(b->cfg.custom_len < sizeof(vm_for_code_t))) {
+    vm_block_cfg_bad(b);
+    vm_block_set_eno(b, false);
+    return;
+  }
+  vm_for_code_t* c = (vm_for_code_t*)vm_block_get_custom_data(b);
+  if (unlikely(c->op >= VM_FOR_OP_CNT || c->cmp >= VM_FOR_CMP_CNT)) {
     vm_block_cfg_bad(b);
     vm_block_set_eno(b, false);
     return;
@@ -145,7 +134,12 @@ static inline void vm_blk_for(vm_block_h b) {
     if (vm_exec_cancelled()) return;
     turns++;
 
-    i = vm_for_advance(c->op, i, step);
+    switch (c->op) {
+      case VM_FOR_OP_ADD: i += step; break;
+      case VM_FOR_OP_SUB: i -= step; break;
+      case VM_FOR_OP_MUL: i *= step; break;
+      default:            i /= step; break;
+    }
     if (unlikely(!isfinite(i))) {
       vm_for_bad_loop(b, c, turns, VM_FOR_BAD_NOT_FINITE);
       return;
