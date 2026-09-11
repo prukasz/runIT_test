@@ -1,4 +1,5 @@
 #include "selftest_harness.h"
+#include "vm_blocks.h"
 #include "vm_block_build.h"
 #include "vm_block_timer.h"
 #include "vm_block_edge.h"
@@ -73,7 +74,7 @@ void test_block_support(void) {
   ck("unresolved dynamic accessor", !vm_accessor_create(&bad_acc, 2, 31, 0));
   vm_block_h b = NULL;
   ck("timer block build", !vm_block_create(&b, 0, &(vm_block_cfg_t){
-      .block_idx = 0, .in_cnt = 2, .q_cnt = 1, .en_cnt = 1,
+      .block_idx = 0, .block_type = VM_BLK_TIMER, .in_cnt = 2, .q_cnt = 1, .en_cnt = 1,
       .custom_len = sizeof(timer), .in_acc_ids = (const uint16_t[]){0, VM_BLOCK_NO_ID},
       .out_obj_ids = (const uint16_t[]){2}, .en_acc_ids = (const uint16_t[]){1}, .eno_obj_id = 3}));
   if (!b || !signal || !gate || !output || !eno) return;
@@ -94,15 +95,18 @@ void test_block_support(void) {
   memcpy(&timer, vm_block_get_custom_data(b), sizeof(timer));
   ck("disabled timer resets without resolving signal", !g_vm_block_fault && !timer.elapsed_ms &&
       !(timer.flags & VM_TIMER_F_INITIALIZED) && *(uint8_t*)output->payload == 0);
-  vm_block_timer_init_data(vm_block_get_custom_data(b), (vm_timer_mode_e)99, 0, false);
-  g_vm_block_fault = false;
-  vm_blk_timer(b);
-  ck("invalid timer mode faults", g_vm_block_fault && (b->cfg.rt & VM_BLK_RT_CFG_BAD));
-  g_vm_block_fault = false;
-  vm_blk_timer(b);
-  ck("latched config remains a fault", g_vm_block_fault);
+
+  vm_block_timer_data_t bad_timer = {.mode = (uint8_t)99};
+  vm_block_h bad_b = NULL;
+  ck("timer block create rejects invalid mode",
+     vm_block_create(&bad_b, 1, &(vm_block_cfg_t){
+         .block_idx = 1, .block_type = VM_BLK_TIMER, .in_cnt = 2, .q_cnt = 1, .en_cnt = 1,
+         .custom_len = sizeof(timer), .custom_data = &bad_timer,
+         .in_acc_ids = (const uint16_t[]){0, VM_BLOCK_NO_ID},
+         .out_obj_ids = (const uint16_t[]){2}, .en_acc_ids = (const uint16_t[]){1}, .eno_obj_id = 3}) != NULL);
 
   b->cfg.rt = 0;
+  b->cfg.block_type = VM_BLK_EDGE;
   vm_edge_init(vm_block_get_custom_data(b), VM_EDGE_BOTH, (vm_edge_val_u){.f = 0});
   vm_block_get_inputs(b)[0] = sig_acc;
   vm_block_get_inputs(b)[1] = NULL;
@@ -125,9 +129,14 @@ void test_block_support(void) {
   vm_blk_edge(b);
   memcpy(&edge, vm_block_get_custom_data(b), sizeof(edge));
   ck("disabled edge resets without resolving signal", !g_vm_block_fault && !(edge.flags & VM_EDGE_F_INITIALIZED));
-  vm_edge_init(vm_block_get_custom_data(b), (vm_edge_type_e)99, (vm_edge_val_u){0});
-  vm_blk_edge(b);
-  ck("invalid edge mode faults", g_vm_block_fault);
+  vm_block_edge_data_t bad_edge = {.edge_type = (uint8_t)99};
+  vm_block_h bad_eb = NULL;
+  ck("edge block create rejects invalid mode",
+     vm_block_create(&bad_eb, 2, &(vm_block_cfg_t){
+         .block_idx = 2, .block_type = VM_BLK_EDGE, .in_cnt = 2, .q_cnt = 1, .en_cnt = 1,
+         .custom_len = sizeof(edge), .custom_data = &bad_edge,
+         .in_acc_ids = (const uint16_t[]){0, VM_BLOCK_NO_ID},
+         .out_obj_ids = (const uint16_t[]){2}, .en_acc_ids = (const uint16_t[]){1}, .eno_obj_id = 3}) != NULL);
 
   vm_for_code_t loop = {.max_turns = 1};
   g_vm_block_fault = false;

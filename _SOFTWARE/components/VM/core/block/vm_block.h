@@ -88,6 +88,11 @@ typedef vm_block_data_t* vm_block_h;
  */
 typedef void (*vm_block_fn)(vm_block_h);
 
+/**
+ * @brief Block verification handler signature (indexed by block_type in g_vm_blocks_verify).
+ */
+typedef bool (*vm_block_verify_fn)(vm_block_h);
+
 // ===========================================================================
 // 3. Sizing & Registry Lookups
 // ===========================================================================

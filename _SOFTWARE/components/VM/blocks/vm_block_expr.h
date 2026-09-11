@@ -503,14 +503,14 @@ static inline bool vm_expr_eval_bit(vm_block_h b, vm_expr_code_t* c, uint32_t* o
 #undef _BIN
 #undef _CASE_STACK_OPS
 
+static inline bool vm_verify_expr(vm_block_h b) {
+  return b->cfg.q_cnt >= 1;
+}
+
 static inline void vm_blk_expr(vm_block_h b) {
   vm_expr_code_t* c = vm_expr_code_of(b);
   if (unlikely(!c)) {
     (void)vm_expr_fail(b, vm_expr_bad_code(b, 0, 0, VM_EXPR_BAD_HEADER));
-    return;
-  }
-  if (unlikely(b->cfg.q_cnt == 0)) {
-    (void)vm_expr_fail(b, vm_expr_bad_code(b, 0, 0, VM_EXPR_BAD_SHAPE));
     return;
   }
 
@@ -532,10 +532,6 @@ static inline void vm_blk_expr_bit(vm_block_h b) {
   vm_expr_code_t* c = vm_expr_code_of(b);
   if (unlikely(!c)) {
     (void)vm_expr_fail(b, vm_expr_bad_code(b, 0, 0, VM_EXPR_BAD_HEADER));
-    return;
-  }
-  if (unlikely(b->cfg.q_cnt == 0)) {
-    (void)vm_expr_fail(b, vm_expr_bad_code(b, 0, 0, VM_EXPR_BAD_SHAPE));
     return;
   }
 

@@ -46,17 +46,11 @@ typedef struct vm_exec_status_t {
   bool          waiting;      // Core 1 task parked before next_block
 } vm_exec_status_t;
 
+#include "vm_blocks.h"
+
 /* ========================================================================= */
 /* Palette Dispatch                                                          */
 /* ========================================================================= */
-
-extern const vm_block_fn g_vm_blocks[];
-extern const uint16_t   g_vm_blocks_cnt;
-
-/** @brief Resolve block function pointer from block_type; NULL if not in palette. */
-static inline vm_block_fn vm_block_fn_for(uint8_t block_type) {
-  return (block_type < g_vm_blocks_cnt) ? g_vm_blocks[block_type] : NULL;
-}
 
 /** @brief Validate block_type against the palette at load time. */
 err_h vm_exec_check_block_type(uint16_t blk_id, uint8_t block_type);

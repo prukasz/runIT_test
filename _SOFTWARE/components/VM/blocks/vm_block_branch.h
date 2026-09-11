@@ -16,6 +16,14 @@ static inline void vm_branch_drive(vm_block_h b, uint8_t taken) {
   }
 }
 
+static inline bool vm_verify_if(vm_block_h b) {
+  return vm_block_require(b, 1, 2, 0x1u);
+}
+
+static inline bool vm_verify_switch(vm_block_h b) {
+  return vm_block_require(b, 1, 1, 0x1u);
+}
+
 static inline const vm_accessor_t* vm_branch_selector(vm_block_h b, uint8_t min_q) {
   return vm_block_require(b, 1, min_q, 0x1u) ? vm_block_get_inputs(b)[0] : NULL;
 }

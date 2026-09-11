@@ -145,6 +145,15 @@ typedef struct {
 static bool ex_for(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop_t lp, const uint16_t* ins,
                    uint8_t in_cnt, const uint16_t* outs, uint8_t q_cnt, const uint16_t* ens, uint8_t en_cnt,
                    uint16_t eno, uint16_t custom_len) {
+  vm_for_code_t for_code = {
+      .span = {.start = span_start, .end = span_end},
+      .k_start = lp.start,
+      .k_end = lp.end,
+      .k_step = lp.step,
+      .max_turns = lp.budget,
+      .op = lp.op,
+      .cmp = lp.cmp,
+  };
   vm_block_h b = NULL;
   err_h e = vm_block_create(&b, id,
                             &(vm_block_cfg_t){.block_idx = id,
@@ -155,27 +164,12 @@ static bool ex_for(uint16_t id, uint16_t span_start, uint16_t span_end, for_loop
                                               .en_mode = VM_BLK_EN_ANY,
                                               .on_error = VM_BLK_ERR_STOP,
                                               .custom_len = custom_len,
+                                              .custom_data = (custom_len >= sizeof(vm_for_code_t)) ? &for_code : NULL,
                                               .in_acc_ids = ins,
                                               .out_obj_ids = outs,
                                               .en_acc_ids = ens,
                                               .eno_obj_id = eno});
-  if (e != NULL || b == NULL) return false;
-
-  if (custom_len >= sizeof(vm_span_t)) {
-    vm_span_t* sp = (vm_span_t*)vm_block_get_custom_data(b);
-    sp->start = span_start;
-    sp->end = span_end;
-  }
-  if (custom_len >= sizeof(vm_for_code_t)) {
-    vm_for_code_t* c = (vm_for_code_t*)vm_block_get_custom_data(b);
-    c->k_start = lp.start;
-    c->k_end = lp.end;
-    c->k_step = lp.step;
-    c->max_turns = lp.budget;
-    c->op = lp.op;
-    c->cmp = lp.cmp;
-  }
-  return true;
+  return (e == NULL && b != NULL);
 }
 
 static bool s_step_test_done;
@@ -1131,8 +1125,13 @@ void test_for(void) {
      triggers never evaluates, so a body that is supposed to fail every call
      has to be given something to arrive. */
   blk = blk && ex_expr(12, (const uint16_t[]){9}, 1, FOR_SINK, FOR_ENO(12), NULL, 0, c_badop, sizeof(c_badop));
-  // room for the span, none for the loop -- claimable, unreadable
-  blk = blk && ex_for(13, 14, 15, up2, NULL, 0, NULL, 0, NULL, 0, FOR_ENO(13), sizeof(vm_span_t));
+  // a loop that produces 0 turns: claims its span and leaves body untouched
+  const for_loop_t zero_turns = {.start = 0, .end = 0, .step = 1, .budget = 4, .op = VM_FOR_OP_ADD, .cmp = VM_FOR_CMP_LT};
+  blk = blk && ex_for(13, 14, 15, zero_turns, NULL, 0, NULL, 0, NULL, 0, FOR_ENO(13), sizeof(vm_for_code_t));
+  ck("for loop invalid op rejected at build",
+     !ex_for(98, 0, 1, (for_loop_t){.op = VM_FOR_OP_CNT}, NULL, 0, NULL, 0, NULL, 0, VM_BLOCK_NO_ID, sizeof(vm_for_code_t)));
+  ck("for loop short payload rejected at build",
+     !ex_for(99, 0, 1, up2, NULL, 0, NULL, 0, NULL, 0, VM_BLOCK_NO_ID, sizeof(vm_span_t)));
   blk = blk && for_idxed(15, 16, 17, up4, FOR_IDX15);
   blk = blk && ex_expr(16, (const uint16_t[]){2, 3}, 2, FOR_ACC, FOR_ENO(16), NULL, 0, c_fold, sizeof(c_fold));
   blk = blk && for_idxed(17, 18, 19, down, FOR_IDXD);
@@ -1171,10 +1170,9 @@ void test_for(void) {
   ck("a failing body block does not withdraw its owner's flow", for_cnt(11) == 2 && for_eno(10));
   ck("...though it does withdraw its own", !for_eno(12) && cfg_bad(12));
 
-  /* Malformed, but claimable -- so it claims. For a body that drives actuators,
-     running once uncontrolled is strictly worse than not running at all. */
-  ck("a malformed loop still claims, so its body stays put", for_cnt(14) == 0 && !for_eno(13));
-  ck("...and is latched, so it reports once", cfg_bad(13));
+  /* A loop with 0 turns claims its span, so its body stays put and does not run. */
+  ck("a zero-turn loop claims first, so its body stays put", for_cnt(14) == 0 && !for_eno(13));
+  ck("...and is not latched as a fault", !cfg_bad(13));
   ck("...while the well-formed loops are not", !cfg_bad(0) && !cfg_bad(6) && !cfg_bad(17));
 
   /* The point of the whole mechanism: a body that varies per turn, and a fold

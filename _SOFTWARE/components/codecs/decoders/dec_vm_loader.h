@@ -293,12 +293,8 @@ static inline err_h decoder_packet_vm_add_block(const uint8_t* body, size_t len)
   cfg.en_acc_ids = cfg.en_cnt ? en_ids : NULL;
 
   SE_RET_IF_ERR(dec_vm_need(HEADER_packet_vm_add_block, off, len, cfg.custom_len));
+  cfg.custom_data = cfg.custom_len ? (body + off) : NULL;
   SE_RET_IF_ERR(vm_loader_add_block(blk_id, &cfg));
-
-  if (cfg.custom_len) {
-    vm_block_h blk = vm_block_get_by_id(blk_id);
-    memcpy(vm_block_get_custom_data(blk), body + off, cfg.custom_len);
-  }
   return NULL;
 }
 

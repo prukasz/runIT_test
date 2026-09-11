@@ -38,4 +38,16 @@ const vm_block_fn g_vm_blocks[] = {
     [VM_BLK_TIMER] = vm_blk_timer,
 };
 
+const vm_block_verify_fn g_vm_blocks_verify[] = {
+    [VM_BLK_EXPR] = vm_verify_expr,
+    [VM_BLK_EXPR_BIT] = vm_verify_expr,
+    [VM_BLK_IF] = vm_verify_if,
+    [VM_BLK_SWITCH] = vm_verify_switch,
+    [VM_BLK_FOR] = vm_verify_for,
+    [VM_BLK_SET] = vm_verify_set,
+    [VM_BLK_CLONE] = vm_verify_clone,
+    [VM_BLK_EDGE] = vm_verify_edge,
+    [VM_BLK_TIMER] = vm_verify_timer,
+};
+
 const uint16_t g_vm_blocks_cnt = (uint16_t)(sizeof(g_vm_blocks) / sizeof(g_vm_blocks[0]));

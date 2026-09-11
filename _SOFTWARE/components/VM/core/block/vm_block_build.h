@@ -24,6 +24,7 @@ typedef struct vm_block_cfg_t {
   const uint16_t* out_obj_ids;  // q_cnt object IDs
   const uint16_t* en_acc_ids;   // en_cnt accessor IDs
   uint16_t        eno_obj_id;   // ENO object ID (VM_BLOCK_NO_ID if none)
+  const void*     custom_data;  // Initial custom payload (copied if non-NULL)
 } vm_block_cfg_t;
 
 /** @brief Sentinel for unwired pin or absent ENO. */

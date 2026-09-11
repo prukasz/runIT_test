@@ -178,21 +178,18 @@ static inline bool vm_timer_step(vm_block_timer_data_t* d, bool in_val, uint64_t
   return q;
 }
 
+static inline bool vm_verify_timer(vm_block_h b) {
+  if (b->cfg.custom_len < sizeof(vm_block_timer_data_t)) return false;
+  if (!vm_block_require(b, 1, 0, 0x1u)) return false;
+  const vm_block_timer_data_t* d = (const vm_block_timer_data_t*)vm_block_get_custom_data(b);
+  if (d->mode >= VM_TIMER_MODE_CNT) return false;
+  return true;
+}
+
 /* Enable-driven. Disabled timers reset; Q/ET are value writes, ENO follows Q. */
 static inline void vm_blk_timer(vm_block_h b) {
-  if (unlikely(b->cfg.custom_len < sizeof(vm_block_timer_data_t))) {
-    vm_block_cfg_bad(b);
-    vm_block_set_eno(b, false);
-    return;
-  }
   vm_block_timer_data_t state;
   memcpy(&state, vm_block_get_custom_data(b), sizeof(state));
-  if (unlikely(state.mode >= VM_TIMER_MODE_CNT)) {
-    vm_block_cfg_bad(b);
-    vm_block_set_eno(b, false);
-    return;
-  }
-  const bool valid = vm_block_require(b, 1, 0, 0x1u);
   if (!vm_block_is_enabled(b)) {
     state.flags &= (uint8_t)~(VM_TIMER_F_RUNNING | VM_TIMER_F_INITIALIZED | VM_TIMER_F_PREV_IN);
     state.elapsed_ms = 0;
@@ -204,8 +201,8 @@ static inline void vm_blk_timer(vm_block_h b) {
   }
   bool signal = false;
   uint64_t pt = 0;
-  if (!valid || !vm_block_read_bool(&signal, b, vm_block_get_inputs(b)[VM_TIMER_IN_SIGNAL]) ||
-      !vm_block_param_u64(&pt, b, VM_TIMER_IN_PT, state.pt_ms)) {
+  if (!vm_block_check(b, VM_OBJ_GET_VAL(signal, vm_block_get_inputs(b)[VM_TIMER_IN_SIGNAL])) ||
+      !VM_BLOCK_GET_PARAM(pt, b, VM_TIMER_IN_PT, state.pt_ms)) {
     vm_block_set_eno(b, false);
     return;
   }

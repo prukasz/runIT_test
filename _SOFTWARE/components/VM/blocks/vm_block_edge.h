@@ -52,6 +52,7 @@ typedef struct __attribute__((aligned(8))) {
 } vm_block_edge_data_t;
 
 _Static_assert(sizeof(vm_block_edge_data_t) == 24, "vm_block_edge_data_t must be 24 bytes");
+#define VM_EDGE_CUSTOM_LEN sizeof(vm_block_edge_data_t)
 
 /**
  * @brief Initialize edge detection configuration in block custom data.
@@ -118,22 +119,19 @@ static inline err_h vm_edge_step(vm_block_edge_data_t* d, vm_payload_t p, vm_edg
   return NULL;
 }
 
+static inline bool vm_verify_edge(vm_block_h b) {
+  if (b->cfg.custom_len < sizeof(vm_block_edge_data_t)) return false;
+  if (!vm_block_require(b, 1, 0, 0x1u)) return false;
+  const vm_block_edge_data_t* d = (const vm_block_edge_data_t*)vm_block_get_custom_data(b);
+  if (d->edge_type >= VM_EDGE_TYPE_CNT) return false;
+  return true;
+}
+
 /* Enable-driven. First sample seeds history; disabled clears history and pulse.
  * A pulse is loud only when true, matching ENO and branch gate semantics. */
 static inline void vm_blk_edge(vm_block_h b) {
-  if (unlikely(b->cfg.custom_len < sizeof(vm_block_edge_data_t))) {
-    vm_block_cfg_bad(b);
-    vm_block_set_eno(b, false);
-    return;
-  }
   vm_block_edge_data_t state;
   memcpy(&state, vm_block_get_custom_data(b), sizeof(state));
-  if (unlikely(state.edge_type >= VM_EDGE_TYPE_CNT)) {
-    vm_block_cfg_bad(b);
-    vm_block_set_eno(b, false);
-    return;
-  }
-  const bool valid = vm_block_require(b, 1, 0, 0x1u);
   if (!vm_block_is_enabled(b)) {
     state.flags &= (uint8_t)~VM_EDGE_F_INITIALIZED;
     memcpy(vm_block_get_custom_data(b), &state, sizeof(state));
@@ -142,18 +140,18 @@ static inline void vm_blk_edge(vm_block_h b) {
     return;
   }
   vm_payload_t signal;
-  if (!valid || !vm_block_check(b, vm_obj_get_payload(&signal, vm_block_get_inputs(b)[VM_EDGE_IN_SIGNAL]))) {
+  if (!vm_block_check(b, vm_obj_get_payload(&signal, vm_block_get_inputs(b)[VM_EDGE_IN_SIGNAL]))) {
     vm_block_set_eno(b, false);
     return;
   }
   vm_edge_val_u threshold = state.change_by;
   bool read;
   if (signal.type == VM_OBJ_F) {
-    read = vm_block_param_f32(&threshold.f, b, VM_EDGE_IN_THRESHOLD, state.change_by.f);
+    read = VM_BLOCK_GET_PARAM(threshold.f, b, VM_EDGE_IN_THRESHOLD, state.change_by.f);
   } else if (signal.type == VM_OBJ_I32) {
-    read = vm_block_param_i64(&threshold.i, b, VM_EDGE_IN_THRESHOLD, state.change_by.i);
+    read = VM_BLOCK_GET_PARAM(threshold.i, b, VM_EDGE_IN_THRESHOLD, state.change_by.i);
   } else {
-    read = vm_block_param_u64(&threshold.u, b, VM_EDGE_IN_THRESHOLD, state.change_by.u);
+    read = VM_BLOCK_GET_PARAM(threshold.u, b, VM_EDGE_IN_THRESHOLD, state.change_by.u);
   }
   bool fired = false;
   if (!read || !vm_block_check(b, vm_edge_step(&state, signal, threshold, &fired))) {

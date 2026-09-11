@@ -1,5 +1,6 @@
 #include "selftest_harness.h"
 #include "vm_block.h"
+#include "vm_block_build.h"
 #include "vm_blocks.h"
 #include "vm_block_edge.h"
 #include "vm_block_timer.h"
@@ -761,13 +762,10 @@ static void test_edge_block(void) {
 
   vm_block_edge_data_t* edata = (vm_block_edge_data_t*)vm_block_get_custom_data(eb);
 
-  // 1. Guard: custom_len too small
-  eb->cfg.custom_len = 10;
-  g_vm_block_fault = false;
-  vm_blk_edge(eb);
-  ck("edge block rejects undersized custom_len", g_vm_block_fault && *(uint8_t*)eno->payload == 0);
-  eb->cfg.custom_len = sizeof(vm_block_edge_data_t);
-  g_vm_block_fault = false;
+  // 1. Guard: custom_len too small rejected at build
+  vm_block_h bad_b = NULL;
+  ck("edge block rejects undersized custom_len",
+     vm_block_create(&bad_b, 98, &(vm_block_cfg_t){.block_idx = 42, .block_type = VM_BLK_EDGE, .custom_len = 10}) != NULL);
 
   // 2. Boolean Rising Edge
   vm_block_edge_init_data(edata, VM_EDGE_RISING, 0, 0);
@@ -1018,13 +1016,10 @@ static void test_timer_block(void) {
 
   vm_block_timer_data_t* tdata = (vm_block_timer_data_t*)vm_block_get_custom_data(tb);
 
-  // 1. Guard: undersized custom_len
-  tb->cfg.custom_len = 16;
-  g_vm_block_fault = false;
-  vm_blk_timer(tb);
-  ck("timer block rejects undersized custom_len", g_vm_block_fault && *(uint8_t*)eno->payload == 0);
-  tb->cfg.custom_len = sizeof(vm_block_timer_data_t);
-  g_vm_block_fault = false;
+  // 1. Guard: undersized custom_len rejected at build
+  vm_block_h bad_tb = NULL;
+  ck("timer block rejects undersized custom_len",
+     vm_block_create(&bad_tb, 99, &(vm_block_cfg_t){.block_idx = 43, .block_type = VM_BLK_TIMER, .custom_len = 16}) != NULL);
 
   // 2. TON (On-Delay) with hardcoded PT = 100ms
   vm_block_timer_init_data(tdata, VM_TIMER_TON, 100, false);

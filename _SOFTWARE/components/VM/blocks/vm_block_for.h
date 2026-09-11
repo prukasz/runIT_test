@@ -49,6 +49,7 @@ typedef struct vm_for_code_t {
 _Static_assert(offsetof(vm_for_code_t, span) == 0, "vm_block_span() reads the span off custom_data head");
 _Static_assert(offsetof(vm_for_code_t, k_start) % 4 == 0, "literals must stay 4-aligned");
 _Static_assert(sizeof(vm_for_code_t) == 24, "wire format header size");
+#define VM_FOR_CUSTOM_LEN sizeof(vm_for_code_t)
 
 #define VM_FOR_IN_START 0u
 #define VM_FOR_IN_END 1u
@@ -75,6 +76,13 @@ static inline bool vm_for_keep_going(uint8_t cmp, float i, float end) {
   }
 }
 
+static inline bool vm_verify_for(vm_block_h b) {
+  if (b->cfg.custom_len < sizeof(vm_for_code_t)) return false;
+  const vm_for_code_t* c = (const vm_for_code_t*)vm_block_get_custom_data(b);
+  if (c->op >= VM_FOR_OP_CNT || c->cmp >= VM_FOR_CMP_CNT) return false;
+  return true;
+}
+
 static inline void vm_blk_for(vm_block_h b) {
   const vm_span_t* sp = vm_block_get_span(b);
   const vm_span_t range = sp ? *sp : (vm_span_t){0, 0};
@@ -82,24 +90,14 @@ static inline void vm_blk_for(vm_block_h b) {
 
   const bool owned = (b->cfg.rt & VM_BLK_RT_SPAN) != 0;
 
-  if (unlikely(b->cfg.custom_len < sizeof(vm_for_code_t))) {
-    vm_block_cfg_bad(b);
-    vm_block_set_eno(b, false);
-    return;
-  }
   vm_for_code_t* c = (vm_for_code_t*)vm_block_get_custom_data(b);
-  if (unlikely(c->op >= VM_FOR_OP_CNT || c->cmp >= VM_FOR_CMP_CNT)) {
-    vm_block_cfg_bad(b);
-    vm_block_set_eno(b, false);
-    return;
-  }
 
   float i = 0.0f, end = 0.0f, step = 0.0f;
   bool go = owned;
   IF_BLOCK_ENABLED(b) {
-    go = go && vm_block_param_f32(&i, b, VM_FOR_IN_START, c->k_start);
-    go = go && vm_block_param_f32(&end, b, VM_FOR_IN_END, c->k_end);
-    go = go && vm_block_param_f32(&step, b, VM_FOR_IN_STEP, c->k_step);
+    go = go && VM_BLOCK_GET_PARAM(i, b, VM_FOR_IN_START, c->k_start);
+    go = go && VM_BLOCK_GET_PARAM(end, b, VM_FOR_IN_END, c->k_end);
+    go = go && VM_BLOCK_GET_PARAM(step, b, VM_FOR_IN_STEP, c->k_step);
     go = go && isfinite(i) && isfinite(end) && isfinite(step);
   } else {
     go = false;

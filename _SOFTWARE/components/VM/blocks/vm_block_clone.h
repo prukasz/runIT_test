@@ -30,6 +30,10 @@ allocation after load", and it is confined to this block: nothing else in a
 running program allocates, and a program with no Clone in it still cannot.
 */
 
+static inline bool vm_verify_clone(vm_block_h b) {
+  return vm_block_require(b, 2, 0, 0x3u);
+}
+
 static inline void vm_blk_clone(vm_block_h b) {
   const vm_accessor_t* src = NULL;
   const vm_accessor_t* cell = NULL;

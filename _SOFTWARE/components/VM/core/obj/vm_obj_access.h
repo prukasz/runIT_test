@@ -200,6 +200,9 @@ static __always_inline uint64_t vm_internal_get_u64(const void* src) {
     const void* __lc_s = (const void*)(src);                                                                                                    \
     vm_obj_t_e __lc_t = (type);                                                                                                                 \
     *(dst_ptr) = (__typeof__(*(dst_ptr)))_Generic(*(dst_ptr),                                                                                   \
+        bool: (likely(__lc_t == VM_OBJ_B || __lc_t == VM_OBJ_U8)                                                                                \
+                   ? (*(const uint8_t*)__lc_s != 0)                                                                                             \
+                   : (__lc_t == VM_OBJ_F ? (vm_get_as_f32(__lc_t, __lc_s) != 0.0f) : (vm_get_as_i64(__lc_t, __lc_s) != 0))),                    \
         float: (likely(__lc_t == VM_OBJ_F) ? *(const float*)__lc_s : vm_get_as_f32(__lc_t, __lc_s)),                                           \
         double: (likely(__lc_t == VM_OBJ_F) ? (double)*(const float*)__lc_s : (double)vm_get_as_f32(__lc_t, __lc_s)),                          \
         int64_t: (likely(__lc_t == VM_OBJ_U64) ? (int64_t)vm_internal_get_u64(__lc_s) : vm_get_as_i64(__lc_t, __lc_s)),                        \

@@ -1,6 +1,7 @@
 #include "vm_block_build.h"
 #include <string.h>
 #include "esp_compiler.h"
+#include "vm_blocks.h"
 
 #define OWNER OWNER_VM_BLOCK
 
@@ -89,6 +90,14 @@ err_h vm_block_create(vm_block_h* out, uint16_t id, const vm_block_cfg_t* cfg) {
 
   const vm_accessor_t** ens = vm_block_get_en_list(b);
   for (uint8_t i = 0; i < cfg->en_cnt; i++) ens[i] = vm_accessor_get_by_id(cfg->en_acc_ids[i]);
+
+  if (cfg->custom_len && cfg->custom_data) {
+    memcpy(vm_block_get_custom_data(b), cfg->custom_data, cfg->custom_len);
+  }
+
+  if (!vm_block_verify(b)) {
+    SE_RET_ERR(ERR_VM_BLK_BAD_SHAPE, .blk_id = cfg->block_idx, .in_cnt = cfg->in_cnt, .q_cnt = cfg->q_cnt);
+  }
 
   *out = b;
   return NULL;

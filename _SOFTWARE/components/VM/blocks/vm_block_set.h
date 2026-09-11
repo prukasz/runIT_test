@@ -35,6 +35,10 @@ exist already and match the source's; a table shaped differently from the one
 being copied into it is a wiring error too.
 */
 
+static inline bool vm_verify_set(vm_block_h b) {
+  return vm_block_require(b, 2, 0, 0x3u);
+}
+
 static inline void vm_blk_set(vm_block_h b) {
   const vm_accessor_t* src = NULL;
   const vm_accessor_t* dst = NULL;

@@ -42,17 +42,22 @@ static inline const vm_accessor_t* vm_block_optional_in(vm_block_h b, uint8_t pi
   return pin < b->cfg.in_cnt ? vm_block_get_inputs(b)[pin] : NULL;
 }
 
-#define VM_BLOCK_PARAM_READER(suffix, type)                                      \
-  static inline bool vm_block_param_##suffix(type* out, vm_block_h b,            \
-                                             uint8_t pin, type fallback) {      \
-    *out = fallback;                                                            \
-    const vm_accessor_t* acc = vm_block_optional_in(b, pin);                     \
-    return !acc || vm_block_check(b, VM_OBJ_GET_VAL(*out, acc));                  \
-  }
-VM_BLOCK_PARAM_READER(f32, float)
-VM_BLOCK_PARAM_READER(i64, int64_t)
-VM_BLOCK_PARAM_READER(u64, uint64_t)
-#undef VM_BLOCK_PARAM_READER
+/**
+ * @brief Read an optional block input pin into `output` using VM_OBJ_GET_VAL,
+ *        falling back to `fallback` if the pin is unwired.
+ *        Supports all scalar types (float, int64_t, uint64_t, uint32_t, bool, etc.)
+ *        in a single unified macro via VM_OBJ_GET_VAL's _Generic cast.
+ * @return true on success or unwired fallback, false on evaluation fault.
+ */
+#define VM_BLOCK_GET_PARAM(output, b, pin, fallback)                            \
+  ({                                                                            \
+    (output) = (fallback);                                                      \
+    const vm_accessor_t* __bp_acc = vm_block_optional_in((b), (pin));           \
+    !__bp_acc || vm_block_check((b), VM_OBJ_GET_VAL((output), __bp_acc));        \
+  })
+
+#define VM_BLOCK_PARAM(output, b, pin, fallback) VM_BLOCK_GET_PARAM(output, b, pin, fallback)
+
 
 /* Numeric truth preserves fractional floats and every bit of unsigned values. */
 static inline bool vm_block_read_bool(bool* out, vm_block_h b, const vm_accessor_t* acc) {
